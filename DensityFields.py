@@ -17,7 +17,6 @@ from tqdm import tqdm
 
 
 class DensityField2D():
-    SaveType = Literal['npy', 'tf', 'both', 'none']
     InterpType = Literal['linear', 'cubic']
     # General \Lambda CDM parameters
     default_cosmo_params = {
@@ -141,25 +140,22 @@ class DensityField2D():
         else:
             self.log.debug('Running CAMB with provided parameters {}...')
 
-        if interp_kind is None:
-            interp_kind = self.interp_kind
+        if interp_kind is None: interp_kind = self.interp_kind
 
         self.results = camb.get_results(params)
-        self.d_A = self.results.angular_diameter_distance(
-            self.cosmo['z_recomb']) * 1000
+        self.d_A = self.results.angular_diameter_distance(self.cosmo['z_recomb']) * 1000
 
         self.ells = np.round(self.kgrid * self.h * self.d_A).astype(np.int64)
         self.Ls, self.qs, self.transfer_func = self.results.get_cmb_transfer_data().get_transfer()
         if interp_kind == 'cubic':
-            self.log.debug(
-                'Interpolating transfer functions with cubic splines.')
-            self.transfers = [interp1d(
-                self.Ls, self.transfer_func[:, i], kind='cubic') for i in range(len(self.qs))]
+            self.log.debug('Interpolating transfer functions with cubic splines.')
+            self.transfers = [interp1d(self.Ls, self.transfer_func[:, i], kind='cubic') for i in range(len(self.qs))]
+            self.log.debug('Done!')
         elif interp_kind == 'linear':
-            self.transfers = np.array([np.interp(
-                self.Ls, self.Ls, self.transfer_func[:, i]) for i in range(len(self.qs))], dtype=object)
-        else:
-            assert False, self.log.fatal('Invalid interpolation kind: {interp_kind}')
+            self.log.debug('Interpolating transfer functions linearily.')
+            self.transfers = np.array([np.interp(self.Ls, self.Ls, self.transfer_func[:, i]) for i in range(len(self.qs))], dtype=object)
+            self.log.debug('Done!')
+        self.interp_kind = interp_kind
         self.log.debug('Finished running CAMB.')
 
     def Load_r2c(self, delta_r):
@@ -230,17 +226,16 @@ class DensityField2D():
 
         if triangle_type == 'All':
             counts['bin_centers'] = np.array([(i, j, l)
-                                              for i in fc+np.arange(0, (NBmax))*dk
-                                              for j in np.arange(fc, i+1, dk)
-                                              for l in np.arange(fc, j+1, dk) if i <= j+l+dk])
+                                            for i in fc+np.arange(0, (NBmax))*dk
+                                            for j in np.arange(fc, i+1, dk)
+                                            for l in np.arange(fc, j+1, dk) if i <= j+l+dk])
 
         elif triangle_type == 'Squeezed':
             counts['bin_centers'] = np.array([(i, i, j)
-                                              for ji, j in enumerate(fc + np.arange(0, NBmax)*dk)
-                                              for i in fc+np.arange(ji+1, NBmax)*dk])
+                                            for ji, j in enumerate(fc + np.arange(0, NBmax)*dk)
+                                            for i in fc+np.arange(ji+1, NBmax)*dk])
         elif triangle_type == 'Equilateral':
-            counts['bin_centers'] = np.array([(i, i, i)
-                                              for i in fc+np.arange(0, NBmax)*dk])
+            counts['bin_centers'] = np.array([(i, i, i) for i in fc+np.arange(0, NBmax)*dk])
         if verbose:
             self.log.info(
                 f"Considering {len(counts['bin_centers'])} Triangle Configurations ({triangle_type})")
@@ -392,16 +387,12 @@ class DensityField2D():
     def GenerateCAMBField(self, k_cut_low=None, k_cut_high=None, fnl=0., seed: Optional[int] = 0, verbose=False, debug_plots=False, interp_kind=None):
         if seed is None:
             seed = np.random.randint(0, 2**32-1)
-        if verbose:
-            self.log.info(f"Generating CAMB field with seed {seed}")
+        if verbose: self.log.info(f"Generating CAMB field with seed {seed}")
 
-        if verbose:
-            self.log.info("Making white noise field...")
+        if verbose: self.log.info("Making white noise field...")
         white_noise(self.c_fftgrid, seed)
-        if verbose:
-            self.log.info("done!")
-        if debug_plots:
-            plot_fields(np.abs(self.c_fftgrid), 'C =white_noise')
+        if verbose: self.log.info("done!")
+        if debug_plots: plot_fields(np.abs(self.c_fftgrid), 'C =white_noise')
 
         if verbose:
             self.log.info("Applying primordial power spectrum...")
@@ -426,62 +417,48 @@ class DensityField2D():
         if np.abs(fnl) > 0.:
             if verbose: self.log.info(f"Making map non-Gaussian with fnl {fnl}...")
             self.fft_c2r()
+            
             if debug_plots: plot_fields(self.r_fftgrid, 'R Pre-NG')  # type: ignore
             apply_ng(self.r_fftgrid, fnl)
             if debug_plots: plot_fields(self.r_fftgrid, 'R Post-NG')  # type: ignore
+            
             self.fft_r2c()
             if debug_plots: plot_fields(np.abs(self.c_fftgrid), 'C +NG', norm=LogNorm())  # type: ignore
             if verbose: self.log.info("done!")
 
-        if verbose:
-            self.log.info("Applying camb transfer function...")
-        if interp_kind is None:
-            interp_kind = self.interp_kind
+        if interp_kind is None: interp_kind = self.interp_kind
+        if verbose: self.log.info(f"Applying camb transfer function with inteporlation stragety {interp_kind}...")
         if interp_kind == 'cubic':
             apply_camb_transfer_cubic(self.c_fftgrid, self.kgrid, self.Ls,
                                 self.qs, self.transfers, self.ells, self.h)  # type: ignore
         elif interp_kind == 'linear':
             apply_camb_transfer_linear(self.c_fftgrid, self.kgrid, self.Ls,
                                     self.qs, self.transfers, self.ells, self.h)  # type: ignore
-        else:
-            self.log.fatal("Interpolation kind %s not supported!", interp_kind)
-            sys.exit(6)
-        if verbose:
-            self.log.info("done!")
-        if debug_plots:
-            plot_fields(np.abs(self.c_fftgrid), 'C +CAMB', norm=LogNorm())
+        else: 
+            self.log.critical('Failed!')
+        if verbose: self.log.info("done!")
+        if debug_plots: plot_fields(np.abs(self.c_fftgrid), 'C +CAMB', norm=LogNorm())
 
         if k_cut_low is not None:
-            if verbose:
-                self.log.info(f"Cutting lower k-space at {k_cut_low}...")
+            if verbose: self.log.info(f"Cutting lower k-space at {k_cut_low}...")
             self.c_fftgrid[self.kgrid < k_cut_low] = 0.+0.j
-            if debug_plots:
-                plot_fields(np.abs(self.c_fftgrid),
-                            'C -k_cut_low', norm=LogNorm())
-            if verbose:
-                self.log.info("done!")
+            if debug_plots: plot_fields(np.abs(self.c_fftgrid), 'C -k_cut_low', norm=LogNorm())
+            if verbose: self.log.info("done!")
 
         if k_cut_high is not None:
-            if verbose:
-                self.log.info(f"Cutting higher k-space at {k_cut_high}...")
+            if verbose: self.log.info(f"Cutting higher k-space at {k_cut_high}...")
             self.c_fftgrid[self.kgrid >= k_cut_high] = 0.+0.j
-            if debug_plots:
-                plot_fields(np.abs(self.c_fftgrid),
-                            'C -k_cut_high', norm=LogNorm())
-            if verbose:
-                self.log.info("done!")
+            if debug_plots: plot_fields(np.abs(self.c_fftgrid), 'C -k_cut_high', norm=LogNorm())
+            if verbose: self.log.info("done!")
 
         if debug_plots:
             plot_fields(np.abs(self.c_fftgrid), 'C Final', norm=LogNorm())
         self.c_delta = self.c_fftgrid.copy()
-        if verbose:
-            self.log.info("Fourier transforming to real space...")
+        if verbose: self.log.info("Fourier transforming to real space...")
         self.fft_c2r()
         self.r_delta = self.r_fftgrid.copy()
-        if debug_plots:
-            plot_fields(self.r_fftgrid, 'R Final')
-        if verbose:
-            self.log.info("done!")
+        if debug_plots: plot_fields(self.r_fftgrid, 'R Final')
+        if verbose: self.log.info("done!")
         return self.r_delta
 
     def calculate_primordial_power(self, kgrid=None, cosmo=None, seed=None):
@@ -563,7 +540,7 @@ def apply_linear_power_or_transfer(delta_c, kgrid, kLin, PLin_or_TFLin, BoxSize,
 
 # This function cannot be parallelized with njit, because it uses scipy.interpolate.interp1d
 def apply_camb_transfer_cubic(delta_c, kgrid, ls, qs, transfers, ells, h):
-    for i in prange(kgrid.shape[0]):
+    for i in range(kgrid.shape[0]):
         ks = kgrid[i] * h
         idx = find_closest_index(ks, qs)
         mask = (idx > 0) & (ells[i] >= 2)

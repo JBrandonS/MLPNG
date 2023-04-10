@@ -1,9 +1,9 @@
 #! /bin/bash
-#SBATCH --job-name=datagen
+#SBATCH --job-name=mlpng-dataGenerator
 #SBATCH --partition=batch
 #SBATCH --ntasks=1
 #SBATCH --mem=128G  # per node
-#SBATCH --cpus-per-task=64
+#SBATCH --cpus-per-task=32
 #SBATCH --gpus-per-task=0
 
 module load spack conda
@@ -12,5 +12,5 @@ eval "$(conda shell.bash hook)"
 
 conda activate mlpng
 
-time srun python -m cProfile -o dataGenerator.prof dataGenerator.py
-# time srun python dataGenerator.py
+# time srun python -m cProfile -o dataGenerator.prof dataGenerator.py
+time srun python dataGenerator.py

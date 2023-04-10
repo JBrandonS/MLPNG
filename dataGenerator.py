@@ -32,21 +32,38 @@ from DensityFields import DensityField2D
 from numpy2dataset import save_numpy_to_tf_dataset
 from functools import partial
 
+# %%
+# Fixes an issues with threading on an HPC
+# See: https://sites.google.com/nyu.edu/nyu-hpc/training-support/general-hpc-topics/ai-at-hpc-tips/joblib-example
+
+# ## see current affinity
+# import os
+# os.sched_getaffinity(0)
+# ## we see only one CPU
+# # reset affinity - read about affinity in man taskset
+# os.system("taskset -p 0xFFFFFFFF %d" % os.getpid())
+# # check
+# os.sched_getaffinity(0)
+
+# thread_type: Literal['threads', 'processes', None] = None # 'threads'
+
 # %% [markdown]
 # ## Functions
 
 # %%
-def _make_map(box_size, grid, cosmo_params, fnl, seed, k_cut_low=None,k_cut_high=None):
-    base_field = DensityField2D(box_size, grid, n_threads=1, cosmo_params=cosmo_params, verbose=False, log_level=ERROR)
+def _make_map(fnl, seed, interp_kind, box_size, grid, cosmo_params, k_cut_low=None,k_cut_high=None):
+    base_field = DensityField2D(box_size, grid, cosmo_params=cosmo_params, interp_kind=interp_kind, verbose=False)
     base_field.GenerateCAMBField(k_cut_low=k_cut_low,k_cut_high=k_cut_high,fnl=fnl,seed=seed)
     return base_field.r_delta / base_field.r_delta.std()
 
-def _save(dir, filename, maps, start_idx, end_idx, save_type: Literal['npy', 'tf', 'both'] = 'both'):
+SaveTypes = Literal['npy', 'tf', 'both', 'none']
+def _save(dir, filename, maps, start_idx, end_idx, save_type: SaveTypes = 'npy'):
     if not os.path.exists(dir): os.makedirs(dir)
     print(f'Saving {dir}/{filename} to {save_type}...', end=' ')
     # save as tfrecord, higher performance possible
-    # if save_type in ['tf', 'both']:
-    #     save_numpy_to_tf_dataset(np.stack(maps[start_idx:end_idx]), f'{dir}/{filename}.tfrecord')
+    if save_type in ['tf', 'both']:
+        print('Saving as tfrecord not supported right now...')
+        # save_numpy_to_tf_dataset(np.stack(maps[start_idx:end_idx]), f'{dir}/{filename}.tfrecord')
     if save_type in ['npy', 'both']:
         with open(f'{dir}/{filename}.npy', 'wb') as f:
             np.save(f, np.stack(maps[start_idx:end_idx]))
@@ -54,25 +71,31 @@ def _save(dir, filename, maps, start_idx, end_idx, save_type: Literal['npy', 'tf
 
 def run_simulations(data_dir, name, num_sim, save_steps, box_size, grid, cosmo_params, fnls, 
                     force_fnl=None, n_jobs=-1, k_cut_low=None, k_cut_high=None, 
-                    save_type: Literal['npy', 'tf', 'both']='both', interp_kind='linear', log_level=WARNING, save=True, verbose=False):
+                    save_type: SaveTypes='npy', interp_kind='cubic', log_level=WARNING, verbose=False):
     for i in range(0, num_sim, save_steps):
         # base = DensityField2D(box_size, grid, n_threads=1, cosmo_params=cosmo_params, verbose=False, log_level=log_level)
         # make_map_with_base = partial(_make_map, base)
-    
         if verbose: print(f'Generating ({interp_kind}) maps {i} to {i + save_steps} for {name}...')
-        maps_chunk = Parallel(prefer='threads', n_jobs=n_jobs, verbose=10 if verbose else 1)([
+        maps_chunk = Parallel(n_jobs=n_jobs, verbose=1)([
             delayed(_make_map)( #make_map_with_base)(
-                fnl if force_fnl is None else force_fnl, seed, box_size, grid, n_threads=1, cosmo_params=cosmo_params, log_level=log_level, k_cut_low=k_cut_low, k_cut_high=k_cut_high
+                fnl if force_fnl is None else force_fnl, seed, interp_kind, box_size, grid, cosmo_params=cosmo_params, k_cut_low=k_cut_low, k_cut_high=k_cut_high
             ) for seed, fnl in enumerate(fnls[i:i + save_steps])
         ])
         if verbose: print('Done!')
-        if save: _save(f'{data_dir}/{interp_kind}', f'{name}_{i}-{i + save_steps}', maps_chunk, 0, len(maps_chunk), save_type=save_type)
+        if save_type != 'none': _save(f'{data_dir}/{interp_kind}', f'{name}_{i}-{i + save_steps}', maps_chunk, 0, len(maps_chunk), save_type=save_type)
 
-def bispectrum(BoxSize, grid, fnl,seed, kgrid, ls, qs, transfers, ells, d_A, cosmo, verbose=False):
-    FFT_map = DensityField2D(BoxSize, grid, n_threads=1, d_A=d_A, ls=ls, qs=qs, transfers=transfers, ells=ells, cosmo_params=cosmo, kgrid=kgrid, verbose=verbose)
+def _bispectrum(BoxSize, grid, fnl,seed, kgrid, ls, qs, transfers, ells, d_A, cosmo, verbose=True):
+    FFT_map = DensityField2D(BoxSize, grid, n_threads=1, d_A=d_A, ls=ls, qs=qs, transfers=transfers, ells=ells, cosmo_params=cosmo, kgrid=kgrid, log_level=ERROR, verbose=verbose)
     FFT_map.GenerateCAMBField(k_cut_high=None,fnl=fnl,seed=seed,verbose=verbose)
-    BBB = FFT_map.Bk(2.5,3,13,'All',verbose=verbose)
+    BBB = FFT_map.Bk(2.5,3,13, 'All',verbose=verbose)
     return BBB
+
+def get_bispectrum(base, num_bispectra, fnl):
+    return np.array(Parallel(n_jobs=-1, verbose=1)([
+        delayed(_bispectrum)(
+        base.BoxSize, base.grid, fnl,i,base.kgrid, base.Ls, base.qs, base.transfers, base.ells,base.d_A, base.cosmo
+        ) for i in range(num_bispectra)
+    ]))
 
 # %% [markdown]
 # ## Test Generation
@@ -94,17 +117,21 @@ cosmo_params = {
     'omch2': 0.1198,
     'tau': 0.0561,
     'lmax': 11000,
-    'accuracy_boost': 4,
+    'accuracy_boost': 1,
 }
 
 num_bispectra = 100
 fnl_range=(-1000, 1000)
 num_threads = -1 #for all cores
 BoxSize = 1000.                     # Size of the periodic box in Mpc/h
-grid = 128                          # Size of the grid
+grid = 256                          # Size of the grid
 
+# needed values
+kF = 2*np.pi / BoxSize              # Fundamental mode of the box
+kNyq = kF * grid / 2                # Nyquist frequency of the grid
 
-run_test = False # Only generates the data, skipping tests and fisher forcasts
+# Should we only generate the data, skipping tests and fisher forcasts?
+run_test = False 
 
 # %%
 if run_test:
@@ -136,7 +163,7 @@ if run_test:
 # %%
 if run_test:
     # lets time how long to get the bispectrum
-    df_base = DensityField2D(BoxSize,grid,n_threads=1, cosmo_params=cosmo_params)
+    df_base = DensityField2D(BoxSize, grid, n_threads=1, cosmo_params=cosmo_params)
     df_base.GenerateCAMBField(0,fnl=1.)
     
     # Compute the bispectrum in a given binning:
@@ -155,27 +182,9 @@ if run_test:
 # %%
 if run_test:
     # bf_base = DensityField2D(BoxSize,grid,n_threads=1, cosmo_params=cosmo_params)
-    BispecP = np.array(Parallel(n_jobs=-1,verbose=1)([
-        delayed(bispectrum)(
-            100.,i, df_base.kgrid, df_base.Ls, df_base.qs, df_base.transfers, df_base.ells, df_base.d_A, df_base.cosmo
-        ) for i in range(num_bispectra)
-    ]))
-
-# %%
-if run_test:   
-   BispecM = np.array(Parallel(n_jobs=-1,verbose=1)([
-      delayed(bispectrum)(
-         -100.,i,df_base.kgrid, df_base.Ls, df_base.qs, df_base.transfers, df_base.ells,df_base.d_A, df_base.cosmo
-         ) for i in range(num_bispectra)
-      ]))
-
-# %%
-if run_test:   
-   BispecG = np.array(Parallel(n_jobs=-1,verbose=1)([
-      delayed(bispectrum)(
-         0.,i, df_base.kgrid, df_base.Ls, df_base.qs, df_base.transfers, df_base.ells,df_base.d_A, df_base.cosmo
-         ) for i in range(num_bispectra)
-      ]))
+    BispecP = get_bispectrum(df_base, num_bispectra, 100.)
+    BispecM = get_bispectrum(df_base, num_bispectra, -100.)
+    BispecG = get_bispectrum(df_base, num_bispectra,  0.)
 
 # %% [markdown]
 # We compute the covariance matrix and its inverse, corrected by the Hartlap factor
@@ -270,16 +279,18 @@ cosmo_params = {
 
 ## simulations settings
 num_sim = 10**6 # number of files to generate
-num_steps = 10**4 # Number of steps to use per file (keeps memory usage low)
+num_steps = 10**6 # Number of steps to use per file (keeps memory usage low)
 fnl_range=(-1000, 1000)
 
 BoxSize = 1000.                     # Size of the periodic box in Mpc/h
 grid = 128                          # Size of the grid
-interp='linear'
-# interp='cubic'
+
+# interp='linear'
+interp='cubic'
+save_type='npy' #tensorflow isnt working
 
 # Number of threads to use
-num_threads = 32 #-1 for all cores
+num_threads = -1 # for all cores
 
 ## Data Settings
 base_name = f'{grid}x{num_sim//1000}k_fnl{fnl_range[0]}-{fnl_range[1]}'
@@ -319,7 +330,7 @@ else:
 
 # %%
 # %%time
-run_simulations(data_dir, base_name, num_sim, num_steps, BoxSize, grid, cosmo_params, fnls, n_jobs=num_threads, interp_kind=interp) #, k_cut_high=0.25132741228718347)
+run_simulations(data_dir, base_name, num_sim, num_steps, BoxSize, grid, cosmo_params, fnls, n_jobs=num_threads, interp_kind=interp, save_type='npy') #, k_cut_high=0.25132741228718347)
 
 # %% [markdown]
 # ## Generate AUX maps
