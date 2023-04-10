@@ -1,4 +1,10 @@
-.ipynb_checkpoints/
+# Dirs
 __pycache__/
+.ipynb_checkpoints/
+.vscode/
 data/
-.VSC-jupyter.out
+.lprof/
+
+# Files
+*.prof
+*.out
