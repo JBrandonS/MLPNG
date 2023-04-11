@@ -68,6 +68,12 @@ def _save(dir, filename, maps, start_idx, end_idx, save_type: SaveTypes = 'npy')
         with open(f'{dir}/{filename}.npy', 'wb') as f:
             np.save(f, np.stack(maps[start_idx:end_idx]))
     print('Done!')
+    
+def _bispectrum(BoxSize, grid, fnl,seed, kgrid, ls, qs, transfers, ells, d_A, cosmo, verbose=True):
+    FFT_map = DensityField2D(BoxSize, grid, n_threads=1, d_A=d_A, ls=ls, qs=qs, transfers=transfers, ells=ells, cosmo_params=cosmo, kgrid=kgrid, log_level=ERROR, verbose=verbose)
+    FFT_map.GenerateCAMBField(k_cut_high=None,fnl=fnl,seed=seed,verbose=verbose)
+    BBB = FFT_map.Bk(2.5,3,13, 'All',verbose=verbose)
+    return BBB
 
 def run_simulations(data_dir, name, num_sim, save_steps, box_size, grid, cosmo_params, fnls, 
                     force_fnl=None, n_jobs=-1, k_cut_low=None, k_cut_high=None, 
@@ -83,12 +89,6 @@ def run_simulations(data_dir, name, num_sim, save_steps, box_size, grid, cosmo_p
         ])
         if verbose: print('Done!')
         if save_type != 'none': _save(f'{data_dir}/{interp_kind}', f'{name}_{i}-{i + save_steps}', maps_chunk, 0, len(maps_chunk), save_type=save_type)
-
-def _bispectrum(BoxSize, grid, fnl,seed, kgrid, ls, qs, transfers, ells, d_A, cosmo, verbose=True):
-    FFT_map = DensityField2D(BoxSize, grid, n_threads=1, d_A=d_A, ls=ls, qs=qs, transfers=transfers, ells=ells, cosmo_params=cosmo, kgrid=kgrid, log_level=ERROR, verbose=verbose)
-    FFT_map.GenerateCAMBField(k_cut_high=None,fnl=fnl,seed=seed,verbose=verbose)
-    BBB = FFT_map.Bk(2.5,3,13, 'All',verbose=verbose)
-    return BBB
 
 def get_bispectrum(base, num_bispectra, fnl):
     return np.array(Parallel(n_jobs=-1, verbose=1)([
@@ -279,11 +279,11 @@ cosmo_params = {
 
 ## simulations settings
 num_sim = 10**6 # number of files to generate
-num_steps = 10**6 # Number of steps to use per file (keeps memory usage low)
+num_steps = 10**5 # Number of steps to use per file (keeps memory usage low)
 fnl_range=(-1000, 1000)
 
 BoxSize = 1000.                     # Size of the periodic box in Mpc/h
-grid = 128                          # Size of the grid
+grid = 256                          # Size of the grid
 
 # interp='linear'
 interp='cubic'
