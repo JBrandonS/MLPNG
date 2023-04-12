@@ -114,3 +114,23 @@ class CAMBHelper():
         pfactor = cosmo['A']*cosmo['kpivot']**(1.-cosmo['ns'])
         pk[idx] = np.power(kgrid[idx], cosmo['ns']-4.)*pfactor
         return pk
+
+    def calculate_cls(self):
+        idx = np.where(self.ells >= 2)
+        return self.ells[idx] * (self.ells[idx] + 1) / (2 * np.pi) * np.sum([self.transfers[i](self.ells[idx])**2 for i in range(len(self.transfers))], axis=1)
+    
+    def plot_cls(self, title=None, plot_theory=True):
+        import matplotlib.pyplot as plt
+        cls = self.calculate_cls()
+        ls = np.arange(2, cls.shape[0])
+
+        plt.figure()
+        plt.loglog(ls, cls[2:, 0], label='Predicted')
+
+        if plot_theory:
+            theory = self.results.get_cmb_power_spectra(self.params, CMB_unit='muK', spectra=['total'])['total']
+            plt.loglog(ls, theory[2:, 0], label='Theory')
+
+        if title is not None: 
+            plt.title(title)
+        plt.show()

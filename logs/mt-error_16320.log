@@ -1,0 +1,26 @@
+[NbConvertApp] Converting notebook modelTrainer.ipynb to script
+[NbConvertApp] Writing 16914 bytes to modelTrainer.py
+2023-04-11 11:41:08.853516: W tensorflow/compiler/xla/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libnvinfer.so.7'; dlerror: libnvinfer.so.7: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /hpc/mp/spack/opt/spack/linux-ubuntu20.04-zen2/gcc-10.3.0/cudnn-8.2.4.15-11.4-eluwegpwn6adr7hlku5p5wru5xzefpop/lib64:/hpc/mp/spack/opt/spack/linux-ubuntu20.04-zen2/gcc-10.3.0/cuda-11.4.4-ctldo35wmmwws3jbgwkgjjcjawddu3qz/lib64
+2023-04-11 11:41:08.853656: W tensorflow/compiler/xla/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libnvinfer_plugin.so.7'; dlerror: libnvinfer_plugin.so.7: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /hpc/mp/spack/opt/spack/linux-ubuntu20.04-zen2/gcc-10.3.0/cudnn-8.2.4.15-11.4-eluwegpwn6adr7hlku5p5wru5xzefpop/lib64:/hpc/mp/spack/opt/spack/linux-ubuntu20.04-zen2/gcc-10.3.0/cuda-11.4.4-ctldo35wmmwws3jbgwkgjjcjawddu3qz/lib64
+2023-04-11 11:41:08.853670: W tensorflow/compiler/tf2tensorrt/utils/py_utils.cc:38] TF-TRT Warning: Cannot dlopen some TensorRT libraries. If you would like to use Nvidia GPU with TensorRT, please make sure the missing libraries mentioned above are installed properly.
+Traceback (most recent call last):
+  File "/users/stevensonb/Research/MLPNG/modelTrainer.py", line 23, in <module>
+    import matplotlib.pyplot as plt
+  File "/users/stevensonb/.conda/envs/mlpng/lib/python3.10/site-packages/matplotlib/__init__.py", line 131, in <module>
+    from . import _api, _version, cbook, _docstring, rcsetup
+  File "/users/stevensonb/.conda/envs/mlpng/lib/python3.10/site-packages/matplotlib/rcsetup.py", line 27, in <module>
+    from matplotlib.colors import Colormap, is_color_like
+  File "/users/stevensonb/.conda/envs/mlpng/lib/python3.10/site-packages/matplotlib/colors.py", line 56, in <module>
+    from matplotlib import _api, _cm, cbook, scale
+  File "/users/stevensonb/.conda/envs/mlpng/lib/python3.10/site-packages/matplotlib/scale.py", line 22, in <module>
+    from matplotlib.ticker import (
+  File "/users/stevensonb/.conda/envs/mlpng/lib/python3.10/site-packages/matplotlib/ticker.py", line 138, in <module>
+    from matplotlib import transforms as mtransforms
+  File "/users/stevensonb/.conda/envs/mlpng/lib/python3.10/site-packages/matplotlib/transforms.py", line 49, in <module>
+    from matplotlib._path import (
+ImportError: /lib/x86_64-linux-gnu/libstdc++.so.6: version `GLIBCXX_3.4.29' not found (required by /users/stevensonb/.conda/envs/mlpng/lib/python3.10/site-packages/matplotlib/_path.cpython-310-x86_64-linux-gnu.so)
+srun: error: bcm-dgxa100-0018: task 0: Exited with exit code 1
+
+real	0m6.721s
+user	0m0.016s
+sys	0m0.012s

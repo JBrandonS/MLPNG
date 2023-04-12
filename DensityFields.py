@@ -20,8 +20,8 @@ from CAMBHelper import CAMBHelper
 
 class DensityField2D():
     def __init__(self, 
-                 BoxSize, 
-                 grid,
+                BoxSize, 
+                grid,
                 n_threads=1, 
                 FFTW_WISDOM='FFTW_ESTIMATE', 
                 dtype=np.float64,
@@ -219,8 +219,7 @@ class DensityField2D():
 
         self.log.debug("Computing Bispectrum...")
         bin_indices = ((counts['bin_centers'] - fc) // dk).astype(np.int64)
-        B = _Bk_shells(r_delta_shells, bin_indices) * \
-            self.BoxSize**6 / self.grid**2
+        B = _Bk_shells(r_delta_shells, bin_indices) * self.BoxSize**6 / self.grid**2
         self.log.debug("done! \n")
 
         result = np.ones((len(counts['bin_centers']), 8))
