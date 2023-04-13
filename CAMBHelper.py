@@ -1,8 +1,9 @@
 import camb 
 import logging 
 import numpy as np
-from numba import njit
+from numba import njit, prange
 from scipy.interpolate import interp1d
+import matplotlib.pyplot as plt
     
 class CAMBHelper():
     default_cosmo_params = {
@@ -87,20 +88,21 @@ class CAMBHelper():
             self.Ls = Ls
             self.qs = qs
             self.transfer_func = transfer_func
-            
-            self.log.debug('Interpolating transfer functions with cubic splines for given data.')
-            self.transfers = [interp1d(self.Ls, self.transfer_func[:, i], kind='cubic') for i in range(len(self.qs))]
-            self.log.debug('Done!')
+            self.transfers = self.interp_transfer(self.Ls, self.qs, self.transfer_func)
     
     def calculate_transfers(self):
         self.log.debug('Getting transfer functions...')
         self.Ls, self.qs, self.transfer_func = self.results.get_cmb_transfer_data().get_transfer()
         self.log.debug('Done! (Getting transfer functions)')
         
-        self.log.debug('Interpolating transfer functions with cubic splines.')
-        self.transfers = [interp1d(self.Ls, self.transfer_func[:, i], kind='cubic') for i in range(len(self.qs))]
-        self.log.debug('Done!')
+        self.transfers = self.interp_transfer(self.Ls, self.qs, self.transfer_func)
         return self.transfers
+
+    def interp_transfer(self, Ls, qs, transfer_func, kind='cubic'):
+            self.log.debug('Interpolating transfer functions with cubic splines.')
+            transfers = [interp1d(Ls, transfer_func[:, i], kind=kind) for i in range(len(qs))]
+            self.log.debug('Done!')
+            return transfers
     
     def calculate_primordial_power(self, kgrid, cosmo=None, seed=None):
         """
@@ -113,24 +115,5 @@ class CAMBHelper():
         idx = np.where(kgrid > 0)
         pfactor = cosmo['A']*cosmo['kpivot']**(1.-cosmo['ns'])
         pk[idx] = np.power(kgrid[idx], cosmo['ns']-4.)*pfactor
+        self.pk = pk
         return pk
-
-    def calculate_cls(self):
-        idx = np.where(self.ells >= 2)
-        return self.ells[idx] * (self.ells[idx] + 1) / (2 * np.pi) * np.sum([self.transfers[i](self.ells[idx])**2 for i in range(len(self.transfers))], axis=1)
-    
-    def plot_cls(self, title=None, plot_theory=True):
-        import matplotlib.pyplot as plt
-        cls = self.calculate_cls()
-        ls = np.arange(2, cls.shape[0])
-
-        plt.figure()
-        plt.loglog(ls, cls[2:, 0], label='Predicted')
-
-        if plot_theory:
-            theory = self.results.get_cmb_power_spectra(self.params, CMB_unit='muK', spectra=['total'])['total']
-            plt.loglog(ls, theory[2:, 0], label='Theory')
-
-        if title is not None: 
-            plt.title(title)
-        plt.show()
