@@ -42,6 +42,7 @@ class CAMBHelper():
         
         self.results = camb.get_results(self.params)
         self.d_A = self.results.angular_diameter_distance(self.cosmo['z_recomb']) * 1000
+        self.log.debug('D_A = %s' % self.d_A)
         
         if self.ells is not None:
             self.calculate_transfers()
@@ -74,7 +75,8 @@ class CAMBHelper():
             self.log.debug('Getting CAMB results...')
             self.results = camb.get_results(self.params)
             self.log.debug('CAMB results obtained!') 
-            self.d_A = self.results.angular_diameter_distance(self.cosmo['z_recomb']) * 1000
+            self.d_A = 20000 #self.results.angular_diameter_distance(self.cosmo['z_recomb']) * 1000
+            self.log.debug('D_A = %s' % self.d_A)
                 
             if kgrid is not None:
                 self.ells = np.round(kgrid*self.h*self.d_A)
@@ -99,7 +101,7 @@ class CAMBHelper():
         return self.transfers
 
     def interp_transfer(self, Ls, qs, transfer_func, kind='cubic'):
-            self.log.debug('Interpolating transfer functions with cubic splines.')
+            self.log.debug(f'Interpolating transfer functions with {kind} splines.')
             transfers = [interp1d(Ls, transfer_func[:, i], kind=kind) for i in range(len(qs))]
             self.log.debug('Done!')
             return transfers
@@ -108,8 +110,7 @@ class CAMBHelper():
         """
         Calculate the primordial power spectrum
         """
-        if cosmo is None:
-            cosmo = self.cosmo
+        if cosmo is None: cosmo = self.cosmo
 
         pk = np.zeros_like(kgrid)
         idx = np.where(kgrid > 0)
@@ -117,3 +118,9 @@ class CAMBHelper():
         pk[idx] = np.power(kgrid[idx], cosmo['ns']-4.)*pfactor
         self.pk = pk
         return pk
+
+    _get_camb_cmb_pk_value = None
+    def get_camb_cmb_pk(self, theory_spectra='unlensed_scalar', force=False):
+        if self._get_camb_cmb_pk_value is None or force:
+            self._get_camb_cmb_pk_value = self.results.get_cmb_power_spectra(CMB_unit='muK', spectra=[theory_spectra])[theory_spectra]
+        return self._get_camb_cmb_pk_value

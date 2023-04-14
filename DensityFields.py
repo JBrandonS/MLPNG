@@ -87,7 +87,7 @@ class DensityField2D():
         else:
             self.camb = CAMBHelper(self.kgrid, cosmo_params=cosmo_params, log_level=log_level)
         self.h = self.camb.h
-        self.cls = None ###################
+        self.cls = None
 
         # Set numba threads for parallelization (grid>512)
         set_num_threads(n_threads)
@@ -206,8 +206,7 @@ class DensityField2D():
 
         counts = self._Bk_counts(fc, dk, NBmax, triangle_type)
 
-        r_delta_shells = np.zeros(
-            (NBmax, self.rshape[0], self.rshape[1]), dtype=self.r_dtype)
+        r_delta_shells = np.zeros((NBmax, self.rshape[0], self.rshape[1]), dtype=self.r_dtype)
 
         self.log.debug("Creating Grids for Measurements...")
         for i in tqdm(range(NBmax), disable=True):
@@ -232,7 +231,7 @@ class DensityField2D():
 
         return result
 
-    def GenerateCAMBField(self, k_cut_low=None, k_cut_high=None, fnl=0., seed: Optional[int] = 0, debug_plots=False):
+    def GenerateField(self, k_cut_low=None, k_cut_high=None, fnl=0., seed: Optional[int] = 0, debug_plots=False, linear=False):
         if seed is None: seed = np.random.randint(0, 2**32-1)
         self.log.debug(f"Generating CAMB field with seed {seed}")
 
@@ -241,7 +240,7 @@ class DensityField2D():
         self.log.debug("done!")
         if debug_plots: 
             plot_fields(np.abs(self.c_fftgrid), 'C =white_noise')
-            self.plot_cls()
+            # self.plot_cls()
 
         self.log.debug("Applying primordial power spectrum...")
         PP = self.camb.calculate_primordial_power(self.kgrid*self.h)
@@ -249,7 +248,7 @@ class DensityField2D():
         self.log.debug("done!")
         if debug_plots: 
             plot_fields(np.abs(self.c_fftgrid),'C +primordial', norm=LogNorm())
-            self.plot_cls()
+            # self.plot_cls()
 
         # Cut-off beyond Nyquist Frequency
         self.c_fftgrid[self.kgrid > self.kNyq] = 0.+0.j
@@ -258,197 +257,104 @@ class DensityField2D():
         if np.abs(fnl) > 0.:
             self.log.debug(f"Making map non-Gaussian with fnl {fnl}...")
             self.fft_c2r()
+            apply_ng(self.r_fftgrid, fnl)
             
             if debug_plots: 
-                plot_fields(self.r_fftgrid, 'R Pre-NG')  # type: ignore
-                self.plot_cls()
-            apply_ng(self.r_fftgrid, fnl)
-            if debug_plots: 
                 plot_fields(self.r_fftgrid, 'R Post-NG')  # type: ignore
-                self.plot_cls()
+                # self.plot_cls()
             
             self.fft_r2c()
             if debug_plots: 
                 plot_fields(np.abs(self.c_fftgrid), 'C +NG', norm=LogNorm())  # type: ignore
-                self.plot_cls()
+                # self.plot_cls()
             self.log.debug("done!")
 
-        apply_camb_transfer(self.c_fftgrid, self.kgrid, self.camb)  # type: ignore
+        if linear:
+            self.log.debug("Applying linear transfer function...")
+            kLin, TFLin = np.loadtxt("data/linear_thomas/LinearTransfer.dat")[:,[0,1]].T
+            apply_linear_power_or_transfer(self.c_fftgrid,self.kgrid, kLin, TFLin,self.BoxSize,self.grid)
+        else:
+            self.log.debug("Applying CAMB transfer function...")
+            apply_camb_transfer(self.c_fftgrid, self.kgrid, self.camb)  
+        self.log.debug('Done!') # type: ignore
         if debug_plots: 
             plot_fields(np.abs(self.c_fftgrid), 'C +CAMB', norm=LogNorm())
-            self.plot_cls()
+            # self.plot_cls()
 
         if k_cut_low is not None:
             self.log.debug(f"Cutting lower k-space at {k_cut_low}...")
             self.c_fftgrid[self.kgrid < k_cut_low] = 0.+0.j
-            if debug_plots: 
-                plot_fields(np.abs(self.c_fftgrid), 'C -k_cut_low', norm=LogNorm())
-                self.plot_cls()
             self.log.debug("done!")
 
         if k_cut_high is not None:
             self.log.debug(f"Cutting higher k-space at {k_cut_high}...")
             self.c_fftgrid[self.kgrid >= k_cut_high] = 0.+0.j
-            if debug_plots: 
-                plot_fields(np.abs(self.c_fftgrid), 'C -k_cut_high', norm=LogNorm())
-                self.plot_cls()
             self.log.debug("done!")
 
-        if debug_plots: plot_fields(np.abs(self.c_fftgrid), 'C Final', norm=LogNorm())
+        if debug_plots: 
+            plot_fields(np.abs(self.c_fftgrid), 'C Final', norm=LogNorm())
         self.c_delta = self.c_fftgrid.copy()
         self.log.debug("Fourier transforming to real space...")
         self.fft_c2r()
         self.r_delta = self.r_fftgrid.copy()
-        if debug_plots: plot_fields(self.r_fftgrid, 'R Final')
+        if debug_plots: 
+            plot_fields(self.r_fftgrid, 'R Final')
+            self.plot_cls(title='Final Map Cls')
         self.log.debug("done!")
         return self.r_delta
 
-    def get_angular_power_spectrum(self, ks, Pk, density_field):
-        """
-        Given ks, Pk and a complex density field grid, returns the angular power spectrum.
+    def get_map(self):
+        return self.r_delta / self.r_delta.std()
 
-        Arguments:
-        ks -- array of wavenumbers
-        Pk -- array of power spectrum values
-        density_field -- 2D grid of complex density values
+    def _fillgrid(self, c_fftgrid):
+        grid = self.grid
+        full_c_fftgrid = np.empty((grid, grid), dtype=np.complex64)
+        full_c_fftgrid[:, :grid // 2 + 1] = c_fftgrid
+        for i in range(grid):
+            for j in range(1, grid // 2):
+                full_c_fftgrid[i, grid - j] = np.conj(full_c_fftgrid[i, j])
+        return full_c_fftgrid
 
-        Returns:
-        l -- array of angular modes
-        Cl -- array of angular power spectrum values
-        """
-        if np.isnan(density_field).any() or np.isinf(density_field).any():
-            raise ValueError("Input map contains NaN or inf values.")
-
-        nside = int(np.sqrt(len(density_field)))
-        npix = len(density_field) * 12
-        # if nside**2 * 12 != len(density_field):
-        #     raise ValueError(f"Input map does not have the correct number of pixels. {len(density_field)} != {nside**2 * 12}")
-
-
-        # Ensure that the input map has a square number of pixels
-        # nside = int(np.sqrt(npix))
-        # if nside**2 != npix:
-        #     raise ValueError("Input map must have a square number of pixels.")
-
-        # Perform the spherical harmonic transform
-        lmax = len(ks) * 2
-        alm = np.zeros((lmax+1, lmax+1), dtype=np.complex128)
-        print(density_field.shape)
-        # print(density_field[0, :].shape)
-        # for i in range(density_field.shape[0]):
-
-        pix = np.arange(npix)
-        theta, phi = hp.pix2ang(nside, pix)
-        values = np.zeros(npix, dtype=np.complex128)
-        for i in range(npix):
-            values[i] = hp.pixelfunc.get_interp_val(density_field, theta[i], phi[i])
-
-        # Perform the spherical harmonic transform
-        lmax = len(ks) * 2
-        alm = hp.map2alm(hp.ud_grade(values, nside), lmax=lmax)
-        # alm += hp.map2alm(hp.ud_grade(density_field, nside), lmax=lmax)
-        print(alm)
-        # Compute the angular power spectrum
-        l, Cl = hp.alm2cl(alm)
-        # Interpolate to get the power spectrum at the desired l values
-        Pl = np.interp(l, ks, Pk)
-        # Normalize the angular power spectrum
-        Cl /= (2*np.pi)
-
-        return l, Cl*Pl
-
-    def bin_power_spectrum(self, kgrid, power_spectrum, nbins):
-        # print(kgrid.shape, power_spectrum.shape)
-        lgrid = kgrid * self.camb.h * self.camb.d_A * 2 * np.pi
-        lmin = 2
-        lmax = np.max(lgrid)
+    def bin_power_spectrum( self, nbins, lmin=2, lmax=2200 ):
+        print(self.kgrid.shape, nbins)
+        kfilled = self._fillgrid(self.kgrid)
+        
+        lgrid = kfilled * self.camb.h * self.camb.d_A
+        print('tlmax: ', self.kNyq * self.camb.h * self.camb.d_A)
+        power_spectrum = np.abs(self.get_map())**2 #* (self.BoxSize/self.h)**3 / self.grid**2
+        
         log_bins = np.logspace(np.log10(lmin), np.log10(lmax), nbins + 1)
-        l_bin_indices = np.digitize(lgrid, log_bins)
+        # log_bins *= self.camb.h * self.camb.d_A
+        bin_indices = np.digitize(np.abs(lgrid), log_bins)
 
         binned_power_spectrum = np.zeros(nbins)
         bin_counts = np.zeros(nbins)
-
-        for i in range(1, nbins + 1):
-            in_bin = (l_bin_indices == i).ravel()[:-1]
-            # print(in_bin.shape, power_spectrum.shape)
-            pi = np.zeros(power_spectrum.shape) 
-            pi[in_bin] = power_spectrum[in_bin]
-            # print(in_bin.shape, pi.shape)
-            binned_power_spectrum[i - 1] = np.mean(pi)
-            bin_counts[i - 1] = np.sum(in_bin)
-
+        for i in range(nbins):
+            idx = (bin_indices == i + 1)
+            binned_power_spectrum[i] = np.mean(power_spectrum[idx])
+            bin_counts[i] = np.sum(idx)
         return log_bins[:-1], binned_power_spectrum, bin_counts
 
-    def calculate_cls(self, nbins=500):
+    def calculate_cls(self, raw_cls=True, nbins=50):
         self.log.debug('Calculating C_ls...')
-        # Compute the power spectrum by taking the absolute square of the Fourier transformed field
-        idx = self.kgrid > 0
-        power_spectrum = np.abs(self.c_fftgrid[idx]**2) * self.kgrid[idx]**3 / 2 / np.pi**2 #np.real(np.conj(self.c_delta) * self.c_delta)
-        # Average the power spectrum in radial bins
-        k_bins, binned_power_spectrum, bin_counts = self.bin_power_spectrum(self.kgrid, power_spectrum, nbins)
-        dls = k_bins * (k_bins + 1) / (2 * np.pi) * binned_power_spectrum
+        ls, cls, counts = self.bin_power_spectrum(nbins)
+        cls = np.divide(cls, counts, out=np.zeros_like(cls, dtype=float), where=counts!=0)
+        if not raw_cls:
+            conversion_factor = (2 * np.pi) / (self.camb.d_A * self.h)**2 
+            cls = ls * (ls + 1) * cls * conversion_factor
         self.log.debug('Done! (Calculating C_ls)')
+        return ls, cls, counts
         
-        mask = (bin_counts > 0) & (np.isfinite(dls)) & (dls > 1) & (k_bins > 0)
-        return k_bins[mask], dls[mask], bin_counts[mask]
-
-    def plot_cls(self, l_min=2, l_max=2200, cl_values=[2, 1200, 2200], title=None, plot_theory=True, theory_spectra='unlensed_scalar'):
-        def calculate_2d_spectrum(Map1,Map2,delta_ell,ell_max,pix_size,N):
-            "calcualtes the power spectrum of a 2d map by FFTing, squaring, and azimuthally averaging"
-            N=int(N)
-            # make a 2d ell coordinate system
-            ones = np.ones(N)
-            inds  = (np.arange(N)+.5 - N/2.) /(N-1.)
-            kX = np.outer(ones,inds) / (pix_size/60. * np.pi/180.)
-            kY = np.transpose(kX)
-            K = np.sqrt(kX**2. + kY**2.)
-            ell_scale_factor = 2. * np.pi 
-            ell2d = K * ell_scale_factor
-            
-            # make an array to hold the power spectrum results
-            N_bins = int(ell_max/delta_ell)
-            ell_array = np.arange(N_bins)
-            CL_array = np.zeros(N_bins)
-            
-            # get the 2d fourier transform of the map
-            FMap1 = np.fft.ifft2(np.fft.fftshift(Map1))
-            FMap2 = np.fft.ifft2(np.fft.fftshift(Map2))
-            PSMap = np.fft.fftshift(np.real(np.conj(FMap1) * FMap2))
-            # fill out the spectra
-            i = 0
-            while (i < N_bins):
-                ell_array[i] = (i + 0.5) * delta_ell
-                inds_in_bin = ((ell2d >= (i* delta_ell)) * (ell2d < ((i+1)* delta_ell))).nonzero()
-                CL_array[i] = np.mean(PSMap[inds_in_bin])
-                #print i, ell_array[i], inds_in_bin, CL_array[i]
-                i = i + 1
-        
-            # return the power spectrum and ell bins
-            return(ell_array,CL_array*np.sqrt(pix_size /60.* np.pi/180.)*2.)
-
-        ## make a power spectrum
-        binned_ell, binned_spectrum = calculate_2d_spectrum(self.r_fftgrid, self.r_fftgrid, 50,5000,self.cell_size, self.grid)
-        #print binned_ell
+    def plot_cls(self, l_min=2, l_max=2200, cl_values=[2, 1200, 2200], title=None, plot_theory=True, theory_spectra='unlensed_scalar'):               
         plt.figure()
-        plt.semilogy(binned_ell,binned_spectrum* binned_ell * (binned_ell+1.)/2. / np.pi)
-        # plt.semilogy(ell,DlTT)
-        plt.ylabel('$D_{\ell}$ [$\mu$K$^2$]')
-        plt.xlabel('$\ell$')
-        plt.show()
-        
-        k_bin, bin_PK, bin_c = self.calculate_cls()
-        
-        plt.figure()
-
         if plot_theory:
-            self.log.debug('Getting theory C_ls...')
-            theory = self.camb.results.get_cmb_power_spectra(CMB_unit='muK', spectra=[theory_spectra])[theory_spectra]
-            self.log.debug('Done! (Getting theory C_ls)')
+            theory = self.camb.get_camb_cmb_pk(theory_spectra)
             plt.loglog(np.arange(len(theory)), theory[:, 0], label='Theory')
-            
-        ls = k_bin #* self.camb.h * self.camb.d_A
-        # for i, cl in enumerate(cl_values):
-        plt.loglog(ls, bin_PK, label=r'$D_{\ell}$')
+
+        ls, cls, counts = self.calculate_cls()
+        print('ls: ', ls.shape)
+        print('cls ', cls.shape)
+        plt.loglog(ls, cls, label=r'$D_{\ell}$')
 
         if title is not None: 
             plt.title(title)
@@ -458,10 +364,6 @@ class DensityField2D():
         plt.legend()
         plt.show()
 
-        # k, p, _ = self.Pk()
-        # l, cl = self.get_angular_power_spectrum(k, p, self.r_delta)
-        # plt.loglog(l, cl)
-        # plt.show()
 
 ###################################
 ## Helper functions
@@ -524,18 +426,25 @@ def find_closest_index(k, qs):
         results[i] = np.argmin(np.abs(qs - k_value))
     return results.flatten()
 
-def apply_camb_transfer(delta_c, kgrid, camb):
+def apply_camb_transfer(delta_c, kgrid, camb, lmin=2, lmax=2200):
     for i in range(kgrid.shape[0]):
         ks = kgrid[i] * camb.h
         idx = find_closest_index(ks, camb.qs)
-        mask = (idx > 0) & (camb.ells[i] >= 2)
+        mask = (idx > 0) & (camb.ells[i] >= lmin) & (camb.ells[i] <= lmax)
         delta_c[i][mask] *= [camb.transfers[k](ell) for k, ell in zip(idx[mask], camb.ells[i][mask])]
     delta_c[0, 0] = 0
 
 def plot_fields(field, title=None, cmap='viridis', norm: Optional[Normalize] = None):
     plt.figure()  # ensures new figure (prevents issues with interactive jupter notebook plots)
-    plt.imshow(field, cmap=cmap, norm=norm)  # type: ignore
+    plt.imshow(field, norm=norm)  # type: ignore
     plt.colorbar()
     if title:
         plt.title(title)
     plt.show()
+
+@njit(parallel=True)
+def apply_linear_power_or_transfer(delta_c,kgrid,kLin,PLin_or_TFLin,BoxSize,grid):
+    # Helperfunction to apply interpolated powerspectrum or transferfunction in parallel
+    for i in prange(kgrid.shape[0]):
+        delta_c[i] *= np.interp(kgrid[i],kLin,PLin_or_TFLin)
+    delta_c[0,0] = 0
