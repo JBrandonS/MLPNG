@@ -1,11 +1,12 @@
-from decimal import Overflow
 import logging
 import os
 import sys
 from copy import deepcopy
+from decimal import Overflow
 from typing import Literal, Optional
 
 import camb
+import healpy as hp
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,8 +15,6 @@ from matplotlib.colors import LogNorm, Normalize
 from numba import njit, prange, set_num_threads
 from scipy.interpolate import interp1d
 from tqdm import tqdm
-
-import healpy as hp
 
 from CAMBHelper import CAMBHelper
 
@@ -415,6 +414,13 @@ def make_kgrid(x, y):
     return kgrid
 
 @njit(parallel=True)
+def apply_linear_power_or_transfer(delta_c,kgrid,kLin,PLin_or_TFLin,BoxSize,grid):
+    # Helperfunction to apply interpolated powerspectrum or transferfunction in parallel
+    for i in prange(kgrid.shape[0]):
+        delta_c[i] *= np.interp(kgrid[i],kLin,PLin_or_TFLin)
+    delta_c[0,0] = 0
+    
+@njit(parallel=True)
 def apply_ng(r_grid, fnl):
     for i in prange(r_grid.shape[0]):
         r_grid[i] += 5/3 * fnl * r_grid[i]**2
@@ -441,10 +447,3 @@ def plot_fields(field, title=None, cmap='viridis', norm: Optional[Normalize] = N
     if title:
         plt.title(title)
     plt.show()
-
-@njit(parallel=True)
-def apply_linear_power_or_transfer(delta_c,kgrid,kLin,PLin_or_TFLin,BoxSize,grid):
-    # Helperfunction to apply interpolated powerspectrum or transferfunction in parallel
-    for i in prange(kgrid.shape[0]):
-        delta_c[i] *= np.interp(kgrid[i],kLin,PLin_or_TFLin)
-    delta_c[0,0] = 0

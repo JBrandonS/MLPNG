@@ -75,7 +75,7 @@ class CAMBHelper():
             self.log.debug('Getting CAMB results...')
             self.results = camb.get_results(self.params)
             self.log.debug('CAMB results obtained!') 
-            self.d_A = 20000 #self.results.angular_diameter_distance(self.cosmo['z_recomb']) * 1000
+            self.d_A = self.results.angular_diameter_distance(self.cosmo['z_recomb']) * 1000
             self.log.debug('D_A = %s' % self.d_A)
                 
             if kgrid is not None:
