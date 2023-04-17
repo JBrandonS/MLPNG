@@ -424,8 +424,8 @@ class CMBField:
         Pks *= 1 / ns * self.box_size ** 3 / self.resolution ** 4
         return ks, Pks, ns
     
-    def get_map(self):
-        return self.r_density_field / self.r_density_field.std()
+    def get_cmap(self):
+        return self.c_density_field / self.c_density_field.std()
 
     def _fillgrid(self, c_fftgrid, d_type=complex):
         if c_fftgrid.shape[0] == c_fftgrid.shape[1]:
@@ -464,8 +464,8 @@ class CMBField:
         log_bins = np.linspace(lmin, lmax, nbins, dtype=np.float64)
         bin_indices = np.digitize(lgrid, log_bins)
 
-        tmap = np.abs(self._fillgrid(self.get_map()))**2
-        delta2 = tmap / (kgrid**3 / 2 / np.pi**2) / ( self.box_size ** 3 / self.resolution ** 4 )
+        tmap = np.abs(self._fillgrid(self.get_cmap()))**2
+        delta2 = tmap * (kgrid**3 / 2 / np.pi**2) #* ( self.box_size ** 3 / self.resolution ** 4 )
         # pkf = self._fillgrid(self.calc_primordial_power())
         # delta2 = pkf**2 * kgrid**3 / 2 / np.pi**2 * self.box_size ** 3 / self.resolution ** 4
         
@@ -476,8 +476,8 @@ class CMBField:
             idx = (bin_indices == i + 1)
             counts[i] = np.sum(idx)
             if counts[i] != 0: 
-                self.log.debug('Calculating C_l for bin %d/%d' % (i + 1, nbins))
-                cls[i] = 4 * np.pi * np.trapz( delta2[idx], lgrid[idx]) / counts[i]
+                # self.log.debug('Calculating C_l for bin %d/%d' % (i + 1, nbins))
+                cls[i] = 4 * np.pi * np.trapz( delta2[idx], kgrid[idx]) #/ counts[i]
                 ls[i] = np.sum(lgrid[idx]) / counts[i]
                 
         if raw_cls is False:
@@ -495,7 +495,7 @@ class CMBField:
         ls, dls, counts = self.calculate_cls()
         print('dls >0: ',dls[dls >0])
         m = dls > 0
-        plt.loglog(ls[m], dls[m], label=r'$D_{\ell}$')
+        plt.loglog(ls[m], dls[m]*10**7, label=r'$D_{\ell}$')
         
         if title is not None: 
             plt.title(title)
