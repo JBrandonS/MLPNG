@@ -12,6 +12,8 @@ from mpl_toolkits.mplot3d import Axes3D
 from scipy.signal import fftconvolve
 import matplotlib.cm as cm
 
+from numba import prange
+
 class CMBField:
     # General \Lambda CDM parameters
     default_cosmo_params = {
@@ -115,7 +117,8 @@ class CMBField:
         
         self.angular_box_size = (self.box_size) / self.d_A 
         self.pix_scale_rad = self.angular_box_size / self.resolution
-        self.log.debug('d_A: {}, angular size: {}'.format(self.d_A, self.angular_box_size))
+        
+        self.log.info('d_A: {}, angular size: {}'.format(self.d_A, self.angular_box_size))
         self.log.debug('Finished running CAMB.')
         
 
@@ -152,7 +155,7 @@ class CMBField:
 
         # Go into real space to return the real density field
         self.c_density_field = density_field.copy()
-        final_field = np.fft.irfft2(density_field, norm="backward").real
+        final_field = np.fft.irfft2(np.fft.fftshift(density_field), norm="backward").real
         if debug_plots: plot_fields(final_field, "Complete Density Field")
         
         self.log.debug('Finished generating density field with seed {}'.format(seed))
@@ -211,7 +214,14 @@ class CMBField:
         
         # Apply the transfer function using the mask and indices
         transfers = np.zeros(kgrid.shape)
-        transfers[mask] = np.array([self.transfer_interp[k](ell) for k, ell in zip(indices[mask], ellgrid[mask])])
+        # transfers[mask] = np.array([self.transfer_interp[k](ell) for k, ell in zip(indices[mask], ellgrid[mask])])
+        print('Calculating transfer function...', end=' ')
+        for x in prange(ellgrid.shape[0]):
+            for y in np.arange(ellgrid.shape[1]):
+                if mask[x,y]:
+                    transfers[x,y] += np.mean([self.transfer_interp[k](ellgrid[x,y]) for k in np.arange(len(self.qs))])
+            print(x, end=' ')
+        print('Done!')
         return transfers 
 
 
@@ -292,7 +302,7 @@ class CMBField:
     def calculate_2d_spectrum(self,Map,delta_ell,ell_max):
         "calcualtes the power spectrum of a 2d map by FFTing, squaring, and azimuthally averaging"
         N=self.resolution
-        pix_size=self.cell_size * self.angular_box_size #) / self.resolution
+        pix_size= self.angular_box_size/(self.cell_size*60) #/ self.resolution
         
         # make a 2d ell coordinate system
         ones = np.ones(N)
@@ -301,8 +311,11 @@ class CMBField:
         kY = np.transpose(kX)
         K = np.sqrt(kX**2. + kY**2.)
         K = self.kgrid
+
         ell_scale_factor = 2*np.pi* self.d_A * self.angular_box_size
         ell2d = K * ell_scale_factor
+
+        self.log.info(f'ell2d.max: {ell2d.max()} min: {ell2d.min()}')
 
         # make an array to hold the power spectrum results
         N_bins = int(ell_max/delta_ell)
@@ -337,7 +350,7 @@ class CMBField:
         lmax = np.min([lmax, np.max(lgrid), self.kNyq * self.h * self.d_A])
         self.log.info(f'lmin: {lmin}, lmax: {lmax}')
         
-        bins = np.linspace(lmin, lmax, nbins)
+        bins = np.linspace(lmin, lmax, nbins+1)
         bin_indices = np.digitize(lgrid, bins)
 
         map = self.get_rmap()
@@ -356,8 +369,8 @@ class CMBField:
             if counts[i] != 0: 
                 cls[i] = np.mean(PSMap[idx])
                 ls[i] = np.mean(lgrid[idx])
-        
-        cls *= 2*np.sqrt(self.cell_size*self.angular_box_size/60.*np.pi/180.)
+        print('cls', cls.shape)
+        # cls *= self.angular_box_size /(self.cell_size*60.)*np.pi/180.
         # cls *= self.pix_scale_rad #2*np.sqrt(self.pix_scale)
         if not raw_cls:
             cls *= ls * (ls + 1) / (2 * np.pi**2)
@@ -397,12 +410,12 @@ class CMBField:
         appodized_map = window * map
         ls, cls = self.calculate_2d_spectrum(appodized_map, 50, 5000)
         dls = ls * (ls + 1) / (2 * np.pi**2) * cls
-        plt.loglog(ls, dls*10**6, label='2D Spectrum')
+        plt.loglog(ls, dls, label='2D Spectrum')
             
         ls, dls, counts = self.calculate_cls()
         self.log.info('dls >0: %s' % dls[dls >0].shape)
         m = dls > 0
-        plt.loglog(ls[m], dls[m]*10**6, label=r'$D_{\ell}$')
+        plt.loglog(ls[m], dls[m], label=r'$D_{\ell}$')
         
         if title is not None: 
             plt.title(title)
@@ -423,6 +436,6 @@ def plot_fields(field, title=None, cmap='viridis', norm=None):
 # @njit(parallel=True)
 def apply_linear_power_or_transfer(delta_c,kgrid,kLin,PLin_or_TFLin,BoxSize,grid):
     # Helperfunction to apply interpolated powerspectrum or transferfunction in parallel
-    for i in range(kgrid.shape[0]):
+    for i in prange(kgrid.shape[0]):
         delta_c[i] *= np.interp(kgrid[i],kLin,PLin_or_TFLin)
     delta_c[0,0] = 0
