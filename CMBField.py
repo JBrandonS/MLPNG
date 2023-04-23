@@ -131,7 +131,7 @@ class CMBField:
         
         # Multiply by sqrt(Primordial Power Spectrum) to apply initial conditions
         ppk = self.calc_primordial_power()
-        density_field *=  np.sqrt( ppk ) * self.pix_scale
+        density_field *=  np.sqrt( ppk ) * self.resolution**2/(self.box_size/self.h)**1.5
         if debug_plots: plot_fields(np.abs(density_field), "FFT Field (+ Primordial Power Spectrum)", norm=LogNorm())
         
         # Cut-off beyond Nyquist Frequency
@@ -160,7 +160,7 @@ class CMBField:
         
         self.log.debug('Finished generating density field with seed {}'.format(seed))
         self.r_density_field = final_field.copy()
-        return  self.r_density_field
+        return  self.r_density_field * 10**12 * 10**7
 
 
     def calc_white_noise(self, kgrid=None, loc=0, scale=1, seed=None):
@@ -215,14 +215,14 @@ class CMBField:
         # Apply the transfer function using the mask and indices
         transfers = np.zeros(kgrid.shape)
         # transfers[mask] = np.array([self.transfer_interp[k](ell) for k, ell in zip(indices[mask], ellgrid[mask])])
+        
         print('Calculating transfer function...', end=' ')
-        for x in prange(ellgrid.shape[0]):
-            for y in np.arange(ellgrid.shape[1]):
-                if mask[x,y]:
-                    transfers[x,y] += np.mean([self.transfer_interp[k](ellgrid[x,y]) for k in np.arange(len(self.qs))])
-            print(x, end=' ')
+        for x in range(ellgrid.shape[0]):
+            valid_indices = np.where(mask[x])
+            transfers[x, valid_indices] = np.mean([self.transfer_interp[k](ellgrid[x, valid_indices]) for k in range(len(self.qs))], axis=0)
+            print(f'{x + 1}/{ellgrid.shape[0]}', end=' ', flush=True)
         print('Done!')
-        return transfers 
+        return transfers
 
 
     def find_closest_index(self, k, qs):
@@ -302,7 +302,7 @@ class CMBField:
     def calculate_2d_spectrum(self,Map,delta_ell,ell_max):
         "calcualtes the power spectrum of a 2d map by FFTing, squaring, and azimuthally averaging"
         N=self.resolution
-        pix_size= self.angular_box_size/(self.cell_size*60) #/ self.resolution
+        pix_size= self.angular_box_size/(60) / self.resolution
         
         # make a 2d ell coordinate system
         ones = np.ones(N)
