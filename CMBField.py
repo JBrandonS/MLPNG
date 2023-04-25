@@ -140,8 +140,10 @@ class CMBField:
         if debug_plots: plot_fields(np.abs(density_field), "FFT Field (+ Non-Gaussianity)", norm=LogNorm())
 
         self.transfers = self.calc_transfer_field()
-        density_field *= self.transfers #* self.grid**2/(self.box_size/self.h)**1.5
+        density_field *= self.transfers * self.grid**2/(self.box_size/self.h)**1.5
         if debug_plots: plot_fields(np.abs(density_field), "FFT Field (+ transfer function)", norm=LogNorm())
+
+        # density_field[self.kgrid > self.kNyq] = 0.+0.j
 
         # Go into real space to return the real density field
         self.c_density_field = density_field.copy()
@@ -184,7 +186,6 @@ class CMBField:
         pk[0,0] = 0
         return pk
 
-
     def calc_non_gaussian(self, F_nl, field):
         return 5/3 * F_nl * field**2
     
@@ -197,7 +198,8 @@ class CMBField:
         # print(indices.shape, indices)
         
         # Create a mask for the conditions (0 < k <= kNyq or self.ells < 2)
-        mask = (indices > 0) & (ellgrid >= 2) & (kgrid <= self.kNyq) & (ellgrid < 5000)
+        k_indices = np.where(self.qs < self.kNyq)[0]
+        mask = (indices > 0) & (ellgrid >= 2) & (kgrid >= self.kF) & (kgrid < self.kNyq) & (ellgrid < 5000)
         self.log.debug('Number of elements in mask: {}'.format(np.sum(mask)))
         
         # Apply the transfer function using the mask and indices
@@ -207,7 +209,7 @@ class CMBField:
         self.log.info('Calculating transfer function... that might take a while...')
         for x in range(ellgrid.shape[0]):
             valid_indices = np.where(mask[x])
-            transfers[x, valid_indices] += np.mean([self.transfer_interp[k](ellgrid[x, valid_indices]) for k in range(len(self.qs))], axis=0)
+            transfers[x, valid_indices] += np.sum([self.transfer_interp[k](ellgrid[x, valid_indices]) for k in k_indices], axis=0)
         self.log.info('Done!')
         return transfers
 
@@ -273,62 +275,14 @@ class CMBField:
             self._get_camb_cmb_pk_value = self.results.get_cmb_power_spectra(CMB_unit='muK', spectra=[theory_spectra])[theory_spectra]
         return self._get_camb_cmb_pk_value
 
-    def cosine_window(self, N):
+    def cosine_window(self, grid):
         "makes a cosine window for apodizing to avoid edges effects in the 2d FFT" 
-        # make a 2d coordinate system
-        N=int(N) 
-        ones = np.ones(N)
-        inds  = (np.arange(N)+.5 - N/2.)/N * np.pi ## eg runs from -pi/2 to pi/2
-        X = np.outer(ones,inds)
-        Y = np.transpose(X)
-    
-        # make a window map
-        window_map = np.cos(X) * np.cos(Y)
+        window_map = np.cos(self.kmesh[0]) * np.cos(self.kmesh[1])
+        window_map = self._fillgrid(window_map, d_type=np.float64)
         return(window_map)
 
-    def calculate_2d_spectrum(self,Map,delta_ell,ell_max, kgrid=None):
-        "calcualtes the power spectrum of a 2d map by FFTing, squaring, and azimuthally averaging"
-        grid=self.grid
-        
-        # make a 2d ell coordinate system
-        if kgrid is None:
-            ones = np.ones(grid)
-            inds  = (np.arange(grid)+.5 - grid/2.) /(grid-1.)
-            kX = np.outer(ones,inds) / self.pix_size_rad
-            kY = np.transpose(kX)
-            K = np.sqrt(kX**2. + kY**2.)
-            ell_scale_factor = 2*np.pi
-        else:
-            K = kgrid
-            ell_scale_factor = self.d_A
-            
-        ell2d = K * ell_scale_factor
-        self.log.info(f'ell2d min: {ell2d.min()}, max: {ell2d.max()}')
-
-        # make an array to hold the power spectrum results
-        N_bins = int(ell_max/delta_ell)
-        ell_array = np.arange(N_bins)
-        CL_array = np.zeros(N_bins)
-        
-        # get the 2d fourier transform of the map
-        FMap1 = np.fft.ifft2(np.fft.fftshift(Map))
-        FMap2 = np.fft.ifft2(np.fft.fftshift(Map))
-        PSMap = np.fft.fftshift(np.real(np.conj(FMap1) * FMap2))
-        
-        # fill out the spectra
-        i = 0
-        while (i < N_bins):
-            ell_array[i] = (i + 0.5) * delta_ell
-            inds_in_bin = ((ell2d >= (i* delta_ell)) * (ell2d < ((i+1)* delta_ell))).nonzero()
-            if np.sum(inds_in_bin) != 0:
-                CL_array[i] = np.mean(PSMap[inds_in_bin])
-            # print(i, ell_array[i], inds_in_bin, CL_array[i])
-            i = i + 1
     
-        # return the power spectrum and ell bins
-        return(ell_array, CL_array*np.sqrt(self.pix_size_rad)*2.)
-    
-    def calculate_cls(self, map=None, lmin=2, lmax=5000, raw_cls=False, nbins=100):
+    def calculate_cls(self, map=None, lmin=2, lmax=5000, raw_cls=False, nbins=4998, appodize=True):
         self.log.debug('Calculating C_ls...')
         if map is None:
             map = self.get_rmap()
@@ -340,8 +294,12 @@ class CMBField:
         
         bins = np.linspace(lmin, lmax, nbins+1)
         bin_indices = np.digitize(lgrid, bins)
+
+        if appodize:
+            window = self.cosine_window(self.grid)
+            map *=  window
         
-        FMap = np.fft.ifft2(np.fft.fftshift(map))
+        FMap = np.fft.ifft2(map)
         PSMap = np.real(np.conj(FMap) * FMap)
         
         cls = np.zeros(nbins)
@@ -366,6 +324,7 @@ class CMBField:
     def Plot_CMB_Map(self, Map_to_Plot,c_min,c_max,X_width,Y_width):
         from mpl_toolkits.axes_grid1 import make_axes_locatable
         print("map mean:",np.mean(Map_to_Plot),"map rms:",np.std(Map_to_Plot))
+        
         plt.gcf().set_size_inches(10, 10)
         im = plt.imshow(Map_to_Plot, interpolation='bilinear', origin='lower',cmap=cm.RdBu_r)
         # im.set_clim(c_min,c_max)
@@ -380,22 +339,16 @@ class CMBField:
         cbar.set_label('temperature [uK]', rotation=270)
         plt.show()
     
-    def plot_cls(self, kgrid=None, title=None, plot_theory=True, theory_spectra='unlensed_scalar'):               
+    def plot_cls(self, kgrid=None, title=None, plot_theory=True, theory_spectra='unlensed_scalar', uk_units=True):               
         if plot_theory:
             theory = self.get_camb_cmb_pk(theory_spectra)[2:5000]
-            plt.loglog(np.arange(len(theory)), theory[:, 0], label='Theory')
-
-        # map = self.get_rmap()
-        # window = (self.cosine_window(self.grid))
-        # map *= window
-        
-        # ls, cls = self.calculate_2d_spectrum(map, 1, 5000, kgrid)
-        # # cls *= ls * (ls + 1) / (2 * np.pi**2)
-        # plt.loglog(ls, cls*10**6, label='2D Spectrum')
+            plt.semilogy(np.arange(len(theory)), theory[:, 0], label='Theory (CAMB)')
             
         ls, dls, counts = self.calculate_cls()
+        if uk_units:
+            dls *= 10**6
         m = dls > 0
-        plt.loglog(ls[m], dls[m]*10**6, label=r'$D_{\ell}$')
+        plt.semilogy(ls[m], dls[m], label=r'$D_{\ell}$')
         
         if title is not None: 
             plt.title(title)
