@@ -1,3 +1,4 @@
+from ctypes.wintypes import LGRPID
 from re import M
 import matplotlib
 import numpy as np
@@ -27,13 +28,13 @@ class CMBField:
         'ombh2': 0.02233,
         'omch2': 0.1198,
         'tau': 0.0561,
-        'lmax': 10000,
+        'lmax': 5000,
         'accuracy_boost': 4,
     }
     
     def __init__(self, 
                  box_size,
-                 resolution,  
+                 grid,  
                  camb_params=None, # type: ignore
                  cosmo_params=default_cosmo_params, 
                  run_camb=True, 
@@ -47,10 +48,10 @@ class CMBField:
             self.log = logging.getLogger(__name__)
             
         self.log.debug('Initializing CMBField...')
-        assert resolution%2 == 0, self.log.fatal("choose an even resolution size. Got: {}".format(resolution))
+        assert grid%2 == 0, self.log.fatal("choose an even resolution size. Got: {}".format(grid))
         
         #Number of grid-points per dimension
-        self.resolution = resolution
+        self.grid = grid
         self.cosmo = cosmo_params
         self.h = self.cosmo['h']
     
@@ -60,22 +61,19 @@ class CMBField:
         #Size of periodic box e.g. in Mpc/h
         self.box_size = box_size 
         #Physical size of grid-cell
-        self.cell_size = self.box_size / self.resolution 
+        self.cell_size = self.box_size / self.grid 
         #Fundamental mode of the box
         self.kF = 2*np.pi / self.box_size
         #Nyquist frequency of the grid
-        self.kNyq = self.kF * self.resolution / 2
+        self.kNyq = self.kF * self.grid / 2
         
         #Setup mesh and k-space grid
-        self.log.debug('resolution: {}, box_size: {}, cell_size: {}'.format(self.resolution, self.box_size, self.cell_size))
-        self.kx = 2 * np.pi * np.fft.fftfreq( self.resolution, self.cell_size)
-        self.ky = 2 * np.pi * np.fft.rfftfreq(self.resolution, self.cell_size) # Note rfft.
+        self.log.debug('resolution: {}, box_size: {}, cell_size: {}'.format(self.grid, self.box_size, self.cell_size))
+        self.kx = 2 * np.pi * np.fft.fftfreq( self.grid, self.cell_size)
+        self.ky = 2 * np.pi * np.fft.rfftfreq(self.grid, self.cell_size) # Note rfft.
         self.kmesh = np.meshgrid(self.kx,self.ky,indexing="ij")
-        self.k_hgrid = np.sqrt(self.kmesh[0]**2 + self.kmesh[1]**2)
-        self.kgrid = self.k_hgrid * self.h
-        
-        self.kmin = np.min(self.k_hgrid)
-        self.kmax = np.max(self.k_hgrid)
+        self.kgrid = np.sqrt(self.kmesh[0]**2 + self.kmesh[1]**2)
+        self.khgrid = self.kgrid * self.h
 
         self.camb_params = camb_params if camb_params is not None else camb.CAMBparams()
         if camb_params is None and run_camb:
@@ -92,11 +90,8 @@ class CMBField:
             self.init_camb()
         else: 
             self.log.warning('Not running CAMB. No results will be available.\nYou will need to set values [results, d_A, Ls, qs, transfer_func] or run init_camb manually.')
-
-        self.pix_scale = self.resolution**2/(self.box_size/self.h)**1.5
-        # self.pix_scale = self.cell_size / (self.box_size / self.h) * self.d_A
-        self.log.info('Finished generating CMBField with resolution {}, box size {} Mpc/h, cell size {}, and pixel scale {}'.format(self.resolution, self.box_size, self.cell_size, self.pix_scale)) 
-        self.log.info('min k: {}, max k: {}. kF: {}, KNyq: {}'.format(self.kmin, self.kmax, self.kF, self.kNyq))
+            
+        self.log.info('Finished generating CMBField with resolution {}, box size {} Mpc/h, cell size {}'.format(self.grid, self.box_size, self.cell_size)) 
 
 
     def init_camb(self, params=None):
@@ -107,22 +102,23 @@ class CMBField:
             self.log.debug('Running CAMB with provided parameters {}...'.format(params))
         
         self.results = camb.get_results(params)
-        self.d_A = self.results.angular_diameter_distance(self.cosmo['z_recomb']) * 1000
+        self.d_A = self.results.angular_diameter_distance(self.cosmo['z_recomb']) * (1 + self.cosmo['z_recomb'])
         
         self.Ls, self.qs, self.transfer_func = self.results.get_cmb_transfer_data().get_transfer()
         self.transfer_interp = [interp1d(self.Ls, self.transfer_func[:, q], kind='cubic') for q in range(len(self.qs))]
         
-        self.ellgrid = self.kgrid * self.d_A
+        self.ellgrid = self.khgrid * self.d_A
         self.log.debug(f'ell gird: {self.ellgrid.shape} {self.ellgrid}')
         
-        self.angular_box_size = (self.box_size) / self.d_A 
-        self.pix_scale_rad = self.angular_box_size / self.resolution
+        self.theta = (self.box_size*self.h) / self.d_A * 60 * 180 / np.pi #Field of view in arcminutes
+        self.pix_size = self.theta / self.grid #Size of pixel in arcminutes
+        self.pix_size_rad = self.pix_size / 60 * np.pi / 180 #Size of pixel in radians
         
-        self.log.info('d_A: {}, angular size: {}'.format(self.d_A, self.angular_box_size))
+        self.log.info('d_A: {}, angular size: {}'.format(self.d_A, self.theta))
         self.log.debug('Finished running CAMB.')
         
 
-    def GenerateField(self, f_nl=0., seed=None, debug_plots=False, linear=False):
+    def GenerateField(self, f_nl=0., seed=None, debug_plots=False):
         seed = self.seed if seed is None else seed
         
         # Start with gaussian white noise
@@ -131,36 +127,30 @@ class CMBField:
         
         # Multiply by sqrt(Primordial Power Spectrum) to apply initial conditions
         ppk = self.calc_primordial_power()
-        density_field *=  np.sqrt( ppk ) * self.resolution**2/(self.box_size/self.h)**1.5
+        density_field *=  np.sqrt( ppk ) * self.grid**2/(self.box_size/self.h)**1.5
         if debug_plots: plot_fields(np.abs(density_field), "FFT Field (+ Primordial Power Spectrum)", norm=LogNorm())
         
         # Cut-off beyond Nyquist Frequency
-        density_field[self.k_hgrid > self.kNyq] = 0.+0.j
+        density_field[self.kgrid > self.kNyq] = 0.+0.j
 
         # Move to real space to add NG terms
-        # real_field = np.fft.irfft2(np.fft.fftshift(density_field)).real
-        real_field = np.fft.irfft2(density_field, norm="backward").real
+        real_field = np.fft.irfft2(density_field).real
         real_field += self.calc_non_gaussian(f_nl, real_field)
-        density_field = np.fft.rfft2(real_field, norm="forward")
+        density_field = np.fft.rfft2(real_field)
         if debug_plots: plot_fields(np.abs(density_field), "FFT Field (+ Non-Gaussianity)", norm=LogNorm())
 
-        if linear:
-            self.log.info("Applying linear transfer function...")
-            kLin, TFLin = np.loadtxt("data/linear_thomas/LinearTransfer.dat")[:,[0,1]].T
-            apply_linear_power_or_transfer(density_field, self.kgrid, kLin, TFLin, self.box_size, self.resolution)
-        else:
-            self.transfers = self.calc_transfer_field()
-            density_field *= self.transfers #* self.pix_scale
+        self.transfers = self.calc_transfer_field()
+        density_field *= self.transfers #* self.grid**2/(self.box_size/self.h)**1.5
         if debug_plots: plot_fields(np.abs(density_field), "FFT Field (+ transfer function)", norm=LogNorm())
 
         # Go into real space to return the real density field
         self.c_density_field = density_field.copy()
-        final_field = np.fft.irfft2(np.fft.fftshift(density_field), norm="backward").real
+        final_field = np.fft.irfft2(density_field).real
         if debug_plots: plot_fields(final_field, "Complete Density Field")
         
         self.log.debug('Finished generating density field with seed {}'.format(seed))
         self.r_density_field = final_field.copy()
-        return  self.r_density_field * 10**12 * 10**7
+        return  self.r_density_field
 
 
     def calc_white_noise(self, kgrid=None, loc=0, scale=1, seed=None):
@@ -183,7 +173,7 @@ class CMBField:
         """
         Calculate the primordial power spectrum
         """
-        if kgrid is None: kgrid = self.kgrid
+        if kgrid is None: kgrid = self.khgrid
         if cosmo is None: cosmo = self.cosmo
         
         pk = np.zeros_like(kgrid)
@@ -191,14 +181,12 @@ class CMBField:
         
         pfactor = cosmo['A']*cosmo['kpivot']**(1.-cosmo['ns'])
         pk[idx] = np.power(kgrid[idx], cosmo['ns']-4.)*pfactor
+        pk[0,0] = 0
         return pk
 
 
-    def calc_non_gaussian(self, F_nl, real_field):
-        """
-        Calculate the non-gaussianity term
-        """
-        return 5/3 * F_nl * real_field**2
+    def calc_non_gaussian(self, F_nl, field):
+        return 5/3 * F_nl * field**2
     
     def calc_transfer_field(self, kgrid=None, ellgrid=None):
         if kgrid is None: kgrid = self.kgrid
@@ -209,29 +197,26 @@ class CMBField:
         # print(indices.shape, indices)
         
         # Create a mask for the conditions (0 < k <= kNyq or self.ells < 2)
-        mask = (indices > 0) & (ellgrid >= 2)
+        mask = (indices > 0) & (ellgrid >= 2) & (kgrid <= self.kNyq) & (ellgrid < 5000)
         self.log.debug('Number of elements in mask: {}'.format(np.sum(mask)))
         
         # Apply the transfer function using the mask and indices
         transfers = np.zeros(kgrid.shape)
         # transfers[mask] = np.array([self.transfer_interp[k](ell) for k, ell in zip(indices[mask], ellgrid[mask])])
         
-        print('Calculating transfer function...', end=' ')
+        self.log.info('Calculating transfer function... that might take a while...')
         for x in range(ellgrid.shape[0]):
             valid_indices = np.where(mask[x])
-            transfers[x, valid_indices] = np.mean([self.transfer_interp[k](ellgrid[x, valid_indices]) for k in range(len(self.qs))], axis=0)
-            print(f'{x + 1}/{ellgrid.shape[0]}', end=' ', flush=True)
-        print('Done!')
+            transfers[x, valid_indices] += np.mean([self.transfer_interp[k](ellgrid[x, valid_indices]) for k in range(len(self.qs))], axis=0)
+        self.log.info('Done!')
         return transfers
-
 
     def find_closest_index(self, k, qs):
         return np.abs(qs - k).argmin()
     
-    
     def get_pk(self, field=None, kgrid=None, kmax=None):
         field = self.c_density_field if field is None else field
-        kgrid = self.kgrid if kgrid is None else kgrid
+        kgrid = self.khgrid if kgrid is None else kgrid
         kmax = self.kNyq if kmax is None else kmax
 
         kmax_n = np.int64(np.ceil(kmax / self.kF))
@@ -249,21 +234,25 @@ class CMBField:
             indices = valid_indices & (k_indices == k_index)
             kxi_filtered, kyi_filtered = kxi_indices[indices], kyi_indices[indices]
             Pks[k_index] = np.sum(delta2[kxi_filtered, kyi_filtered])
-            ks[k_index] = np.sum(self.k_hgrid[kxi_filtered, kyi_filtered])
+            ks[k_index] = np.sum(self.kgrid[kxi_filtered, kyi_filtered])
             ns[k_index] = np.sum(indices)
 
         ks /= ns
-        Pks *= 1 / ns * self.box_size ** 3 / self.resolution ** 4
+        Pks *= 1 / ns * self.box_size ** 3 / self.grid ** 4
         return ks, Pks, ns
     
     def get_cmap(self, norm=True):
         val = self.c_density_field 
-        if norm: val /= self.c_density_field.std()
+        if norm:
+            val -= val.mean() 
+            val /= self.c_density_field.std()
         return val
 
     def get_rmap(self, norm=True):
         val = self.r_density_field 
-        if norm: val /= self.r_density_field.std()
+        if norm: 
+            val -= val.mean()
+            val /= self.r_density_field.std()
         return val
 
     def _fillgrid(self, c_fftgrid, d_type=complex):
@@ -271,11 +260,11 @@ class CMBField:
             self.log.debug('Grid is already full.')
             return c_fftgrid
         
-        full_c_fftgrid = np.empty((self.resolution, self.resolution), dtype=d_type)
-        full_c_fftgrid[:, :self.resolution // 2 + 1] = c_fftgrid
-        for i in range(self.resolution):
-            for j in range(1, self.resolution // 2):
-                full_c_fftgrid[i, self.resolution - j] = np.conj(full_c_fftgrid[i, j])
+        full_c_fftgrid = np.empty((self.grid, self.grid), dtype=d_type)
+        full_c_fftgrid[:, :self.grid // 2 + 1] = c_fftgrid
+        for i in range(self.grid):
+            for j in range(1, self.grid // 2):
+                full_c_fftgrid[i, self.grid - j] = np.conj(full_c_fftgrid[i, j])
         return full_c_fftgrid
 
     _get_camb_cmb_pk_value = None
@@ -289,33 +278,32 @@ class CMBField:
         # make a 2d coordinate system
         N=int(N) 
         ones = np.ones(N)
-        inds  = (np.arange(N)+.5 - N/2.)/N *np.pi ## eg runs from -pi/2 to pi/2
+        inds  = (np.arange(N)+.5 - N/2.)/N * np.pi ## eg runs from -pi/2 to pi/2
         X = np.outer(ones,inds)
         Y = np.transpose(X)
     
         # make a window map
         window_map = np.cos(X) * np.cos(Y)
-    
-        # return the window map
         return(window_map)
 
-    def calculate_2d_spectrum(self,Map,delta_ell,ell_max):
+    def calculate_2d_spectrum(self,Map,delta_ell,ell_max, kgrid=None):
         "calcualtes the power spectrum of a 2d map by FFTing, squaring, and azimuthally averaging"
-        N=self.resolution
-        pix_size= self.angular_box_size/(60) / self.resolution
+        grid=self.grid
         
         # make a 2d ell coordinate system
-        ones = np.ones(N)
-        inds  = (np.arange(N)+.5 - N/2.) /(N-1.)
-        kX = np.outer(ones,inds) / (pix_size/60. * np.pi/180.)
-        kY = np.transpose(kX)
-        K = np.sqrt(kX**2. + kY**2.)
-        K = self.kgrid
-
-        ell_scale_factor = 2*np.pi* self.d_A * self.angular_box_size
+        if kgrid is None:
+            ones = np.ones(grid)
+            inds  = (np.arange(grid)+.5 - grid/2.) /(grid-1.)
+            kX = np.outer(ones,inds) / self.pix_size_rad
+            kY = np.transpose(kX)
+            K = np.sqrt(kX**2. + kY**2.)
+            ell_scale_factor = 2*np.pi
+        else:
+            K = kgrid
+            ell_scale_factor = self.d_A
+            
         ell2d = K * ell_scale_factor
-
-        self.log.info(f'ell2d.max: {ell2d.max()} min: {ell2d.min()}')
+        self.log.info(f'ell2d min: {ell2d.min()}, max: {ell2d.max()}')
 
         # make an array to hold the power spectrum results
         N_bins = int(ell_max/delta_ell)
@@ -326,39 +314,35 @@ class CMBField:
         FMap1 = np.fft.ifft2(np.fft.fftshift(Map))
         FMap2 = np.fft.ifft2(np.fft.fftshift(Map))
         PSMap = np.fft.fftshift(np.real(np.conj(FMap1) * FMap2))
+        
         # fill out the spectra
         i = 0
         while (i < N_bins):
             ell_array[i] = (i + 0.5) * delta_ell
             inds_in_bin = ((ell2d >= (i* delta_ell)) * (ell2d < ((i+1)* delta_ell))).nonzero()
-            if np.sum(inds_in_bin) == 0:
-                CL_array[i] = 0
-            else:
+            if np.sum(inds_in_bin) != 0:
                 CL_array[i] = np.mean(PSMap[inds_in_bin])
             # print(i, ell_array[i], inds_in_bin, CL_array[i])
             i = i + 1
     
         # return the power spectrum and ell bins
-        return(ell_array, CL_array*np.sqrt(pix_size/60.* np.pi/180.)*2.)
+        return(ell_array, CL_array*np.sqrt(self.pix_size_rad)*2.)
     
-    def calculate_cls(self, lmin=2, lmax=5000, raw_cls=False, nbins=1000):
+    def calculate_cls(self, map=None, lmin=2, lmax=5000, raw_cls=False, nbins=100):
         self.log.debug('Calculating C_ls...')
-        kgrid = self._fillgrid(self.kgrid, d_type=float)
-        lgrid = self._fillgrid(self.ellgrid, d_type=np.int64) #np.round(kgrid * self.d_A).astype(np.int64)
-
+        if map is None:
+            map = self.get_rmap()
+        
+        lgrid = self._fillgrid(self.ellgrid, d_type=float)
         lmin = np.max([lmin, np.min(lgrid), self.kF * self.h * self.d_A])
         lmax = np.min([lmax, np.max(lgrid), self.kNyq * self.h * self.d_A])
         self.log.info(f'lmin: {lmin}, lmax: {lmax}')
         
         bins = np.linspace(lmin, lmax, nbins+1)
         bin_indices = np.digitize(lgrid, bins)
-
-        map = self.get_rmap()
-        # map = self._fillgrid(self.get_cmap())
-        map *= self.cosine_window(self.resolution)
-        FMap1 = np.fft.ifft2(np.fft.fftshift(map))
-        FMap2 = np.fft.ifft2(np.fft.fftshift(map))
-        PSMap = np.fft.fftshift(np.real(np.conj(FMap1) * FMap2))
+        
+        FMap = np.fft.ifft2(np.fft.fftshift(map))
+        PSMap = np.real(np.conj(FMap) * FMap)
         
         cls = np.zeros(nbins)
         counts = np.zeros(nbins)
@@ -369,9 +353,10 @@ class CMBField:
             if counts[i] != 0: 
                 cls[i] = np.mean(PSMap[idx])
                 ls[i] = np.mean(lgrid[idx])
-        print('cls', cls.shape)
-        # cls *= self.angular_box_size /(self.cell_size*60.)*np.pi/180.
-        # cls *= self.pix_scale_rad #2*np.sqrt(self.pix_scale)
+                
+        self.log.debug(f'cls {cls.shape} ls {ls}')
+        
+        cls *= 2*np.sqrt(self.pix_size_rad)
         if not raw_cls:
             cls *= ls * (ls + 1) / (2 * np.pi**2)
             
@@ -383,39 +368,34 @@ class CMBField:
         print("map mean:",np.mean(Map_to_Plot),"map rms:",np.std(Map_to_Plot))
         plt.gcf().set_size_inches(10, 10)
         im = plt.imshow(Map_to_Plot, interpolation='bilinear', origin='lower',cmap=cm.RdBu_r)
-        im.set_clim(c_min,c_max)
+        # im.set_clim(c_min,c_max)
         ax=plt.gca()
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("right", size="5%", pad=0.05)
 
         cbar = plt.colorbar(im, cax=cax)
-        #cbar = plt.colorbar()
-        im.set_extent([0,X_width,0,Y_width])
+        # im.set_extent([0,X_width,0,Y_width])
         plt.ylabel('angle $[^\circ]$')
         plt.xlabel('angle $[^\circ]$')
-        cbar.set_label('tempearture [uK]', rotation=270)
-        
+        cbar.set_label('temperature [uK]', rotation=270)
         plt.show()
     
-    def plot_cls(self, title=None, plot_theory=True, theory_spectra='unlensed_scalar'):               
-        plt.figure()
-        
+    def plot_cls(self, kgrid=None, title=None, plot_theory=True, theory_spectra='unlensed_scalar'):               
         if plot_theory:
             theory = self.get_camb_cmb_pk(theory_spectra)[2:5000]
             plt.loglog(np.arange(len(theory)), theory[:, 0], label='Theory')
 
-        # map = self._fillgrid(self.get_cmap())
-        map = self.get_rmap()
-        window = (self.cosine_window(self.resolution))
-        appodized_map = window * map
-        ls, cls = self.calculate_2d_spectrum(appodized_map, 50, 5000)
-        dls = ls * (ls + 1) / (2 * np.pi**2) * cls
-        plt.loglog(ls, dls, label='2D Spectrum')
+        # map = self.get_rmap()
+        # window = (self.cosine_window(self.grid))
+        # map *= window
+        
+        # ls, cls = self.calculate_2d_spectrum(map, 1, 5000, kgrid)
+        # # cls *= ls * (ls + 1) / (2 * np.pi**2)
+        # plt.loglog(ls, cls*10**6, label='2D Spectrum')
             
         ls, dls, counts = self.calculate_cls()
-        self.log.info('dls >0: %s' % dls[dls >0].shape)
         m = dls > 0
-        plt.loglog(ls[m], dls[m], label=r'$D_{\ell}$')
+        plt.loglog(ls[m], dls[m]*10**6, label=r'$D_{\ell}$')
         
         if title is not None: 
             plt.title(title)
