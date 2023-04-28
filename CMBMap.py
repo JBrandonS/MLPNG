@@ -15,7 +15,7 @@ import matplotlib.cm as cm
 
 from numba import prange, njit
 
-class CMBField:
+class CMBMap:
     # General \Lambda CDM parameters
     default_cosmo_params = {
         'h': 0.6711,
@@ -62,6 +62,8 @@ class CMBField:
         self.kF = 2*np.pi / self.box_size
         #Nyquist frequency of the grid
         self.kNyq = self.kF * self.grid / 2
+
+        self.pix_size = self.cell_size * 60. * 180. / np.pi # in arcmins
         
         #Setup mesh and k-space grid
         self.log.debug('resolution: {}, box_size: {}, cell_size: {}'.format(self.grid, self.box_size, self.cell_size))
@@ -70,6 +72,17 @@ class CMBField:
         self.kmesh = np.meshgrid(self.kx,self.ky,indexing="ij")
         self.kgrid = np.sqrt(self.kmesh[0]**2 + self.kmesh[1]**2)
         self.khgrid = self.kgrid * self.h
+
+        # onesvec = np.ones(grid)
+        # inds  = (np.arange(grid)+.5 - grid/2.) /(grid-1.) # create an array of size N between -0.5 and +0.5
+        # # compute the outer product matrix: X[i, j] = onesvec[i] * inds[j] for i,j 
+        # # in range(N), which is just N rows copies of inds - for the x dimension
+        # X = np.outer(onesvec,inds) 
+        # # compute the transpose for the y dimension
+        # Y = np.transpose(X)
+        # # radial component R
+        # self.kgrid = np.sqrt(X**2. + Y**2.)
+        # self.khgrid = self.kgrid * self.h
 
         self.camb_params = camb_params
         if run_camb: 
@@ -93,25 +106,46 @@ class CMBField:
                 params.Want_CMB = True
                 params.WantTransfer = True
                 self.camb_params = params
+                self.log.debug(params)
         
         self.camb_results = camb.get_results(params)
         self.d_A = self.camb_results.angular_diameter_distance(cosmo['z_recomb']) * (1 + cosmo['z_recomb'])
         
         self.Ls, self.qs, self.transfer_func = self.camb_results.get_cmb_transfer_data().get_transfer()
-        self.transfer_interp = [interp1d(self.Ls, self.transfer_func[:, q], axis=0, kind='cubic') for q in range(len(self.qs))]
+        self.transfer_interp = [interp1d(self.Ls, self.transfer_func[:, q], kind='cubic') for q in range(len(self.qs))]
 
         self.ellgrid = self.kgrid * self.d_A
         self.ellhgrid = self.khgrid * self.d_A
-        self.log.debug('Finished running CAMB.')
-        
 
-    def GenerateField(self, f_nl=0., seed=0):       
+        # pix_to_rad = (self.pix_size/60. * np.pi/180.) # going from pix_size in arcmins to degrees and then degrees to radians
+        # ell_scale_factor = 2. * np.pi * self.d_A / pix_to_rad  # now relating the angular size in radians to multipoles
+        # self.ellgrid = self.kgrid * ell_scale_factor
+        # self.ellhgrid = self.ellgrid * self.h
+        
+        self.log.debug('Finished running CAMB.')
+
+    def make_CMB_T_map(self, N, pix_size):
+        FT_2d = self.GenerateField() # we take the sqrt since the power spectrum is T^2
+        # plt.imshow(np.abs(FT_2d))
+        # plt.show()
+        
+        # move back from ell space to real space
+        CMB_T = FT_2d #np.fft.ifft2(np.fft.fftshift(FT_2d)) 
+        # move back to pixel space for the map
+        CMB_T = CMB_T/(pix_size /60.* np.pi/180.)
+        # we only want to plot the real component
+        CMB_T = np.real(CMB_T)
+
+        ## return the map
+        return(CMB_T)
+
+    def GenerateField(self, f_nl=1., seed=0):       
         # Start with gaussian white noise
         field = calc_white_noise(self.kgrid.shape, seed=seed)
         
         # Multiply by sqrt(Primordial Power Spectrum) to apply initial conditions
         ppk = calc_primordial_power(self.khgrid, self.cosmo)
-        field *=  np.sqrt(ppk)  * self.grid**2/(self.box_size/self.h)**1.5
+        field *=  np.sqrt(ppk) * self.grid**2/(self.box_size/self.h)**1.5
         
         # Cut-off beyond Nyquist Frequency
         field[self.kgrid > self.kNyq] = 0.+0.j
@@ -121,105 +155,50 @@ class CMBField:
         real_field += self.calc_non_gaussian(f_nl, real_field)
         field = np.fft.fftshift(np.fft.rfft2(real_field))
 
-        sfield = np.fft.fftshift(field)
-        sfield *= np.fft.fftshift(self.calc_transfer_field())
-        field = np.fft.ifftshift(sfield) #* self.grid**2/(self.box_size/self.h)**1.5
+        field *= self.calc_transfer_field()
 
         # Go into real space to return the real density field
         final_field = np.fft.irfft2(field)
         self.r_field = final_field.copy()
         return  final_field
 
-    # def calc_primordial_power_2(self, k, cosmo=None, seed=None):
-    #     """
-    #     Calculate the primordial power spectrum
-    #     """
-    #     if cosmo is None: cosmo = self.cosmo
-    #     pfactor = cosmo['A']*cosmo['kpivot']**(1.-cosmo['ns'])
-    #     return np.power(k, cosmo['ns']-4.)*pfactor
-
     def calc_non_gaussian(self, F_nl, field):
         return 5/3 * F_nl * field**2
-
-    # def calc_transfer_field_2(self, kgrid=None, ellgrid=None, lmax=5000):
-    #     transfers = self.results.get_cmb_transfer_data()
-    #     transfer_T = transfers.delta_p_l_k[0, :, :]  # Extract the temperature transfer function
-
-    #     # kgrid= self.khgrid
-
-    #     # Compute the CMB temperature anisotropy power spectrum using k-based transfer functions
-    #     k_values = transfers.q
-    #     dk = k_values[1:] - k_values[:-1]
-    #     tt = np.zeros(lmax + 1)
-    #     for l in range(2, lmax + 1):
-    #         ell = self.find_closest_index(l, transfers.L)
-    #         integrand = k_values[:-1] ** -1 * self.calc_primordial_power_2(k_values[:-1]) * transfer_T[ell, :-1]
-    #         tt[l] = (2*l+1) /(4 * np.pi) * np.sum(integrand * dk)
-
-    #     plt.figure()
-    #     plt.loglog(tt[2:])
-    #     plt.show()
-
-    #     # Generate a CMB temperature map using the power spectrum
-    #     nside = 512  # Set the desired resolution for the map
-    #     import healpy as hp
-    #     npix = hp.nside2npix(nside)
-    #     cmb_map = hp.synfast(tt, nside, pol=False)
-
-    #     # Plot the generated CMB temperature map
-    #     hp.mollview(cmb_map, title="CMB Temperature Map", unit="muK")
-    #     plt.show()
-    #     return tt
     
     def calc_transfer_field(self, khgrid=None, ellhgrid=None, lmin=2, lmax=5000):
         if khgrid is None: khgrid = self.khgrid
         if ellhgrid is None: ellhgrid = self.ellhgrid 
 
-        k_indices = np.array([find_closest_index(k, self.qs) for k in khgrid.ravel()]).reshape(khgrid.shape)
+        k_indices = np.array([find_closest_index(k, self.qs) for k in khgrid.flatten()]).reshape(khgrid.shape)
         mask = (k_indices > 0) & (ellhgrid >= lmin) & (ellhgrid < lmax) & (khgrid >= self.kF) & (khgrid < self.kNyq)
-        self.log.debug('Number of elements in mask: {}'.format(np.sum(mask)))
         
-        # Apply the transfer function using the mask and indices
+        k_idx = k_indices[mask]
+        ell_vals = ellhgrid[mask]
+        
         transfers = np.zeros(khgrid.shape)
+        transfers[mask] = np.array([self.transfer_interp[k](ell) for k, ell in zip(k_idx, ell_vals)])
+        implot(transfers, title='Transfer Function')
 
-        # here we use the peak approxiamtion for the transfer function
-        transfers[mask] = np.array([self.transfer_interp[k](ell) for k, ell in zip(k_indices[mask], ellhgrid[mask])])
+        # k_idx, ell_vals = make_monotonic(k_idx, ell_vals)
+
+        # plt.figure()
+        # fig, axs = plt.subplots(2,2, figsize=(12,8), sharex = True)
+        # for ix, ax in zip([3, 20, 40, 60], axs.reshape(-1)):
+        #     vals = np.array([self.transfer_interp[k](ix) for k in k_idx])
+        #     ax.plot(self.qs[k_idx], vals)
+        #     ax.set_title(r'$\ell = %s$'%self.Ls[ix])
+        #     if ix>1: ax.set_xlabel(r'$k \rm{Mpc}$')
+        # plt.show()
+        
         return transfers
-    
-    # def get_pk(self, field=None, kgrid=None, kmax=None):
-    #     field = self.c_density_field if field is None else field
-    #     kgrid = self.khgrid if kgrid is None else kgrid
-    #     kmax = self.kNyq if kmax is None else kmax
 
-    #     kmax_n = np.int64(np.ceil(kmax / self.kF))
-    #     ks = np.zeros(kmax_n - 1)
-    #     ns = np.zeros(kmax_n - 1)
-    #     Pks = np.zeros(kmax_n - 1)
-
-    #     k_indices = np.floor(kgrid / self.kF).astype(np.int64)
-    #     delta2 = np.abs(field) ** 2
-    #     valid_indices = (k_indices > 0) & (k_indices < kmax_n) & (kgrid < kmax)
-    #     k_indices -= 1
-
-    #     kxi_indices, kyi_indices = np.indices(kgrid.shape)
-    #     for k_index in range(kmax_n - 1):
-    #         indices = valid_indices & (k_indices == k_index)
-    #         kxi_filtered, kyi_filtered = kxi_indices[indices], kyi_indices[indices]
-    #         Pks[k_index] = np.sum(delta2[kxi_filtered, kyi_filtered])
-    #         ks[k_index] = np.sum(kgrid[kxi_filtered, kyi_filtered])
-    #         ns[k_index] = np.sum(indices)
-
-    #     ks /= ns
-    #     Pks *= 1 / ns * self.box_size ** 3 / self.grid ** 4
-    #     return ks, Pks, ns
-
-    def get_rmap(self, zero_mean=False):
+    def get_rmap(self, zero_mean=True):
         val = self.r_field
-        # if zero_mean: 
-        #     val -= val.mean()
+        if zero_mean: 
+            val -= val.mean()
         return val
 
-    def calculate_cls(self, map=None, lmin=2, lmax=5000, raw_cls=False, nbins=100, muk_units=False):
+    def calculate_cls(self, map=None, lmin=2, lmax=5000, raw_cls=False, nbins=1000, muk_units=True):
         self.log.debug('Calculating C_ls...')
         if map is None:
             map = self.get_rmap()
@@ -229,11 +208,10 @@ class CMBField:
         
         bins = np.linspace(lmin, lmax, nbins+1)
         bin_size = (lmax - lmin) / nbins
-        indices = np.array([find_closest_index(k, self.qs) for k in khgrid.ravel()]).reshape(khgrid.shape)   
+        indices = np.array([find_closest_index(k, self.qs) for k in khgrid.flatten()]).reshape(khgrid.shape)   
         
-        FMap = np.fft.rfft2(np.fft.fftshift(map))
-        PSMap = np.fft.fftshift(np.real(np.matmul(np.conj(FMap.T), FMap)))
-        PSMap = np.fft.fftshift(FMap).real
+        FMap = np.fft.rfft2(map)
+        PSMap = np.real(np.conj(FMap)*FMap)
         
         cls = np.zeros(nbins)
         counts = np.zeros(nbins)
@@ -242,22 +220,23 @@ class CMBField:
             idx = (lhgrid >= lmin + i * bin_size) & (lhgrid <= lmin + (i + 1) * bin_size)
             counts[i] = np.sum(idx)
             if counts[i] > 0: 
-                cls[i] = np.sum(PSMap[idx].ravel())
-                ls[i] = np.mean(lhgrid[idx].ravel())
+                cls[i] = np.mean(PSMap[idx])
+                ls[i] = np.mean(lhgrid[idx])
 
         if not raw_cls:
-            cls *= (ls + 1) / (2 * np.pi**2)
+            cls *= ls * (ls + 1) / (2 * np.pi**2)
 
         if muk_units:
             cmb_unit = 1e6 * 2.7
             cls *= cmb_unit**2
-
+            
+        # cls *= np.sqrt(self.pix_size /60.* np.pi/180.)*2.
         self.log.debug('Done calculating C_ls.')
         return ls, cls, counts
     
-def Plot_CMB_Map(map, c_min=-400,c_max=400):
+def Plot_CMB_Map(map, c_min=-400,c_max=400, X_width=10, Y_width=10):
     from mpl_toolkits.axes_grid1 import make_axes_locatable
-    print("map mean:",np.mean(map),"map rms:",np.std(map))
+    # print("map mean:",np.mean(map),"map rms:",np.std(map))
     
     plt.gcf().set_size_inches(10, 10)
     im = plt.imshow(map, interpolation='bilinear', origin='lower',cmap=cm.RdBu_r) # type: ignore
@@ -267,13 +246,13 @@ def Plot_CMB_Map(map, c_min=-400,c_max=400):
     cax = divider.append_axes("right", size="5%", pad=0.05)
 
     cbar = plt.colorbar(im, cax=cax)
-    # im.set_extent([0,X_width,0,Y_width])
+    im.set_extent([0,X_width,0,Y_width])
     plt.ylabel('angle $[^\circ]$')
     plt.xlabel('angle $[^\circ]$')
     cbar.set_label('temperature [uK]', rotation=270)
     plt.show()
     
-def plot_cls(cmbmap, title=None, lmin=2, lmax=5000, plot_theory=True, theory_spectra='unlensed_scalar', muk_unit=True):               
+def plot_cls(cmbmap, title=None, lmin=2, lmax=5000, plot_theory=True, theory_spectra='unlensed_scalar', muk_unit=False):               
     if plot_theory:
         theory = cmbmap.camb_results.get_cmb_power_spectra(CMB_unit='muK', spectra=[theory_spectra])[theory_spectra][lmin:lmax]
         plt.semilogy(np.arange(len(theory)), theory[:, 0], label='Theory (CAMB)')
@@ -333,7 +312,7 @@ def complete_grid(c_fftgrid, width, d_type=complex):
 def find_closest_index(k, qs):
     return np.abs(qs - k).argmin()
 
-def plot_fields(field, title=None, cmap='viridis', norm=None):
+def implot(field, title=None, cmap='viridis', norm=None):
     plt.figure() # ensures new figure
     plt.imshow(field, cmap=cmap, norm=norm) # type: ignore
     plt.colorbar()
@@ -346,3 +325,20 @@ def apply_linear_power_or_transfer(delta_c,kgrid,kLin,PLin_or_TFLin,BoxSize,grid
     for i in prange(kgrid.shape[0]):
         delta_c[i] *= np.interp(kgrid[i],kLin,PLin_or_TFLin)
     delta_c[0,0] = 0
+
+def is_monotonic(array):
+    return (np.diff(array) >= 0).all() or (np.diff(array) <= 0).all()
+
+def make_monotonic(arr1, arr2):
+    if len(arr1) != len(arr2):
+        raise ValueError("Both input arrays should have the same length")
+
+    new_arr1 = [arr1[0]]
+    new_arr2 = [arr2[0]]
+
+    for i in range(1, len(arr1)):
+        if arr1[i] > new_arr1[-1]:
+            new_arr1.append(arr1[i])
+            new_arr2.append(arr2[i])
+
+    return np.array(new_arr1), np.array(new_arr2)
