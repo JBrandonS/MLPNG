@@ -15,6 +15,7 @@ from scipy.interpolate import interp1d
 from scipy.signal import fftconvolve
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from tqdm import tqdm
+from scipy.signal import savgol_filter
 
 
 class CMBMap:
@@ -67,7 +68,7 @@ class CMBMap:
                 log_level=logging.INFO): #logging.WARNING):
         logging.basicConfig(format='[ %(name)s - %(funcName)20s() ] | %(levelname)s : %(message)s', level=log_level, stream=sys.stdout)
         self.log = logging.getLogger(__name__)
-        assert grid%2 == 0, self.log.critical("choose an even grid size. Got: {}".format(grid))
+        assert grid%2 == 0, self.log.critical("choose an even grid size. Got: %s", grid)
                 
         #Number of grid-points per dimension
         self.grid = grid
@@ -83,12 +84,15 @@ class CMBMap:
         self.cshape = np.array([self.grid, self.grid//2 + 1])
         
         #Setup mesh and k-space grid
-        self.log.debug('grid size: {}, box_size: {}, cell_size: {}'.format(self.grid, self.box_size, self.cell_size))
+        self.log.debug('grid size: %s, box_size: %s, cell_size: %s', self.grid, self.box_size, self.cell_size)
         kx = 2 * np.pi * np.fft.fftfreq( grid, self.cell_size)
         ky = 2 * np.pi * np.fft.rfftfreq(grid, self.cell_size) # Note rfft.
         self.kmesh = np.meshgrid(kx, ky, indexing="ij")
         self.kgrid = np.sqrt(self.kmesh[0]**2 + self.kmesh[1]**2)
         self.khgrid = self.kgrid * self.h
+
+        self.c_field = None
+        self.r_field = None
 
         self.camb_params = None
         self.transfers = transfers
@@ -101,7 +105,7 @@ class CMBMap:
             cosmo = self.cosmo
             
         params = camb.CAMBparams()
-        self.log.info('Setting CAMB parameters based on cosmology:\n{}'.format(cosmo))
+        self.log.info('Setting CAMB parameters based on cosmology:\n%s', cosmo)
         
         params.set_cosmology(H0=cosmo['h']*100, ombh2=cosmo['ombh2'], omch2=cosmo['omch2'], tau=cosmo['tau'], TCMB=cosmo['tcmb'])
         params.InitPower.set_params(As=cosmo['As'], ns=cosmo['ns'], r=cosmo['r'], pivot_scalar=cosmo['kpivot']) # type: ignore
@@ -125,31 +129,27 @@ class CMBMap:
                 params = self.init_camb(cosmo)
         
         self.camb_results = camb.get_results(params)
-        self.d_A = self.camb_results.angular_diameter_distance(cosmo['z_recomb']) * 1000 / self.h # in Mpc/h
-        
+        self.d_A = self.camb_results.angular_diameter_distance(cosmo['z_recomb']) * 1000 #/ self.h # in Mpc/h
+        self.ellgrid = self.khgrid * self.d_A
+                
         self.Ls, self.qs, self.transfer_func = self.camb_results.get_cmb_transfer_data().get_transfer()
 
         # Apply some scales to the transfer functions that CAMB does later in its calculations.
-        prefactor = ( self.Ls + 2 ) * ( self.Ls + 1 ) * ( self.Ls ) * ( self.Ls - 1 )
-        uk_units = self.cosmo['tcmb'] * 10**-6
+        ls = np.round(self.Ls).astype(int)
+        prefactor = np.sqrt((ls + 2) * (ls + 1) * (ls) * (ls - 1))
+        uk_units = 1 #self.cosmo['tcmb'] * 10**6 # convert to muK
         factor = prefactor * uk_units
-        self.transfer_interp = [interp1d(self.Ls, self.transfer_func[:, q] * factor, kind='cubic') for q in range(len(self.qs))]
-
-        self.pix_size = self.cell_size / self.d_A * 60. * 180. / np.pi # in arcmins
-        self.ellgrid = self.khgrid * self.d_A
+        self.transfer_interp = [interp1d(ls, self.transfer_func[:, q] * factor, kind='cubic') for q in range(len(self.qs))]
         
-        self.log.info('d_A: %s, pix size: %s', self.d_A, self.pix_size)
         self.log.debug('Derived background: %s', camb.get_background(params).get_derived_params())
         self.log.debug('Finished setting up CAMB.')
 
-    def GenerateField(self, f_nl=1., k_cut_low=None, k_cut_high=None, seed=0, plot=False):       
+    def GenerateField(self, f_nl=1., k_cut_low=None, k_cut_high=None, seed=0):       
         # Start with gaussian white noise
-        field = self.calc_white_noise(seed=seed, dbg=False) # Unit white noise
-        if plot: c2r_plot(field, 'white nosie')
+        field = self.calc_white_noise(seed=seed)            # Unit white noise
         
-        field *= np.sqrt( self.calc_primordial_power() )    # Amp of the initial flucutations
+        field *= np.sqrt(self.calc_primordial_power())    # Amp of the initial flucutations
         field *= self.grid**2/(self.box_size/self.h)**1.5   # Normalize to simulation box size
-        if plot: c2r_plot(field, 'with amp')
         
         # Cut-off beyond Nyquist Frequency
         field[self.kgrid > self.kNyq] = 0.+0.j              # Cut off beyond Nyquist frequency
@@ -160,13 +160,10 @@ class CMBMap:
             real_field = np.fft.irfft2(field)
             real_field += self.calc_non_gaussian(f_nl, real_field)
             field = np.fft.rfft2(real_field)
-        if plot: c2r_plot(field, 'with NG')
 
         if self.transfers is None:
-            self.transfers = self.calc_transfers(plot=plot)
+            self.transfers = self.calc_transfers()
         field *= self.transfers
-        if plot: c2r_plot(field, 'with transfers')
-        # field *= self.grid**2/(self.box_size/self.h)**1.5   # Normalize to simulation box size
 
         if k_cut_low is not None:
             field[self.kgrid < k_cut_low] = 0.+0.j
@@ -181,16 +178,13 @@ class CMBMap:
         return  final_field
     
     # @njit(parallel=True)
-    def calc_white_noise(self, shape=None, loc=0., scale=1., seed=0, dbg=False):
+    def calc_white_noise(self, shape=None, loc=0., scale=1., seed=0):
         """
         Calculate white noise for a given 2D grid using Gaussian random variables with specified mean and standard deviation.
         """
         if shape is None:
             shape = self.kgrid.shape
-            
-        if dbg:
-            return np.ones(shape, dtype=np.complex128)
-        
+    
         np.random.seed(seed)
         real_part = np.random.normal(loc, scale, shape)
         imag_part = np.random.normal(loc, scale, shape)
@@ -209,7 +203,7 @@ class CMBMap:
         pk = np.zeros_like(khgrid)
         pfactor = 2 * np.pi**2 * cosmo['As'] * cosmo['kpivot']**(1.-cosmo['ns'])
         for i in range(khgrid.shape[0]):
-            mask = ( khgrid[i] > 0 )
+            mask = (khgrid[i] > 0)
             pk[i][mask] = np.power(khgrid[i][mask], cosmo['ns']-4.)*pfactor
         pk[0,0] = 0
         return pk
@@ -217,8 +211,8 @@ class CMBMap:
     def calc_non_gaussian(self, f_nl, field):
         return 5/3 * f_nl * field**2
     
-    def calc_transfers(self, lmin=2, lmax=2500, plot=False):
-        kgrid = self.kgrid
+    def calc_transfers(self, lmin=2, lmax=2500):
+        kgrid = self.khgrid
         ellgrid = self.ellgrid
 
         # We only want to use the transfer function for modes that are within the range of the transfer function
@@ -228,23 +222,12 @@ class CMBMap:
 
         transfers = np.zeros(kgrid.shape)
         transfers[mask] = np.array([self.transfer_interp[k](ell) for k, ell in zip(k_idx, ell_vals)])
-
-        if plot:
-            implot(transfers, title='Transfer function')
-
-            fig, axs = plt.subplots(3,2, figsize=(12,8), sharex = True)
-            for l, ax in zip([2,5,29,200,1200,2500], axs.reshape(-1)):
-                tfs = np.array([self.transfer_interp[k](l) for k in np.arange(len(self.qs))])
-                ax.plot(self.qs, tfs)
-                ax.set_title(r'Transfer function for $\ell$ = %s'%l)
-                ax.set_xlim([-0.01, 0.5])
-            plt.show()
         return transfers
 
     def get_map(self):
         return self.r_field.copy()
 
-    def calculate_cls(self, rmap=None, lmin=2, lmax=2500, raw_cls=False, nbins=249):
+    def calculate_cls(self, rmap=None, lmin=2, lmax=2500, raw_cls=False, nbins=100):
         self.log.debug('Calculating C_ls...')
         if rmap is None:
             rmap = self.get_map()
@@ -264,27 +247,29 @@ class CMBMap:
             counts[i] = np.sum(idx)
             if counts[i] > 0:       
                 ls[i] = np.mean(ellgrid[idx])  
-                cls[i] = np.mean(PSMap[idx]) #/ ( 2 * ls[i] + 1)
+                cls[i] = np.mean(PSMap[idx]) / ( 2 * ls[i] + 1)
                 if not raw_cls:
                     cls[i] *= ls[i] * (ls[i] + 1) / (2 * np.pi)
             
         self.log.debug('Done calculating C_ls.')
         return ls[counts > 0], cls[counts > 0]
         
-    def plot_cls(self, title=None, lmin=2, lmax=2500, plot_theory=True, theory_spectra='unlensed_scalar'):               
+    def plot_cls(self, title=None, lmin=2, lmax=2500, plot_theory=True, theory_spectra='unlensed_scalar', plot_smooth=True):               
         if plot_theory:
             theory = self.camb_results.get_cmb_power_spectra(CMB_unit='muK', spectra=[theory_spectra])[theory_spectra][lmin:lmax]
             plt.semilogy(np.arange(lmin, lmax), theory[:, 0], label='Theory (CAMB)')
-            
-        ls, cls = self.calculate_cls(lmin=lmin, lmax=lmax)
-        plt.semilogy(ls, cls, label=r'$C_{\ell}$')
 
-        from scipy.signal import savgol_filter
-        window_length = 11  # Choose an odd number
-        polynomial_order = 4
-        smooth = savgol_filter(cls, window_length, polynomial_order, mode='interp')
-        mask = (smooth > 1)
-        plt.semilogy(ls[mask], smooth[mask], label='smoothed')
+        ls, cls = self.calculate_cls(lmin=lmin, lmax=lmax)
+        # cls *= 10**-14
+        m = cls > 1
+        plt.semilogy(ls[m], cls[m], label=r'$C_{\ell}$')
+
+        if plot_smooth:
+            window_length = 21  # Choose an odd number
+            polynomial_order = 4
+            smooth = savgol_filter(cls, window_length, polynomial_order, mode='interp')
+            mask = (smooth > 1)
+            plt.semilogy(ls[mask], smooth[mask], label='smoothed')
         
         if title is not None:
             plt.title(title)
@@ -293,9 +278,9 @@ class CMBMap:
         plt.legend()
         plt.show()
     
-    def plot_cmb(self, c_min=-400.,c_max=400., X_width=10., Y_width=10.):
+    def plot_cmb(self, X_width=10., Y_width=10.):
         rmap = self.get_map()
-        self.log.info(f"map mean: {np.mean(rmap)} map rms: {np.std(rmap)}")
+        self.log.info("map mean: %s, map rms: %s", rmap.mean(), rmap.std())
         
         plt.gcf().set_size_inches(10, 10)
         im = plt.imshow(rmap, interpolation='bilinear', origin='lower',cmap=cm.RdBu_r) # type: ignore
@@ -353,9 +338,9 @@ class CMBMap:
     def _Bk_counts(self, fc, dk, NBmax, triangle_type, data_dir='data/static'):
         file_name = f"{data_dir}/FFTest2D_BkCounts_LBox{self.box_size}_Grid{self.grid}_Binning{dk}kF_fc{fc}_NBins{NBmax}_TriangleType{triangle_type}.npy"
         if os.path.exists(file_name):
-            self.log.debug(f"Loading Counts from {file_name}")
+            self.log.debug("Loading Counts from %s" ,file_name)
             counts = np.load(file_name, allow_pickle=True).item()
-            self.log.debug(f"Considering {len(counts['bin_centers'])} Triangle Configurations ({triangle_type})")
+            self.log.debug("Considering %s Triangle Configurations (%s)", len(counts['bin_centers']), triangle_type)
             return counts
 
         counts = {}
@@ -373,7 +358,7 @@ class CMBMap:
                                             for i in fc+np.arange(ji+1, NBmax)*dk])
         elif triangle_type == 'Equilateral':
             counts['bin_centers'] = np.array([(i, i, i) for i in fc+np.arange(0, NBmax)*dk])
-        self.log.debug(f"Considering {len(counts['bin_centers'])} Triangle Configurations ({triangle_type})")
+        self.log.debug("Considering %s Triangle Configurations (%s)",len(counts['bin_centers']),triangle_type)
 
         self.log.debug("Creating Grids for Counts...")
         c_ones = np.ones_like(self.c_field)
@@ -393,7 +378,7 @@ class CMBMap:
         self.log.debug("done!")
 
         np.save(file_name, counts)  # type: ignore
-        self.log.debug(f"Saved Triangle Counts to {file_name}")
+        self.log.debug("Saved Triangle Counts to %s", file_name)
         return counts
         
     def Bk(self, fc, dk, NBmax, triangle_type='All'):
