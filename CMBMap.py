@@ -1,22 +1,15 @@
 import logging
 import sys
 import os
-from re import M
 
 import camb
-import matplotlib
-import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.colors import LogNorm, NoNorm, Normalize
-from mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from numba import njit, prange
 from scipy.interpolate import interp1d
-from scipy.signal import fftconvolve
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-from tqdm import tqdm
 from scipy.signal import savgol_filter
-
+from tqdm import tqdm
 
 class CMBMap:
     # General \Lambda CDM parameters
@@ -62,17 +55,17 @@ class CMBMap:
     def __init__(self, 
                 box_size,
                 grid,  
-                cosmo=default_cosmo, 
+                cosmo=None, 
                 run_camb=True, 
                 transfers=None,
                 log_level=logging.INFO): #logging.WARNING):
         logging.basicConfig(format='[ %(name)s - %(funcName)20s() ] | %(levelname)s : %(message)s', level=log_level, stream=sys.stdout)
         self.log = logging.getLogger(__name__)
-        assert grid%2 == 0, self.log.critical("choose an even grid size. Got: %s", grid)
+        assert grid%2 == 0, self.log.critical("Choose an even grid size. Got: %s", grid)
                 
         #Number of grid-points per dimension
         self.grid = grid
-        self.cosmo = cosmo
+        self.cosmo = cosmo if cosmo is not None else self.default_cosmo.copy()
         self.h = cosmo['h']
         
         self.box_size = box_size            # Size of periodic box e.g. in Mpc/h
@@ -129,7 +122,7 @@ class CMBMap:
                 params = self.init_camb(cosmo)
         
         self.camb_results = camb.get_results(params)
-        self.d_A = self.camb_results.angular_diameter_distance(cosmo['z_recomb']) * 1000 #/ self.h # in Mpc/h
+        self.d_A = self.camb_results.angular_diameter_distance(cosmo['z_recomb']) * 1000 # in Mpc
         self.ellgrid = self.khgrid * self.d_A
                 
         self.Ls, self.qs, self.transfer_func = self.camb_results.get_cmb_transfer_data().get_transfer()
@@ -137,19 +130,17 @@ class CMBMap:
         # Apply some scales to the transfer functions that CAMB does later in its calculations.
         ls = np.round(self.Ls).astype(int)
         prefactor = np.sqrt((ls + 2) * (ls + 1) * (ls) * (ls - 1))
-        uk_units = 1 #self.cosmo['tcmb'] * 10**6 # convert to muK
-        factor = prefactor * uk_units
-        self.transfer_interp = [interp1d(ls, self.transfer_func[:, q] * factor, kind='cubic') for q in range(len(self.qs))]
+        self.transfer_interp = [interp1d(ls, self.transfer_func[:, q] * prefactor, kind='cubic') for q in range(len(self.qs))]
         
         self.log.debug('Derived background: %s', camb.get_background(params).get_derived_params())
         self.log.debug('Finished setting up CAMB.')
 
-    def GenerateField(self, f_nl=1., k_cut_low=None, k_cut_high=None, seed=0):       
+    def GenerateField(self, f_nl=0., k_cut_low=None, k_cut_high=None, seed=0):       
         # Start with gaussian white noise
         field = self.calc_white_noise(seed=seed)            # Unit white noise
         
         field *= np.sqrt(self.calc_primordial_power())    # Amp of the initial flucutations
-        field *= self.grid**2/(self.box_size/self.h)**1.5   # Normalize to simulation box size
+        # field *= self.grid**2/(self.box_size/self.h)**1.5   # Normalize to simulation box size, removing because it seems to mess the scale up based on grid size...
         
         # Cut-off beyond Nyquist Frequency
         field[self.kgrid > self.kNyq] = 0.+0.j              # Cut off beyond Nyquist frequency
@@ -203,7 +194,7 @@ class CMBMap:
         pk = np.zeros_like(khgrid)
         pfactor = 2 * np.pi**2 * cosmo['As'] * cosmo['kpivot']**(1.-cosmo['ns'])
         for i in range(khgrid.shape[0]):
-            mask = (khgrid[i] > 0)
+            mask = khgrid[i] > 0
             pk[i][mask] = np.power(khgrid[i][mask], cosmo['ns']-4.)*pfactor
         pk[0,0] = 0
         return pk
@@ -212,22 +203,22 @@ class CMBMap:
         return 5/3 * f_nl * field**2
     
     def calc_transfers(self, lmin=2, lmax=2500):
-        kgrid = self.khgrid
+        khgrid = self.khgrid
         ellgrid = self.ellgrid
 
         # We only want to use the transfer function for modes that are within the range of the transfer function
-        mask = (ellgrid >= lmin) & (ellgrid <= lmax) & (kgrid >= self.kF) & (kgrid < self.kNyq)
-        k_idx = find_closest_index(kgrid[mask], self.qs)
+        mask = (ellgrid >= lmin) & (ellgrid <= lmax) & (khgrid >= self.kF) & (khgrid < self.kNyq)
+        k_idx = find_closest_index(khgrid[mask], self.qs)
         ell_vals = ellgrid[mask]
 
-        transfers = np.zeros(kgrid.shape)
+        transfers = np.zeros(khgrid.shape)
         transfers[mask] = np.array([self.transfer_interp[k](ell) for k, ell in zip(k_idx, ell_vals)])
         return transfers
 
     def get_map(self):
         return self.r_field.copy()
 
-    def calculate_cls(self, rmap=None, lmin=2, lmax=2500, raw_cls=False, nbins=100):
+    def calculate_cls(self, rmap=None, lmin=2, lmax=2500, raw_cls=False, nbins=2498):
         self.log.debug('Calculating C_ls...')
         if rmap is None:
             rmap = self.get_map()
@@ -260,15 +251,14 @@ class CMBMap:
             plt.semilogy(np.arange(lmin, lmax), theory[:, 0], label='Theory (CAMB)')
 
         ls, cls = self.calculate_cls(lmin=lmin, lmax=lmax)
-        # cls *= 10**-14
-        m = cls > 1
-        plt.semilogy(ls[m], cls[m], label=r'$C_{\ell}$')
+        mask = cls > 1
+        plt.semilogy(ls[mask], cls[mask], label=r'$C_{\ell}$')
 
         if plot_smooth:
             window_length = 21  # Choose an odd number
             polynomial_order = 4
             smooth = savgol_filter(cls, window_length, polynomial_order, mode='interp')
-            mask = (smooth > 1)
+            mask = smooth > 1
             plt.semilogy(ls[mask], smooth[mask], label='smoothed')
         
         if title is not None:
@@ -278,12 +268,12 @@ class CMBMap:
         plt.legend()
         plt.show()
     
-    def plot_cmb(self, X_width=10., Y_width=10.):
+    def plot_cmb(self):
         rmap = self.get_map()
         self.log.info("map mean: %s, map rms: %s", rmap.mean(), rmap.std())
         
         plt.gcf().set_size_inches(10, 10)
-        im = plt.imshow(rmap, interpolation='bilinear', origin='lower',cmap=cm.RdBu_r) # type: ignore
+        im = plt.imshow(rmap, interpolation='bilinear', origin='lower', cmap='RdBu_r') # type: ignore
         # im.set_clim(c_min,c_max)
         
         ax=plt.gca()
@@ -291,7 +281,7 @@ class CMBMap:
         cax = divider.append_axes("right", size="5%", pad=0.05)
 
         cbar = plt.colorbar(im, cax=cax)
-        im.set_extent([0,X_width,0,Y_width])
+        # im.set_extent([0,X_width,0,Y_width])
         plt.ylabel(r'angle $[^\circ]$') # type: ignore
         plt.xlabel(r'angle $[^\circ]$') # type: ignore
         cbar.set_label('temperature [uK]', rotation=270)
@@ -441,7 +431,9 @@ def _Bk_shells(r_delta_shells, bin_indices):
     return B_measured
 
 def find_closest_index(index, grid_vals):
-    return np.array([np.abs(grid_vals - k_val).argmin() for k_val in index.flatten()]).reshape(index.shape)
+    return np.array(
+            [np.abs(grid_vals - k_val).argmin() for k_val in index.flatten()]
+        ).reshape(index.shape)
 
 def implot(field, title=None, cmap='viridis', norm=None):
     plt.figure() # ensures new figure

@@ -87,7 +87,3 @@ Should we add them here? Maybe useless
 
 ## Thanks
 Thomas and rest of dutch group (need to add the full groups here)
-
-# TODO
-
-- [ ] Need to change the save and read to support multiple jobs running in parallel, this will allow us to generate larger datasets.
