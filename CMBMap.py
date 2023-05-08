@@ -130,23 +130,24 @@ class CMBMap:
         # Apply some scales to the transfer functions that CAMB does later in its calculations.
         ls = np.round(self.Ls).astype(int)
         prefactor = np.sqrt((ls + 2) * (ls + 1) * (ls) * (ls - 1))
+        prefactor *= cosmo['tcmb'] # * 1e6
         self.transfer_interp = [interp1d(ls, self.transfer_func[:, q] * prefactor, kind='cubic') for q in range(len(self.qs))]
         
         self.log.debug('Derived background: %s', camb.get_background(params).get_derived_params())
         self.log.debug('Finished setting up CAMB.')
 
-    def GenerateField(self, f_nl=0., k_cut_low=None, k_cut_high=None, seed=0):       
+    def GenerateField(self, f_nl=0., k_cut_low=None, k_cut_high=None, seed=0, no_noise=False):       
         # Start with gaussian white noise
-        field = self.calc_white_noise(seed=seed)            # Unit white noise
+        field = self.calc_white_noise(seed=seed, no_noise=no_noise)            # Unit white noise
         
         field *= np.sqrt(self.calc_primordial_power())    # Amp of the initial flucutations
-        # field *= self.grid**2/(self.box_size/self.h)**1.5   # Normalize to simulation box size, removing because it seems to mess the scale up based on grid size...
+        field *= self.grid**2/(self.box_size/self.h)**1.5   # Normalize to simulation box size, removing because it seems to mess the scale up based on grid size...
         
         # Cut-off beyond Nyquist Frequency
         field[self.kgrid > self.kNyq] = 0.+0.j              # Cut off beyond Nyquist frequency
 
         # Move to real space to add NG terms
-        if f_nl != 0: 
+        if f_nl != 0.: 
             # Add our NG terms in real space and convert back
             real_field = np.fft.irfft2(field)
             real_field += self.calc_non_gaussian(f_nl, real_field)
@@ -169,13 +170,16 @@ class CMBMap:
         return  final_field
     
     # @njit(parallel=True)
-    def calc_white_noise(self, shape=None, loc=0., scale=1., seed=0):
+    def calc_white_noise(self, shape=None, loc=0., scale=1., seed=0, no_noise=False):
         """
         Calculate white noise for a given 2D grid using Gaussian random variables with specified mean and standard deviation.
         """
         if shape is None:
             shape = self.kgrid.shape
-    
+
+        if no_noise:
+            return (np.ones(shape)+1j*np.ones(shape)) / np.sqrt(2)
+        
         np.random.seed(seed)
         real_part = np.random.normal(loc, scale, shape)
         imag_part = np.random.normal(loc, scale, shape)
@@ -218,7 +222,7 @@ class CMBMap:
     def get_map(self):
         return self.r_field.copy()
 
-    def calculate_cls(self, rmap=None, lmin=2, lmax=2500, raw_cls=False, nbins=2498):
+    def calculate_cls(self, rmap=None, lmin=2, lmax=2500, raw_cls=False, nbins=100):
         self.log.debug('Calculating C_ls...')
         if rmap is None:
             rmap = self.get_map()
@@ -232,7 +236,7 @@ class CMBMap:
         ls = np.zeros(nbins)
 
         ellgrid = self.ellgrid
-        bins = np.linspace(lmin, lmax, nbins + 1)
+        bins = np.linspace(lmin, lmax, nbins+1)
         for i in range(nbins):
             idx = (ellgrid >= bins[i]) & (ellgrid < bins[i+1])        
             counts[i] = np.sum(idx)
@@ -241,16 +245,17 @@ class CMBMap:
                 cls[i] = np.mean(PSMap[idx]) / ( 2 * ls[i] + 1)
                 if not raw_cls:
                     cls[i] *= ls[i] * (ls[i] + 1) / (2 * np.pi)
-            
+
+        cls *= self.box_size**3 / self.grid**4
         self.log.debug('Done calculating C_ls.')
         return ls[counts > 0], cls[counts > 0]
         
-    def plot_cls(self, title=None, lmin=2, lmax=2500, plot_theory=True, theory_spectra='unlensed_scalar', plot_smooth=True):               
+    def plot_cls(self, title=None, lmin=2, lmax=2500, nbins=100, plot_theory=True, theory_spectra='unlensed_scalar', plot_smooth=True):               
         if plot_theory:
             theory = self.camb_results.get_cmb_power_spectra(CMB_unit='muK', spectra=[theory_spectra])[theory_spectra][lmin:lmax]
             plt.semilogy(np.arange(lmin, lmax), theory[:, 0], label='Theory (CAMB)')
 
-        ls, cls = self.calculate_cls(lmin=lmin, lmax=lmax)
+        ls, cls = self.calculate_cls(lmin=lmin, lmax=lmax, nbins=nbins)
         mask = cls > 1
         plt.semilogy(ls[mask], cls[mask], label=r'$C_{\ell}$')
 

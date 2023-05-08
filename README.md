@@ -87,3 +87,5 @@ Should we add them here? Maybe useless
 
 ## Thanks
 Thomas and rest of dutch group (need to add the full groups here)
+
+https://github.com/AdriJD/cmb_sst_ksw
