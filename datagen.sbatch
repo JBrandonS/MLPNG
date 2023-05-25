@@ -14,4 +14,4 @@ eval "$(conda shell.bash hook)"
 
 conda activate mlpng
 
-time srun python _ksw_datagen.py
+time srun python _ksw_datagen.py > logs/dg-$SLURM_JOB_ID.log 2>&1
