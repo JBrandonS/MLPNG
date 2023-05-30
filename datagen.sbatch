@@ -1,5 +1,5 @@
 #! /bin/bash
-#SBATCH --job-name=dataGen
+#SBATCH --job-name=datagen
 #SBATCH --partition=standard-mem-s,standard-mem-m,standard-mem-l
 #SBATCH --ntasks=1
 #SBATCH --mem=250G  # per node
@@ -14,4 +14,4 @@ eval "$(conda shell.bash hook)"
 
 conda activate mlpng
 
-time srun python _ksw_datagen.py > logs/dg-$SLURM_JOB_ID.log 2>&1
+time srun python ksw_datagen.py > logs/dg-$SLURM_JOB_ID.log 2>&1

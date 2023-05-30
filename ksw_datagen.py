@@ -1,7 +1,7 @@
 # %%
 import os
 import re
-import gc
+import resource
 import psutil
 
 import numpy as np
@@ -21,7 +21,11 @@ import camb
 from ksw import Cosmology, Data
 from ksw.radial_functional import radial_func
 
+import h5py
+from tqdm.auto import tqdm
+
 # %matplotlib inline
+# %load_ext line_profiler
 
 # %%
 def p_mem():
@@ -52,11 +56,11 @@ def p_mem():
 # and
 # 
 # $$
-# \alpha_\ell(r)=\frac{2}{\pi} \int_0^\infty k^2 \Delta_\ell^T(k) j_\ell(k r)
+# \alpha_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^2 \Delta_\ell^T(k) j_\ell(k r)
 # $$
 # 
 # $$
-# \beta_\ell(r)=\frac{2}{\pi} \int_0^\infty k^{-1} \Delta_\phi \Delta_\ell^T(k) j_\ell(k r)
+# \beta_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^{-1} \Delta_\phi \Delta_\ell^T(k) j_\ell(k r)
 # $$
 # 
 # $$
@@ -105,27 +109,26 @@ cosmo_params = {
 # r_max is given in Mpc, we preform r_res slices over this volume to do the integral. Values have been picked by guestimation, with r_res being set low to help test. Will want to raise this for better calculations.
 # 
 # KSW only supports polarization values of 'T', 'E', ['T', 'E'].
-# 
-# r_res % r_batch must be 0, this could be fixed but it was looking like that would be more trouble then its worth
 
 # %%
 lmax = 2500
 
 fnl_range=(-1000, 1000)
 
-nsims = 10 
+nsims = 1000
 npatches = 10
+save_size = 10              # save every n sims, helps control memory usage
 
 nside=1024
 patch_side_deg = 10
 
-r_min = 1                     # Mpc, min radius for the patch, >1e-6, but I've had issues below 1 with kernel crashes       
-r_max = 14000                 # Mpc, max radius for the patch
-r_res = 1000                 # number of slices in the radius, memory usage is greatly impacted by this
-r_batch = 1000                # number of slices to compute at once
+r_min = 1                    # Mpc, min radius for the patch, >1e-6, but I've had issues below 1 with kernel crashes, check if this should be higher       
+r_max = 14000                # Mpc, max radius for the patch, should be > SLS distance, check this value
+r_res = 1000                 # number of slices in the radius, time is greatly impacted by this
+r_batch = 100                # number of slices to compute per thread, memory usage is greatly impacted by this
 
 # KSW only supports 'T' and 'E'
-polarizations = ['T']
+polarizations = ['T']#,'E']
 # polarizations = ['T', 'E']
 
 # FWHM of gaussian beam, use astropy units to make thing easy here
@@ -133,9 +136,41 @@ beam_width = 1 * u.arcmin # type: ignore
 
 # noise settings, for the noise covariance matrix (without beam) in uK^2.
 noise_loc = 0.
-noise_scale = 1.
+noise_scale = 0.1
 
-parallel = Parallel(-1, verbose=10)
+# %%
+# gotta keep this low
+alm_parallel = Parallel(3, verbose=11)
+
+parallel = Parallel(-1, verbose=11)
+
+# %%
+if isinstance(polarizations, str):
+    chars_of_polarizations = polarizations
+elif isinstance(polarizations, list):
+    chars_of_polarizations = ''.join(polarizations)
+else:
+    raise TypeError("polarizations must be either a string or a list of strings")
+
+base_name = f'{nside}_{nsims}x{npatches}_fnl{fnl_range[0]}-{fnl_range[1]}_r{r_res}_p{chars_of_polarizations}'
+data_dir = f'data/ksw'
+filename = f'{base_name}.hdf5.nc'
+data_file = os.path.join(data_dir, filename)
+
+if not os.path.exists(data_dir): 
+    os.makedirs(data_dir)
+    print(f'Created directory {data_dir}')
+else:
+    print(f'Reusing directory {data_dir}')
+    # pattern = re.compile(f"{base_name}_\d+-\d+\.npy")
+    pattern = re.compile(f"{base_name}_\d+-\d+\.hdf5(\.nc)?")
+    for file in os.listdir(data_dir):
+        if pattern.match(file):
+            file_path = os.path.join(data_dir, file)
+            os.remove(file_path)
+            print(f"Deleted existing data file: {file_path}")
+
+print(p_mem(), data_dir, filename, data_file)
 
 # %%
 npol = 1 if isinstance(polarizations, str) else len(polarizations)
@@ -144,19 +179,9 @@ nell = lmax + 1
 
 ls, ms = hp.Alm.getlm(lmax)
 
-npol, pol, nell, ls.shape, ms.shape
+print(p_mem(), npol, pol, nell, ls.shape, ms.shape)
 
 # %%
-fnls = uniform(fnl_range[0], fnl_range[1], nsims).astype(np.float32)
-patches = np.empty((npol, nsims, npatches, nside, nside))
-maps = np.empty((npol, nsims, 12*nside**2))
-
-print(p_mem(), fnls.shape, patches.shape, maps.shape)
-print("Data file will be {:,.2f} GB".format((fnls.nbytes+patches.nbytes+maps.nbytes) / (1024 ** 3)))
-
-# %%
-radii = np.linspace(r_min, r_max, r_res)
-
 # np.split didnt do what I wanted
 def split_into_batches(data, batch_size):
     batches = []
@@ -174,18 +199,25 @@ def split_into_batches(data, batch_size):
         batches.append(data[num_batches*batch_size:])
         indices.append(np.arange(num_batches*batch_size, len(data)))
         
-    return batches, indices
+    return np.ascontiguousarray(indices), np.ascontiguousarray(batches)
 
-# will throw an error if radii % r_batch != 0
-radii_s, radii_i = split_into_batches(radii, r_batch)
+radii = np.linspace(r_min, r_max, r_res)
+dr = radii[1] - radii[0]
 
-p_mem(), radii.shape, len(radii_s), len(radii_i)
+sim_idxs, sim_slices = split_into_batches(np.arange(nsims), save_size)
+radii_idxs, radii_slices = split_into_batches(radii, r_batch)
+
+print(p_mem(), sim_idxs.shape, sim_slices.shape, radii_idxs.shape, radii_slices.shape)
 
 # %%
 noise_ell = normal(noise_loc, noise_scale, (3, nell) if pol else (nell))
 beam_ell = hp.gauss_beam(beam_width.to_value(u.radian), lmax, pol)
 
-p_mem(), noise_ell.shape, beam_ell.shape
+if pol:
+    # KSW only supports 'T' and 'E', check this is what we are getting
+    beam_ell = beam_ell[:,:2].swapaxes(0,1)
+
+print(p_mem(), noise_ell.shape, beam_ell.shape)
 
 # %% [markdown]
 # ## Simulate the patches
@@ -194,171 +226,167 @@ p_mem(), noise_ell.shape, beam_ell.shape
 camb_params_obj = camb.set_params(**cosmo_params)
 cosmo = Cosmology(camb_params_obj, verbose=True)
 
-# %%
-cosmo.compute_transfer(cosmo_params['max_l'], verbose=True)
+cosmo.compute_transfer(cosmo_params['max_l'])
 cosmo.compute_c_ell()
 
 # %%
 data = Data(lmax, noise_ell, beam_ell, polarizations, cosmo)
 
-# %%
-alm = data.compute_alm_sim(lens_power=False)
-p_mem(), alm.shape
-
-# %% [markdown]
-# the cosmology (camb) computes everything in sparce ell which we will need to eventually fix.
-# 
-# we call `ell` the sparce values while `l` is the dense values.
-
-# %%
-c_ells = data.cosmology.c_ell['unlensed_scalar']['ells']
+c_ells = data.cosmology.c_ell['unlensed_scalar']['ells'] # type: ignore
 tr_ell_k = data.cosmology.transfer['tr_ell_k']
 ells = data.cosmology.transfer['ells']
 ks = data.cosmology.transfer['k']
-p_mem(), tr_ell_k.shape, ells.shape, ks.shape, c_ells.shape
 
-# %% [markdown]
-# $$
-# \alpha_\ell(r)=\frac{2}{\pi} \int_0^\infty k^2 \Delta_\ell^T(k) j_\ell(k r)
-# $$
+alm = data.compute_alm_sim(lens_power=False)
 
-# %%
-def get_alpha_l(tr_ell_k, ks, ells, radii):
-    # radial func does f_ell^X(r) = (2/pi) int k^2 dk f(k) transfer^X_ell(k) j_ell(k r)
-    f_k = np.ones((len(ks),1))
-    return radial_func(f_k, tr_ell_k.copy(), ks, radii, ells).squeeze()
-
-a_ell_runner = partial(get_alpha_l, tr_ell_k, ks, ells)
-alpha_ell = np.concatenate(np.array(parallel(delayed(a_ell_runner)(rs) for rs in radii_s)))
-
-p_mem(), alpha_ell.shape
-
-# %% [markdown]
-# $$
-# \beta_\ell(r)=\frac{2}{\pi} \int_0^\infty k^{-1} \Delta_\phi \Delta_\ell^T(k) j_\ell(k r)
-# $$
-
-# %%
-delta_phi = 2 * np.pi ** 2 * cosmo_params['As'] * (3 / 5)**2
-
-# %%
-def get_beta_l(tr_ell_k, ks, ells, delta_phi, radii):
-    # radial func does f_ell^X(r) = (2/pi) int k^2 dk f(k) transfer^X_ell(k) j_ell(k r)
-    f_k = np.swapaxes([ks**-3 * delta_phi], 0, 1)
-    return radial_func(f_k, tr_ell_k.copy(), ks, radii, ells).squeeze()
-
-b_ell_runner = partial(get_beta_l, tr_ell_k, ks, ells, delta_phi)
-beta_ell = np.concatenate(np.array(parallel(delayed(b_ell_runner)(rs) for rs in radii_s)))
-
-p_mem(), delta_phi, beta_ell.shape
-
-# %% [markdown]
-# We currently have the alpha_ells and beta_ells, which use a sparce ell grid. We neeed to intepolate over these to get functions of any l. These alpha_l, and beta_l are very memory intensive
+print(p_mem(), alm.shape, tr_ell_k.shape, ells.shape, ks.shape, c_ells.shape)
 
 # %%
 def interpolate_ells(func, ells_sparse, ls):
     return CubicSpline(ells_sparse, func, axis=1)(ls)
 
+# %% [markdown]
+# Radial func computes
+# 
+# $$
+# f_\ell^X(r) = \frac{2}{\pi} \int k^2 dk f(k) \Delta^{TX}_\ell(k) j_\ell(k r)
+# $$
+# 
+# $$
+# \alpha_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^2 \Delta_\ell^T(k) j_\ell(k r)
+# $$
+
 # %%
-alpha_l = np.concatenate(np.array(parallel(delayed(interpolate_ells)(alpha_ell[ridxs], ells, np.arange(lmax)) for ridxs in radii_i)))
+# f_k = np.swapaxes([ks], 0, 1) 
+f_k = np.ones((len(ks),1))
+
+alpha_ell = radial_func(f_k, tr_ell_k, ks, radii, ells).squeeze()
+alpha_l = np.concatenate(np.array([interpolate_ells(alpha_ell, ells, np.arange(lmax))]))
 alpha_l = np.ascontiguousarray(alpha_l)
 
-p_mem(), alpha_l.shape
+# %% [markdown]
+# $$
+# \beta_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^{-1} \Delta_\phi \Delta_\ell^T(k) j_\ell(k r)
+# $$
 
 # %%
-div = beta_ell / c_ells[None, ells, None]
-bl_div_cl = np.concatenate(np.array(parallel(delayed(interpolate_ells)(div[ridxs], ells, np.arange(lmax)) for ridxs in radii_i)))
+delta_phi = 2 * np.pi ** 2 * cosmo_params['As'] * (3 / 5)**2
+
+f_k = (ks**-3 * delta_phi)[:, np.newaxis]
+beta_ell = radial_func(f_k, tr_ell_k, ks, radii, ells).squeeze()
+
+div = beta_ell / c_ells[np.newaxis, ells, np.newaxis]
+
+bl_div_cl = np.concatenate(np.array([interpolate_ells(div, ells, np.arange(lmax))]))
 bl_div_cl = np.ascontiguousarray(bl_div_cl)
 
-p_mem(), bl_div_cl.shape
+print(p_mem(), alpha_l.shape, bl_div_cl.shape)
 
 # %% [markdown]
-# Now we can do the inner integral
-# 
 # $$
 # B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}
 # $$
 # 
 # $$
-# \text{inner} = \int d^2 \hat{n} Y_{\ell m}^\star (\hat{n}) B(r,\hat{n})^2
+# a_{\ell m}^{NG,loc'} = \int dr r^2 \left[ \alpha_\ell(r)\left(\int d^2 \hat{n} Y_{\ell m}^\star (\hat{n}) B(r,\hat{n})^2 \right)\right]
 # $$
 
 # %%
-inner = np.empty((r_res, alm.shape[0], alm.shape[1]), dtype=np.complex128)
+def alm_ng_slice(dr, nside, lmax, pol, alm, bl_div_cl, alpha_l, radii):
+    Balm = np.stack([ hp.almxfl(alm, bl_div_cl[i]) for i in range(len(radii)) ])
 
-def _inner(p, bl_div_cl):
-        Balm = hp.almxfl(alm[p], bl_div_cl)
-        B = hp.alm2map(Balm, nside=nside, lmax=lmax, mmax=None, pol=pol, pixwin=False, fwhm=0, sigma=None)
-        return hp.map2alm(B**2, lmax=lmax, mmax=None, pol=pol) 
+    B = hp.alm2map(Balm, nside=nside, lmax=lmax, mmax=None, pol=pol, pixwin=False, fwhm=0, sigma=None)
 
-inner = np.array(parallel(delayed(_inner)(p, bl_div_cl[i, :, p]) for i in range(r_res) for p in range(npol)))
+    inner = hp.map2alm(B**2, lmax=lmax, mmax=None, pol=pol, use_pixel_weights=True)
+    
+    alm_ng = np.sum([dr * radii[i]**2 * hp.almxfl(inner[i], alpha_l[i]) for i in range(len(radii))], axis=0) # type: ignore
+    print('slice', p_mem(), alm_ng.shape)
+    return alm_ng
 
-p_mem(), inner.shape
-
-# %% [markdown]
-# Finally
-# 
-# $$
-# a_{\ell m}^{NG,loc'} = \int dr\,r^2 \left[ \alpha_\ell(r)\left(\int d^2 \hat{n} Y_{\ell m}^\star (\hat{n}) B(r,\hat{n})^2 \right)\right] = \int dr\,r^2 \alpha_\ell(r)\,\text{inner}
-# $$
+def get_alm_ng_slice(bl_div_cl, alpha_l, radii_i, radii_s, p):
+    for r_idx, r in zip(radii_i, radii_s):
+        yield bl_div_cl[r_idx,:,p], alpha_l[r_idx,:,p], r
 
 # %%
-def get_sum(dr, ridxs, rs, alpha_ls, inner):
-    print(rs.shape, alpha_ls.shape, inner.shape)
-    val = [dr * rs**2 * hp.almxfl(inner, alpha_ls[i]) for i in ridxs]
-    print(val)
-    return np.sum([dr * rs**2 * hp.almxfl(inner, alpha_ls[i]) for i in ridxs], axis=0)
+alm_ng = np.sum([alm_ng_slice(dr, nside, lmax, pol, alm[0], bl_div_cl, alpha_l, r) # type: ignore
+    for bl_div_cl, alpha_l, r in get_alm_ng_slice(bl_div_cl, alpha_l, radii_idxs, radii_slices, 0)], axis=(0))
 
-dr = radii[1] - radii[0]
-alm_ng = np.sum([get_sum(dr, ridxs, rs, alpha_l[ridxs,:,p], inner) for ridxs, rs in zip(radii_i, radii_s) for p in range(npol)] )# type: ignore
-
-# fix some indexing and ensure contiguous
-alm_ng = np.ascontiguousarray(alm_ng.swapaxes(0, 1))
-
-p_mem(), dr, alm_ng.shape
+print('computed alm_ng', p_mem(), alm_ng.shape)
 
 # %%
 def cutSqPatches(fullsky_map, img_size, side_deg, num_patches):
     Tmap_datat = np.zeros((num_patches//2, int(img_size), int(img_size)))
     Tmap_datab = np.zeros((num_patches//2, int(img_size), int(img_size)))
 
-    pl.ioff()
     for counter in range(num_patches//2):
         Tmap_datat[counter] = np.ma.getdata(hp.cartview(fullsky_map, fig=0, xsize=img_size, ysize=img_size, rot=[0, 0], lonra=[side_deg*counter, side_deg*(counter+1)], latra=[0, side_deg],
                                                         title="CartView", unit="mK", format="%.2g", return_projected_map=True))
         Tmap_datab[counter] = np.ma.getdata(hp.cartview(fullsky_map, fig=1, xsize=img_size, ysize=img_size, rot=[0, 0], lonra=[side_deg*counter, side_deg*(counter+1)], latra=[-side_deg, 0],
                                                         title="CartView", unit="mK", format="%.2g", return_projected_map=True))
-    pl.close('all')
-    pl.ion()
     
     return np.concatenate((Tmap_datat, Tmap_datab))
 
-# %%
-# should we parallelize this?
-for i in range(nsims):
-    alm_prime = alm + fnls[i] * alm_ng
-    for p in range(npol):
-        maps[p, i]  = hp.alm2map(alm_prime[p], nside, lmax=lmax, mmax=None, pol=pol, pixwin=False, fwhm=0, sigma=None)
-        patches[p, i] = cutSqPatches(maps[p, i], nside, patch_side_deg, npatches)
-    
-    if i % 100 == 0:
-        plt.figure()
-        hp.mollview(maps[0, i], title=f"sim {i} [fnl={fnls[i]}]")
-        plt.show()
-        
-    if i % 100 == 0:
-        print(i, end=' ')
-print("done")
+def get_sim_run(sims):
+    for sim in sims:
+        for p in range(npol):
+                yield sim, p
 
-p_mem(), maps.shape, patches.shape
+def run_sim(nside, npatches, patch_side_deg, lmax, pol, alm, alm_ng, fnl):
+    alm_prime = np.stack(alm + fnl * alm_ng)
+
+    print('running sim', p_mem(), alm_prime.shape)
+    maps  = hp.alm2map(alm_prime, nside, lmax=lmax, mmax=None, pol=pol, pixwin=False, fwhm=0, sigma=None)
+    patches = cutSqPatches(maps, nside, patch_side_deg, npatches)
+    
+    return (maps, patches)
+
+def append_to_hdf5(file_path, data_dict):
+    with h5py.File(file_path, 'a') as f:
+        for key, value in data_dict.items():
+            # If dataset exists in file, append to it
+            if key in f:
+                f[key].resize((f[key].shape[0] + value.shape[0]), axis = 0)
+                f[key][-value.shape[0]:] = value
+            else:
+                maxshape = (None,) + value.shape[1:]
+                dataset = f.create_dataset(key, shape=value.shape, maxshape=maxshape, chunks=True)
+                dataset[:] = value
+                
+
+# %%
+fnls = uniform(fnl_range[0], fnl_range[1], nsims).astype(np.float32)
+
+# %%
+pl.ioff()
+for sims in sim_slices:
+    sim_data = parallel(delayed(run_sim)(nside, npatches, patch_side_deg, lmax, pol, alm[p], alm_ng, fnls[sim]) 
+        for sim, p in get_sim_run(sims)) # type: ignore
+
+    maps, patches = zip(*sim_data)
+    maps = np.stack(maps)
+    patches = np.stack(patches)
+    
+    data_dict = {'fnl': fnls, 'maps': maps, 'patches': patches}
+
+    print('saving', p_mem(), maps.shape, patches.shape)
+    append_to_hdf5(data_file, data_dict)
+    
+pl.close('all')
+pl.ion();
+
+# %%
+# rename file to indicate that it is done
+os.rename(data_file, data_file.replace('.hdf5.nc', '.hdf5'))
+
+print('done', p_mem())
+
+# %% [markdown]
+# Done with generation
 
 # %% [markdown]
 # ---
 # 
 # # Tests
-
-# %% [markdown]
-# Randomized visual test
 
 # %%
 random_indices = [(0, randint(nsims), randint(npatches)) for _ in range(4)]
@@ -367,79 +395,26 @@ random_indices
 
 # %%
 for pol, s, p in random_indices:
+    hp.mollview(maps[s], title=f'Sim {s}, patch {p}, pol {pol}, fnl {fnls[s]}', unit='mK')
+
+# %%
+for pol, s, p in random_indices:
     plt.figure()
-    plt.imshow(patches[pol, s, p])
+    plt.imshow(patches[s, p])
     plt.title(f"patch {s*npatches + p} [fnl={fnls[s]}]")
     plt.show()
 
 # %%
 for pol, s, p in random_indices:
-    cl = hp.anafast(maps[pol, s], lmax=lmax)
+    cl = hp.anafast(maps[s], lmax=lmax)
     ell = np.arange(len(cl))
     plt.figure()
     plt.plot(ell, ell * (ell + 1) * cl)
     plt.title(f"sim {s} [fnl={fnls[s]}]")
     plt.show()
 
-# %% [markdown]
-# ---
-# 
-# # Save
-
-# %% [markdown]
-# We will save the data below. Name is set by settings so it can be loaded easy by the model trainer.
-# 
-# Data output is
-# ```
-# {
-#     'fnls': array((nsims)),
-#     'patches': array((npol, nsims, npatchs, nside, nside)),
-#     'maps': array((npol, nsims, 12*nside**2))
-# }
-# ```
-# maps are the full healpy maps. 
-# 
-# The order of everything is set by nsims, with fnls[i] being used to generate the corresponding maps and patches.
-# Make sure you preserve this ordering.
-# 
-# We may want to optimize this with TFDatasets if we find GPU is idle a lot, which would indiciate data bound due to transfer.
-# 
-# ---
-
 # %%
-base_name = f'{nside}_{nsims}x{npatches}_fnl{fnl_range[0]}-{fnl_range[1]}-r{r_res}-p{polarizations}'
-data_dir = f'data/ksw/'
-filename = f'{base_name}.npy'
-
-data_dir, filename
-
-# %%
-if not os.path.exists(data_dir): 
-    os.makedirs(data_dir)
-    print(f'Created directory {data_dir}')
-else:
-    print(f'Reusing directory {data_dir}')
-    # pattern = re.compile(f"{base_name}_\d+-\d+\.npy")
-    pattern = re.compile(f"{base_name}.npy")
-    for file in os.listdir(data_dir):
-        if pattern.match(file):
-            file_path = os.path.join(data_dir, file)
-            os.remove(file_path)
-            print(f"Deleted existing data file: {file_path}")
-
-# %%
-print(f"Saving to {dir}/{filename}...", end=" ")
-
-data = {
-    'fnls':fnls, 
-    'patches':patches, 
-    'maps': maps
-    }
-
-with open(f"{data_dir}/{filename}", "xb") as f:
-    np.save(f, data) # type: ignore
-
-print("Done!")
+# TODO get KSW estimator for fnl
 
 # %% [markdown]
 # # Goodbye
