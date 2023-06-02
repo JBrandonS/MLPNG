@@ -1,8 +1,6 @@
 # %%
 import os
 import re
-import resource
-import psutil
 
 import numpy as np
 from numpy.random import randint, normal, uniform
@@ -11,7 +9,6 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import CubicSpline
 
 from joblib import Parallel, delayed
-from functools import partial
 
 from astropy import units as u
 
@@ -22,19 +19,8 @@ from ksw import Cosmology, Data
 from ksw.radial_functional import radial_func
 
 import h5py
-from tqdm.auto import tqdm
 
 # %matplotlib inline
-# %load_ext line_profiler
-
-# %%
-def p_mem():
-    pid = os.getpid()
-    py = psutil.Process(pid)
-    memory_info = py.memory_info()
-    memory_use_in_bytes = memory_info.rss
-    memory_use_in_gb = memory_use_in_bytes / (1024 ** 3)
-    return f'{memory_use_in_gb:,.4f} GB'
 
 # %% [markdown]
 # # Data Generator
@@ -91,11 +77,13 @@ cosmo_params = {
     'mnu': 0.06,
     'tau': 0.0561,
     'TCMB': 2.7255,
-    'max_l': 3000, # should be higher then lmax below, will get c_l_max > lmax error otherwise, for some reason
+    'lmax': 2500,
+
+    'Want_CMB': True,
+    'Want_CMB_lensing': True,
 }
 
 # %% [markdown]
-# This lmax is the one that really gets used.
 # lmax >= 300 is enforced by the ksw code due to errors with CAMB. 
 # lmax needs to be somewhat smaller then max_l, if you get errors about c_ell change these.
 # You will get warning messages if lmax > 4\* nside.  
@@ -111,24 +99,25 @@ cosmo_params = {
 # KSW only supports polarization values of 'T', 'E', ['T', 'E'].
 
 # %%
-lmax = 2500
-
 fnl_range=(-1000, 1000)
 
-nsims = 1000
-npatches = 10
-save_size = 10              # save every n sims, helps control memory usage
+nsims = 10000
+npatches = 10                # number of patches to generate per sim
+save_size = 10               # save every n sims, helps control memory usage
 
+lmax=2500
 nside=1024
+
 patch_side_deg = 10
+
+r_res = 10000                 # number of slices in the radius, memory and time are greatly impacted by this
+r_batch = 10                 # number of slices to compute per thread, memory usage is greatly impacted by this
 
 r_min = 1                    # Mpc, min radius for the patch, >1e-6, but I've had issues below 1 with kernel crashes, check if this should be higher       
 r_max = 14000                # Mpc, max radius for the patch, should be > SLS distance, check this value
-r_res = 1000                 # number of slices in the radius, time is greatly impacted by this
-r_batch = 100                # number of slices to compute per thread, memory usage is greatly impacted by this
 
 # KSW only supports 'T' and 'E'
-polarizations = ['T']#,'E']
+polarizations = 'T'
 # polarizations = ['T', 'E']
 
 # FWHM of gaussian beam, use astropy units to make thing easy here
@@ -136,13 +125,8 @@ beam_width = 1 * u.arcmin # type: ignore
 
 # noise settings, for the noise covariance matrix (without beam) in uK^2.
 noise_loc = 0.
-noise_scale = 0.1
+noise_scale = 44
 
-# %%
-# gotta keep this low
-alm_parallel = Parallel(3, verbose=11)
-
-parallel = Parallel(-1, verbose=11)
 
 # %%
 if isinstance(polarizations, str):
@@ -157,6 +141,11 @@ data_dir = f'data/ksw'
 filename = f'{base_name}.hdf5.nc'
 data_file = os.path.join(data_dir, filename)
 
+# %%
+nell = lmax + 1
+nelem = hp.Alm.getsize(lmax)
+ells = np.arange(nell)
+
 if not os.path.exists(data_dir): 
     os.makedirs(data_dir)
     print(f'Created directory {data_dir}')
@@ -170,16 +159,15 @@ else:
             os.remove(file_path)
             print(f"Deleted existing data file: {file_path}")
 
-print(p_mem(), data_dir, filename, data_file)
+print(data_dir, filename, data_file)
 
 # %%
 npol = 1 if isinstance(polarizations, str) else len(polarizations)
-pol = npol > 1
-nell = lmax + 1
+pol_b = npol > 1
 
 ls, ms = hp.Alm.getlm(lmax)
 
-print(p_mem(), npol, pol, nell, ls.shape, ms.shape)
+print(npol, pol_b, nell, ls.shape, ms.shape)
 
 # %%
 # np.split didnt do what I wanted
@@ -199,7 +187,7 @@ def split_into_batches(data, batch_size):
         batches.append(data[num_batches*batch_size:])
         indices.append(np.arange(num_batches*batch_size, len(data)))
         
-    return np.ascontiguousarray(indices), np.ascontiguousarray(batches)
+    return indices, batches
 
 radii = np.linspace(r_min, r_max, r_res)
 dr = radii[1] - radii[0]
@@ -207,17 +195,19 @@ dr = radii[1] - radii[0]
 sim_idxs, sim_slices = split_into_batches(np.arange(nsims), save_size)
 radii_idxs, radii_slices = split_into_batches(radii, r_batch)
 
-print(p_mem(), sim_idxs.shape, sim_slices.shape, radii_idxs.shape, radii_slices.shape)
+# print(sim_idxs, sim_slices.shape, radii_idxs.shape, radii_slices.shape)
 
 # %%
-noise_ell = normal(noise_loc, noise_scale, (3, nell) if pol else (nell))
-beam_ell = hp.gauss_beam(beam_width.to_value(u.radian), lmax, pol)
+noise_ell = normal(noise_loc, noise_scale, (3, nell) if pol_b else (nell))
+beam_ell = hp.gauss_beam(beam_width.to_value(u.radian), lmax, pol_b)
 
-if pol:
-    # KSW only supports 'T' and 'E', check this is what we are getting
+if pol_b:
     beam_ell = beam_ell[:,:2].swapaxes(0,1)
 
-print(p_mem(), noise_ell.shape, beam_ell.shape)
+# noise_ell = np.arange(nell, dtype=float)
+# beam_ell = np.linspace(1, 0.8, nell)
+
+print(noise_ell.shape, beam_ell.shape)
 
 # %% [markdown]
 # ## Simulate the patches
@@ -226,20 +216,51 @@ print(p_mem(), noise_ell.shape, beam_ell.shape)
 camb_params_obj = camb.set_params(**cosmo_params)
 cosmo = Cosmology(camb_params_obj, verbose=True)
 
-cosmo.compute_transfer(cosmo_params['max_l'])
+# cosmo._setattr_camb('ns', 0.9624, subclass='InitPower')
+
+cosmo.compute_transfer(3000)
 cosmo.compute_c_ell()
 
 # %%
-data = Data(lmax, noise_ell, beam_ell, polarizations, cosmo)
+data = Data(lmax, noise_ell, beam_ell, polarizations, cosmo, n_is_totcov=False)
 
-c_ells = data.cosmology.c_ell['unlensed_scalar']['ells'] # type: ignore
+alm = data.compute_alm_sim(False)
+
+c_ells = data.cosmology.c_ell['unlensed_scalar']['c_ell'][:,0] # type: ignore
+
 tr_ell_k = data.cosmology.transfer['tr_ell_k']
-ells = data.cosmology.transfer['ells']
-ks = data.cosmology.transfer['k']
+tr_ells = data.cosmology.transfer['ells']
+tr_k = data.cosmology.transfer['k']
 
-alm = data.compute_alm_sim(lens_power=False)
+print(alm.shape, tr_ell_k.shape, tr_ells.shape, tr_k.shape, c_ells.shape)
 
-print(p_mem(), alm.shape, tr_ell_k.shape, ells.shape, ks.shape, c_ells.shape)
+# %%
+plt.figure()
+ls = np.arange(len(c_ells))[2:]
+plt.plot(ls, ls * (ls + 1) / 2 / np.pi * c_ells[2:])
+plt.xlabel("$\ell$")
+plt.ylabel("$C_{\ell}$")
+plt.title("Gaussian angular power spectrum from CAMB")
+plt.grid()
+plt.show()
+
+# %%
+gaussian_map = hp.alm2map(alm, nside=nside, lmax=lmax, mmax=None, pol=False, pixwin=False, fwhm=0, sigma=None)
+hp.mollview(gaussian_map[0], title='gaussian map from alm', unit='uK')
+
+# %%
+cl1 = hp.anafast(gaussian_map[0], lmax=lmax, pol=False, use_pixel_weights=True)
+cl2 = hp.alm2cl(alm[0], lmax=lmax)
+ell = np.arange(len(cl1))
+
+plt.figure(figsize=(10, 5))
+plt.plot(ell, ell * (ell + 1) * cl1, label='anafast')
+plt.plot(ell, ell * (ell + 1) * cl2, label='alm2cl')
+plt.xlabel("$\ell$")
+plt.ylabel("$\ell(\ell+1)C_{\ell}$")
+plt.title('Angular power spectrum from Gaussian map')
+plt.legend()
+plt.grid()
 
 # %%
 def interpolate_ells(func, ells_sparse, ls):
@@ -257,12 +278,16 @@ def interpolate_ells(func, ells_sparse, ls):
 # $$
 
 # %%
-# f_k = np.swapaxes([ks], 0, 1) 
-f_k = np.ones((len(ks),1))
+# f_k = np.swapaxes([tr_k**2], 0, 1) 
 
-alpha_ell = radial_func(f_k, tr_ell_k, ks, radii, ells).squeeze()
-alpha_l = np.concatenate(np.array([interpolate_ells(alpha_ell, ells, np.arange(lmax))]))
+#TODO can combine f_ks
+f_k = np.ones((len(tr_k),1))
+
+alpha_ell = radial_func(f_k, tr_ell_k, tr_k, radii, tr_ells)[:,:,:,0]
+alpha_l = np.concatenate(np.array([interpolate_ells(alpha_ell, tr_ells, np.arange(lmax))]))
 alpha_l = np.ascontiguousarray(alpha_l)
+
+print(alpha_l.shape)
 
 # %% [markdown]
 # $$
@@ -272,15 +297,16 @@ alpha_l = np.ascontiguousarray(alpha_l)
 # %%
 delta_phi = 2 * np.pi ** 2 * cosmo_params['As'] * (3 / 5)**2
 
-f_k = (ks**-3 * delta_phi)[:, np.newaxis]
-beta_ell = radial_func(f_k, tr_ell_k, ks, radii, ells).squeeze()
+f_k = (tr_k**-3 * delta_phi)[:, np.newaxis]
+beta_ell = radial_func(f_k, tr_ell_k, tr_k, radii, tr_ells)[:,:,:,0]
 
-div = beta_ell / c_ells[np.newaxis, ells, np.newaxis]
+c_ells_new = c_ells[tr_ells]
+div = beta_ell / c_ells_new[np.newaxis, :, np.newaxis]
 
-bl_div_cl = np.concatenate(np.array([interpolate_ells(div, ells, np.arange(lmax))]))
+bl_div_cl = np.concatenate(np.array([interpolate_ells(div, tr_ells, np.arange(lmax))]))
 bl_div_cl = np.ascontiguousarray(bl_div_cl)
 
-print(p_mem(), alpha_l.shape, bl_div_cl.shape)
+print(bl_div_cl.shape)
 
 # %% [markdown]
 # $$
@@ -292,53 +318,45 @@ print(p_mem(), alpha_l.shape, bl_div_cl.shape)
 # $$
 
 # %%
+def get_alm_ng_slice(bl_div_cl, alpha_l, radii_i, radii_s):
+    for p in range(npol):
+        for r_idxs, rs in zip(radii_i, radii_s):
+                yield bl_div_cl[r_idxs,:,p], alpha_l[r_idxs,:,p], rs, p
+
 def alm_ng_slice(dr, nside, lmax, pol, alm, bl_div_cl, alpha_l, radii):
     Balm = np.stack([ hp.almxfl(alm, bl_div_cl[i]) for i in range(len(radii)) ])
 
-    B = hp.alm2map(Balm, nside=nside, lmax=lmax, mmax=None, pol=pol, pixwin=False, fwhm=0, sigma=None)
+    B = hp.alm2map(Balm, nside=nside, lmax=lmax, mmax=None, pol=False, pixwin=False, fwhm=0, sigma=None)
 
-    inner = hp.map2alm(B**2, lmax=lmax, mmax=None, pol=pol, use_pixel_weights=True)
-    
-    alm_ng = np.sum([dr * radii[i]**2 * hp.almxfl(inner[i], alpha_l[i]) for i in range(len(radii))], axis=0) # type: ignore
-    print('slice', p_mem(), alm_ng.shape)
-    return alm_ng
+    inner = hp.map2alm(B**2, lmax=lmax, mmax=None, pol=False)
 
-def get_alm_ng_slice(bl_div_cl, alpha_l, radii_i, radii_s, p):
-    for r_idx, r in zip(radii_i, radii_s):
-        yield bl_div_cl[r_idx,:,p], alpha_l[r_idx,:,p], r
+    alm_ng = np.array([dr * radii[i]**2 * hp.almxfl(inner[i], alpha_l[i]) for i in range(len(radii))])   
+    return np.sum(alm_ng, axis=0) # type: ignore
+        
+alm_ng = np.sum(Parallel(n_jobs=-1, verbose=1)(delayed(alm_ng_slice)(dr, nside, lmax, pol_b, alm[p], bl_div_cls, alpha_ls, rs) # type: ignore
+                for bl_div_cls, alpha_ls, rs, p in get_alm_ng_slice(bl_div_cl, alpha_l, radii_idxs, radii_slices)), axis=0)
 
-# %%
-alm_ng = np.sum([alm_ng_slice(dr, nside, lmax, pol, alm[0], bl_div_cl, alpha_l, r) # type: ignore
-    for bl_div_cl, alpha_l, r in get_alm_ng_slice(bl_div_cl, alpha_l, radii_idxs, radii_slices, 0)], axis=(0))
+# alm_ng = alm_ng.reshape(npol, alm.shape[1])
+alm_ng = np.ascontiguousarray(alm_ng)
 
-print('computed alm_ng', p_mem(), alm_ng.shape)
+print('computed alm_ng', alm_ng.shape)
 
 # %%
 def cutSqPatches(fullsky_map, img_size, side_deg, num_patches):
-    Tmap_datat = np.zeros((num_patches//2, int(img_size), int(img_size)))
-    Tmap_datab = np.zeros((num_patches//2, int(img_size), int(img_size)))
+    if len(fullsky_map.shape) == 1:
+            fullsky_map = np.expand_dims(fullsky_map, axis=0)
+            
+    nsim = fullsky_map.shape[0]
+    Tmap_datat = np.zeros((nsim, num_patches//2, int(img_size), int(img_size)))
+    Tmap_datab = np.zeros((nsim, num_patches//2, int(img_size), int(img_size)))
 
-    for counter in range(num_patches//2):
-        Tmap_datat[counter] = np.ma.getdata(hp.cartview(fullsky_map, fig=0, xsize=img_size, ysize=img_size, rot=[0, 0], lonra=[side_deg*counter, side_deg*(counter+1)], latra=[0, side_deg],
-                                                        title="CartView", unit="mK", format="%.2g", return_projected_map=True))
-        Tmap_datab[counter] = np.ma.getdata(hp.cartview(fullsky_map, fig=1, xsize=img_size, ysize=img_size, rot=[0, 0], lonra=[side_deg*counter, side_deg*(counter+1)], latra=[-side_deg, 0],
-                                                        title="CartView", unit="mK", format="%.2g", return_projected_map=True))
-    
-    return np.concatenate((Tmap_datat, Tmap_datab))
-
-def get_sim_run(sims):
-    for sim in sims:
-        for p in range(npol):
-                yield sim, p
-
-def run_sim(nside, npatches, patch_side_deg, lmax, pol, alm, alm_ng, fnl):
-    alm_prime = np.stack(alm + fnl * alm_ng)
-
-    print('running sim', p_mem(), alm_prime.shape)
-    maps  = hp.alm2map(alm_prime, nside, lmax=lmax, mmax=None, pol=pol, pixwin=False, fwhm=0, sigma=None)
-    patches = cutSqPatches(maps, nside, patch_side_deg, npatches)
-    
-    return (maps, patches)
+    for sim in range(nsim):
+        for counter in range(num_patches//2):
+            Tmap_datat[sim, counter] = np.ma.getdata(hp.cartview(fullsky_map[sim], fig=0, xsize=img_size, ysize=img_size, rot=[0, 0], lonra=[side_deg*counter, side_deg*(counter+1)], latra=[0, side_deg],
+                                                                title="CartView", unit="mK", format="%.2g", return_projected_map=True))
+            Tmap_datab[sim, counter] = np.ma.getdata(hp.cartview(fullsky_map[sim], fig=1, xsize=img_size, ysize=img_size, rot=[0, 0], lonra=[side_deg*counter, side_deg*(counter+1)], latra=[-side_deg, 0],
+                                                                title="CartView", unit="mK", format="%.2g", return_projected_map=True))
+    return np.concatenate((Tmap_datat, Tmap_datab), axis=1)
 
 def append_to_hdf5(file_path, data_dict):
     with h5py.File(file_path, 'a') as f:
@@ -350,35 +368,46 @@ def append_to_hdf5(file_path, data_dict):
             else:
                 maxshape = (None,) + value.shape[1:]
                 dataset = f.create_dataset(key, shape=value.shape, maxshape=maxshape, chunks=True)
-                dataset[:] = value
-                
+                dataset[:] = value 
 
 # %%
 fnls = uniform(fnl_range[0], fnl_range[1], nsims).astype(np.float32)
+append_to_hdf5(data_file, {'fnls': fnls})
 
 # %%
+def get_sim_run(sims):
+    for p in range(npol):
+        for sim in sims:
+                    yield sim, p
+
+def run_sim(nside, npatches, patch_side_deg, lmax, pol, alm, alm_ng, fnl):
+    alm_prime = alm + fnl * alm_ng
+
+    maps  = hp.alm2map(alm_prime, nside, lmax=lmax, mmax=None, pol=False, pixwin=False, fwhm=0, sigma=None)
+
+    patches = cutSqPatches(maps, nside, patch_side_deg, npatches)   
+    return (maps, patches)
+
 pl.ioff()
-for sims in sim_slices:
-    sim_data = parallel(delayed(run_sim)(nside, npatches, patch_side_deg, lmax, pol, alm[p], alm_ng, fnls[sim]) 
-        for sim, p in get_sim_run(sims)) # type: ignore
+with Parallel(n_jobs=-1, verbose=11) as parallel:
+    for sims in sim_slices:
+        sim_data = parallel(delayed(run_sim)(nside, npatches, patch_side_deg, lmax, pol_b, alm[p], alm_ng[p], fnls[sim]) 
+        for sim, p in get_sim_run(sims))
 
-    maps, patches = zip(*sim_data)
-    maps = np.stack(maps)
-    patches = np.stack(patches)
-    
-    data_dict = {'fnl': fnls, 'maps': maps, 'patches': patches}
-
-    print('saving', p_mem(), maps.shape, patches.shape)
-    append_to_hdf5(data_file, data_dict)
+        maps = np.array([data[0] for data in sim_data]).reshape(npol, len(sims), -1)
+        patches = np.array([data[1] for data in sim_data]).reshape(npol, len(sims), npatches, nside, nside)
+        
+        print('saving', maps.shape, patches.shape)
+        data_dict = {'maps': maps, 'patches': patches}
+        append_to_hdf5(data_file, data_dict)
     
 pl.close('all')
-pl.ion();
+pl.ion()
+
+print('done with sims') 
 
 # %%
-# rename file to indicate that it is done
 os.rename(data_file, data_file.replace('.hdf5.nc', '.hdf5'))
-
-print('done', p_mem())
 
 # %% [markdown]
 # Done with generation
@@ -389,28 +418,29 @@ print('done', p_mem())
 # # Tests
 
 # %%
-random_indices = [(0, randint(nsims), randint(npatches)) for _ in range(4)]
+random_indices = [(randint(npol), randint(maps.shape[1]), randint(npatches)) for _ in range(4)]
 
-random_indices
-
-# %%
-for pol, s, p in random_indices:
-    hp.mollview(maps[s], title=f'Sim {s}, patch {p}, pol {pol}, fnl {fnls[s]}', unit='mK')
+print(random_indices)
 
 # %%
-for pol, s, p in random_indices:
+for pol, sim, patch in random_indices:
+    hp.mollview(maps[pol, sim], title=f'Sim {sim}, pol {pol}, fnl {fnls[sim]}', unit='mK')
+
+# %%
+for pol, sim, patch in random_indices:
     plt.figure()
-    plt.imshow(patches[s, p])
-    plt.title(f"patch {s*npatches + p} [fnl={fnls[s]}]")
+    plt.imshow(patches[pol, sim, patch])
+    plt.title(f"patch {sim*npatches + patch}, pol {pol} [fnl={fnls[sim]}]")
     plt.show()
 
 # %%
-for pol, s, p in random_indices:
-    cl = hp.anafast(maps[s], lmax=lmax)
+for pol, sim, patch in random_indices:
+    cl = hp.anafast(maps[pol, sim], lmax=lmax)
     ell = np.arange(len(cl))
+    
     plt.figure()
-    plt.plot(ell, ell * (ell + 1) * cl)
-    plt.title(f"sim {s} [fnl={fnls[s]}]")
+    plt.semilogx(ell, ell * (ell + 1) * cl)
+    plt.title(f"sim {sim} pol {pol} [fnl={fnls[sim]}]")
     plt.show()
 
 # %%
