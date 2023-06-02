@@ -1,0 +1,6 @@
+[submodule "ksw"]
+	path = ksw
+	url = https://github.com/AdriJD/ksw.git
+[submodule "optweight"]
+	path = optweight
+	url = https://github.com/AdriJD/optweight.git
