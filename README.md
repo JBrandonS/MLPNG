@@ -4,44 +4,15 @@
 
 ## Tasks
 
-- Curved sky maps
-    - Regularization
-        - [x] More training data
-        - [x] Reduce model complexity [**Joe found, on 03/02/2023, that a neural network with one convolution layer and one dense layer was not able to learn the features of the training, validation, or test sets (CNN-reconstruction.ipynb.**]
-        - [x] Dropout rate [**Joe found, on 03/02/2023, that increasing the dropout rate to 0.5 (from 0.3) produced no change in the network’s ability to learn the features of the validation or test sets. Increasing the dropout rate to 0.99 also produced no change, when the network was trained over 10 epochs.**]
-        - [ ] L1 and l2 regularization
-    - [x] Generate maps with larger range of $f_{NL}$ [**Joe experimented with this between 02/28/23-03/01/23, and found no change to the network’s ability to learn the features of the validation or test sets.**]
-    - [ ] Resolution / map size / tiling
-    - [ ] Smoothing of maps
-
-- CMB transfer function applied to flat sky maps
-    - Linear transfer function should not impact results - is that true for CMB maps?
-
-- Bias versus variance in Thomas tests
-    - [x] Larger data set
-    - [ ] Hyperparameters, early stopping, etc.
-    - [ ] Model complexity
-
-- $f_{NL}$ error estimates as function of:
-    - [ ] $f_{sky}$
-    - [ ] $\ell_{min}$
-    - [ ] $\ell_{max}$
-    - [ ] Noise level
-    - [ ] Temperature, polarization, and both
-    - [ ] With and without lensing
-
-- [ ] Lensing applied to maps
-
-- Generate our own non-Gaussian maps
-    - [x] Local $f_{NL}$
-    - [ ] Curved sky
-    - [x] Flat sky
-
 ## Installing
 
- - Clone repo with `git clone --recursive`
- - Install ksw and optweight
- - ...
+ - Clone repo with `git clone`
+ - Clone submodules with `git submodule update --init --recursive`
+    - You can also just download and install `KSW` and `optweight`.
+ - You can see `ksw_datagen.sbatch` for an example of running the sciprt on m3
+    - You will need to change the conda env in the sbatch scripts
+
+- Currently datagen will work on m3 but not superpod. Training will be done on superpod but not working right now.
 
 ## Running
 

@@ -1,6 +1,7 @@
 # %%
 import os
 import re
+import gc
 
 import numpy as np
 from numpy.random import randint, normal, uniform
@@ -77,7 +78,22 @@ cosmo_params = {
     'mnu': 0.06,
     'tau': 0.0561,
     'TCMB': 2.7255,
-    'lmax': 3000,
+    'max_l': 3000,
+
+
+    ## These are forced by ksw
+    # "DoLateRadTruncation": False,
+    # "AccuracyBoost":2.,
+    # "BessIntBoost": 30.,
+    # "KmaxBoost": 3.,
+    # "IntTolBoost": 4.,
+    # "TimeStepBoost": 4.,
+    # "SourcekAccuracyBoost": 5.,
+    # "BesselBoost": 5.,
+    # "IntkAccuracyBoost": 5.,
+    # "lSampleBoost": 2.,
+    # "lAccuracyBoost": 2.,
+    # "AccurateBB": True,
 }
 
 # %% [markdown]
@@ -98,7 +114,7 @@ cosmo_params = {
 # %%
 fnl_range=(-1000, 1000)
 
-nsims = 10000
+nsims = 1000
 npatches = 10                # number of patches to generate per sim
 save_size = 10               # save every n sims, helps control memory usage
 
@@ -107,7 +123,7 @@ nside=512
 
 patch_side_deg = 10
 
-r_res = 10000                  # number of slices in the radius, memory and time are greatly impacted by this
+r_res = 1000                 # number of slices in the radius, memory and time are greatly impacted by this
 r_batch = 10                 # number of slices to compute per thread, memory usage is greatly impacted by this
 
 r_min = 1                    # Mpc, min radius for the patch, >1e-6, but I've had issues below 1 with kernel crashes, check if this should be higher       
@@ -119,11 +135,11 @@ polarizations = 'T'
 # polarizations = ['T', 'E']
 
 # FWHM of gaussian beam, use astropy units to make thing easy here
-beam_width = 1 * u.arcmin # type: ignore
+beam_width = 7 * u.arcmin # type: ignore
 
 # noise settings, for the noise covariance matrix (without beam) in uK^2.
 noise_loc = 0.
-noise_scale = 44
+noise_scale = 43 * (cosmo_params['TCMB']* 1e-6)**2
 
 # not fully tested
 lensing = False
@@ -170,11 +186,10 @@ pol_b = npol > 1
 
 nell = lmax + 1
 nelem = hp.Alm.getsize(lmax)
+npix = hp.nside2npix(nside)
 ells = np.arange(nell)
 
 ls, ms = hp.Alm.getlm(lmax)
-
-npix = hp.nside2npix(nside)
 
 print(npol, pol_b, nell, ls.shape, ms.shape, npix)
 
@@ -231,7 +246,7 @@ cosmo = Cosmology(camb_params_obj, verbose=True)
 # cosmo._setattr_camb('ns', 0.9624, subclass='InitPower')
 
 # notice 3000 > lmax, will get warnings otherwise
-cosmo.compute_transfer(3000)
+cosmo.compute_transfer(cosmo_params['max_l'])
 
 cosmo.compute_c_ell()
 
@@ -261,17 +276,20 @@ plt.grid()
 plt.show()
 
 # %%
-gaussian_map = hp.alm2map(alm, nside=nside, lmax=lmax, mmax=None, pol=pol_b, pixwin=False, fwhm=0, sigma=None)
+gaussian_map = hp.alm2map(alm, nside=nside, lmax=lmax, pol=pol_b)
 hp.mollview(gaussian_map[0], title='gaussian map from alm', unit='uK')
 
 # %%
-cl1 = hp.anafast(gaussian_map[0], lmax=lmax, pol=pol_b, use_pixel_weights=True)
+cl1 = hp.anafast(gaussian_map[0], lmax=lmax, pol=pol_b)
 cl2 = hp.alm2cl(alm[0], lmax=lmax)
 ell = np.arange(len(cl1))
 
-plt.figure(figsize=(10, 5))
-plt.plot(ell, ell * (ell + 1) * cl1, label='anafast')
-plt.plot(ell, ell * (ell + 1) * cl2, label='alm2cl')
+scale = (ell * (ell + 1) / 2 / np.pi)[2:]
+
+plt.semilogy(ell[2:], scale * cl2[2:], label='alm2cl')
+plt.semilogy(ell[2:], scale * cl1[2:], label='anafast')
+plt.semilogy(ls, ls * (ls + 1) / 2 / np.pi * c_ells[2:,0], label='camb')
+
 plt.xlabel("$\ell$")
 plt.ylabel("$\ell(\ell+1)C_{\ell}$")
 plt.title('Angular power spectrum from Gaussian map')
@@ -307,7 +325,7 @@ alpha_l = np.ascontiguousarray(alpha_l)
 
 beta_ell = rad[:,:,:,1]
 c_ells_new = c_ells[tr_ells]
-div = beta_ell / c_ells_new[np.newaxis, :]
+div = beta_ell / c_ells_new[np.newaxis, :, :]
 
 bl_div_cl = np.concatenate(np.array([interpolate_ells(div, tr_ells, ells)]))
 bl_div_cl = np.ascontiguousarray(bl_div_cl)
@@ -332,9 +350,9 @@ def get_alm_ng_slice():
 def alm_ng_slice(dr, nside, lmax, pol_b, alm, bl_div_cl, alpha_l, radii):
     Balm = np.array([ hp.almxfl(alm, bl_div_cl[i]) for i in range(len(radii)) ])
 
-    B = hp.alm2map(Balm, nside=nside, lmax=lmax, mmax=None, pol=pol_b, pixwin=False, fwhm=0, sigma=None)
+    B = hp.alm2map(Balm, nside=nside, lmax=lmax, pol=pol_b)
 
-    inner = hp.map2alm(B**2, lmax=lmax, mmax=None, pol=pol_b)
+    inner = hp.map2alm(B**2, lmax=lmax, pol=pol_b)
 
     alm_ng = np.array([dr * radii[i]**2 * hp.almxfl(inner[i], alpha_l[i]) for i in range(len(radii))])   
     return np.sum(alm_ng, axis=0) # type: ignore
@@ -408,7 +426,7 @@ def run_sim(nside, npatches, patch_side_deg, lmax, pol_b, alm, alm_ng, fnl):
 
     # do we have sufficent randomization here?
     # we might need to add a randomized noise alm
-    maps = hp.alm2map(alm_prime, nside, lmax=lmax, mmax=None, pol=pol_b, pixwin=False, fwhm=0, sigma=None)
+    maps = hp.alm2map(alm_prime, nside, lmax=lmax, pol=pol_b)
 
     patches = cutSqPatches(maps, nside, patch_side_deg, npatches)   
     return (maps, patches)
@@ -429,6 +447,9 @@ with Parallel(n_jobs=-1, verbose=11) as parallel:
              data_dict['maps'] = maps
 
         append_to_hdf5(data_file, data_dict)
+
+        pl.close('all')
+        gc.collect()
     
 pl.close('all')
 pl.ion()
@@ -445,6 +466,59 @@ os.rename(data_file, data_file.replace('.hdf5.nc', '.hdf5'))
 # ---
 # 
 # # Tests
+
+# %%
+random_indices = [(randint(npol), randint(maps.shape[0]), randint(npatches)) for _ in range(4)]
+
+print(random_indices)
+
+# %%
+for pol, sim, patch in random_indices:
+    hp.mollview(maps[pol, sim], title=f'Sim {sim}, pol {pol}, fnl {fnls[sim]}', unit='$\mu$K')
+
+# %%
+print(patches.shape)
+for pol, sim, patch in random_indices:
+    plt.figure()
+    plt.imshow(patches[pol, sim, patch])
+    plt.title(f"sim {sim} patch {patch}, pol {pol} [fnl={fnls[sim]}]")
+    plt.show()
+
+# %%
+for pol, sim, patch in random_indices:
+    cl = hp.anafast(maps[pol, sim], lmax=lmax)
+    ell = np.arange(len(cl))
+    
+    plt.figure()
+    plt.semilogx(ell, ell * (ell + 1) * cl)
+    plt.title(f"sim {sim} pol {pol} [fnl={fnls[sim]}]")
+    plt.show()
+
+# %%
+# n_unique = 2
+# nfact = 3
+
+# factors = np.ones((n_unique, npol, nell))
+# weights = np.ones((nfact, 3))
+# rule = np.zeros((nfact, 3), dtype=int)
+# rule[0] = [0, 0, 0]
+# rule[1] = [0, 0, 1]
+# rule[2] = [0, 1, 1]
+# beam = lambda alm : alm
+# red_bi = [ReducedBispectrum(factors, rule, weights, ells, 'tester')]
+
+# icov_nl = data.icov_diag_nonlensed
+# est_nl = KSW(red_bi, icov_nl, beam, lmax, polarizations)
+
+# alm = np.array([hp.map2alm(maps[0,0], lmax=lmax)])
+# est_nl.step(np.array([hp.map2alm(maps[0,0], lmax=lmax)]))
+# # est_nl.step(np.array([hp.map2alm(maps[0,1], lmax=lmax)]))
+# # est_nl.step(np.array([hp.map2alm(maps[0,2], lmax=lmax)]))
+# # est_nl.step(np.array([hp.map2alm(maps[0,3], lmax=lmax)]))
+# # est_nl.step(np.array([hp.map2alm(maps[0,4], lmax=lmax)]))
+
+# print(est_nl.compute_linear_term(alm.copy()))
+# print('fnl estimate', est_nl.compute_estimate(alm.copy()))
 
 # %% [markdown]
 # # Goodbye
