@@ -16,7 +16,7 @@ from astropy import units as u
 import healpy as hp
 import camb
 
-from ksw import Cosmology, Data, ReducedBispectrum, KSW
+from ksw import Cosmology, Data, ReducedBispectrum, KSW, Shape
 from ksw.radial_functional import radial_func
 
 import h5py
@@ -54,7 +54,7 @@ import h5py
 # B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}
 # $$
 # 
-# where $\Delta_\phi$ is pridormial normalizatiopn, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
+# where $\Delta_\phi$ is pridormial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
 # 
 # ---
 
@@ -114,7 +114,7 @@ cosmo_params = {
 # %%
 fnl_range=(-1000, 1000)
 
-nsims = 1000
+nsims = 10000
 npatches = 10                # number of patches to generate per sim
 save_size = 10               # save every n sims, helps control memory usage
 
@@ -123,11 +123,11 @@ nside=512
 
 patch_side_deg = 10
 
-r_res = 1000                 # number of slices in the radius, memory and time are greatly impacted by this
+r_res = 1000                  # number of slices in the radius, memory and time are greatly impacted by this
 r_batch = 10                 # number of slices to compute per thread, memory usage is greatly impacted by this
 
 r_min = 1                    # Mpc, min radius for the patch, >1e-6, but I've had issues below 1 with kernel crashes, check if this should be higher       
-r_max = 14000                # Mpc, max radius for the patch, should be > SLS distance, check this value
+r_max = 20000                # Mpc, max radius for the patch, should be > SLS distance, check this value
 
 # KSW only supports 'T' and 'E', need to check 'E' Support
 # more testing needs to be done with TE
@@ -135,17 +135,20 @@ polarizations = 'T'
 # polarizations = ['T', 'E']
 
 # FWHM of gaussian beam, use astropy units to make thing easy here
-beam_width = 7 * u.arcmin # type: ignore
+beam_width = 1 * u.arcmin # type: ignore
 
 # noise settings, for the noise covariance matrix (without beam) in uK^2.
-noise_loc = 0.
-noise_scale = 43 * (cosmo_params['TCMB']* 1e-6)**2
+noise_loc = 0
+noise_scale = 44 * 1e-12
 
 # not fully tested
 lensing = False
 
 # should we save the full sky maps, or just the patches
 save_fullsky = False
+
+# For easy switching between notebook and slurm
+debug = False
 
 
 # %% [markdown]
@@ -172,7 +175,6 @@ if not os.path.exists(data_dir):
     print(f'Created directory {data_dir}')
 else:
     print(f'Reusing directory {data_dir}')
-    # pattern = re.compile(f"{base_name}_\d+-\d+\.npy")
     pattern = re.compile(f"{base_name}\.hdf5(\.nc)?")
     for file in os.listdir(data_dir):
         if pattern.match(file):
@@ -189,9 +191,9 @@ nelem = hp.Alm.getsize(lmax)
 npix = hp.nside2npix(nside)
 ells = np.arange(nell)
 
-ls, ms = hp.Alm.getlm(lmax)
+alm_ls, alm_ms = hp.Alm.getlm(lmax)
 
-print(npol, pol_b, nell, ls.shape, ms.shape, npix)
+print(npol, pol_b, nell, alm_ls.shape, alm_ms.shape, npix)
 
 # %%
 # np.split didnt do what I wanted
@@ -219,39 +221,40 @@ dr = radii[1] - radii[0]
 sim_idxs, sim_slices = split_into_batches(np.arange(nsims), save_size)
 radii_idxs, radii_slices = split_into_batches(radii, r_batch)
 
-print(len(sim_slices), len(radii_idxs), len(radii_slices))
+print(dr, len(sim_slices), len(radii_idxs), len(radii_slices))
 
 # %%
 # Order for pol_b is TT,EE,TE
 noise_ell = normal(noise_loc, noise_scale, (3, nell) if pol_b else (nell))
-
 beam_ell = hp.gauss_beam(beam_width.to_value(u.radian), lmax, pol_b)
 
 if pol_b:
-    beam_ell = beam_ell.swapaxes(0,1)
+    beam_ell = beam_ell[:,:npol].swapaxes(0,1)
 
 # noise_ell = np.arange(nell, dtype=float)
 # beam_ell = np.linspace(1, 0.8, nell)
 
-print(noise_ell.shape, beam_ell.shape)
+print(noise_ell.shape, beam_ell)
 
 # %% [markdown]
 # ## Simulate the patches
 
 # %%
 camb_params_obj = camb.set_params(**cosmo_params)
-cosmo = Cosmology(camb_params_obj, verbose=True)
+cosmo = Cosmology(camb_params_obj, verbose=debug)
 
 # Additional settings here
 # cosmo._setattr_camb('ns', 0.9624, subclass='InitPower')
 
-# notice 3000 > lmax, will get warnings otherwise
 cosmo.compute_transfer(cosmo_params['max_l'])
 
 cosmo.compute_c_ell()
 
+loc = Shape.prim_local(ns=cosmo_params['ns'], pivot=cosmo_params['pivot_scalar'])
+cosmo.add_prim_reduced_bispectrum(loc, radii)
+
 # %%
-data = Data(lmax, noise_ell, beam_ell, polarizations, cosmo, n_is_totcov=False)
+data = Data(lmax, noise_ell, beam_ell, polarizations, cosmo)
 
 alm = data.compute_alm_sim(lensing)
 
@@ -266,35 +269,38 @@ tr_k = data.cosmology.transfer['k']
 print(alm.shape, tr_ell_k.shape, tr_ells.shape, tr_k.shape, c_ells.shape)
 
 # %%
-plt.figure()
-ls = np.arange(len(c_ells[:,0]))[2:]
-plt.plot(ls, ls * (ls + 1) / 2 / np.pi * c_ells[2:,0])
-plt.xlabel("$\ell$")
-plt.ylabel("$C_{\ell}$")
-plt.title("Gaussian angular power spectrum from CAMB")
-plt.grid()
-plt.show()
+if debug:
+    plt.figure()
+    dls = np.arange(len(c_ells[:,0]))[2:]
+    plt.plot(dls, dls * (dls + 1) / 2 / np.pi * c_ells[2:,0])
+    plt.xlabel("$\ell$")
+    plt.ylabel("$C_{\ell}$")
+    plt.title("Gaussian angular power spectrum from CAMB")
+    plt.grid()
+    plt.show()
 
 # %%
-gaussian_map = hp.alm2map(alm, nside=nside, lmax=lmax, pol=pol_b)
-hp.mollview(gaussian_map[0], title='gaussian map from alm', unit='uK')
+if debug:
+    gaussian_map = hp.alm2map(alm[0], nside=nside, lmax=lmax, pol=pol_b)
+    hp.mollview(gaussian_map, title='gaussian map from $a_{lm}$', unit='$\mu$K')
 
 # %%
-cl1 = hp.anafast(gaussian_map[0], lmax=lmax, pol=pol_b)
-cl2 = hp.alm2cl(alm[0], lmax=lmax)
-ell = np.arange(len(cl1))
+if debug:
+    cl1 = hp.anafast(gaussian_map, lmax=lmax, pol=pol_b, use_pixel_weights=True)
+    cl2 = hp.alm2cl(alm[0], lmax=lmax)
+    ell = np.arange(len(cl1))
 
-scale = (ell * (ell + 1) / 2 / np.pi)[2:]
+    scale = (ell * (ell + 1) / 2 / np.pi)
 
-plt.semilogy(ell[2:], scale * cl2[2:], label='alm2cl')
-plt.semilogy(ell[2:], scale * cl1[2:], label='anafast')
-plt.semilogy(ls, ls * (ls + 1) / 2 / np.pi * c_ells[2:,0], label='camb')
+    plt.semilogy(ell[2:], scale[2:] * cl2[2:], label='alm2cl')
+    plt.semilogy(ell[2:], scale[2:] * cl1[2:], label='anafast')
+    plt.semilogy(dls, dls * (dls + 1) / 2 / np.pi * c_ells[2:,0], label='camb')
 
-plt.xlabel("$\ell$")
-plt.ylabel("$\ell(\ell+1)C_{\ell}$")
-plt.title('Angular power spectrum from Gaussian map')
-plt.legend()
-plt.grid()
+    plt.xlabel("$\ell$")
+    plt.ylabel("$\ell(\ell+1)/2\pi\,C_{\ell}$")
+    plt.title('Angular power spectrum from Gaussian map')
+    plt.legend()
+    plt.grid()
 
 # %% [markdown]
 # Radial func computes $f_\ell^X(r) = \frac{2}{\pi} \int k^2 dk f(k) \Delta^{TX}_\ell(k) j_\ell(k r)$, we will use this to find 
@@ -311,11 +317,11 @@ plt.grid()
 def interpolate_ells(func, ells_sparse, ls):
     return CubicSpline(ells_sparse, func, axis=1)(ls)
 
-delta_phi = 2 * np.pi ** 2 * cosmo_params['As'] * (3 / 5)**2
+delta_phi = np.sqrt(2 * (2 * np.pi) ** 2 * cosmo_params['As']**2 * (3 / 5))
 
-f_k_alpha = np.ones((len(tr_k)))
-f_k_beta = (tr_k**-3 * delta_phi)
-f_k = np.reshape([f_k_alpha, f_k_beta], (-1, 2))
+f_k = np.ones((len(tr_k), 2), dtype=float)
+# f_k[:, 0] = 1 # f_k for alpha
+f_k[:, 1] = (tr_k**-3 * delta_phi) # f_k for beta
 
 rad = radial_func(f_k, tr_ell_k, tr_k, radii, tr_ells)
 
@@ -349,21 +355,46 @@ def get_alm_ng_slice():
 
 def alm_ng_slice(dr, nside, lmax, pol_b, alm, bl_div_cl, alpha_l, radii):
     Balm = np.array([ hp.almxfl(alm, bl_div_cl[i]) for i in range(len(radii)) ])
+    B = hp.alm2map(Balm, nside=nside, lmax=lmax, pol=False)
 
-    B = hp.alm2map(Balm, nside=nside, lmax=lmax, pol=pol_b)
-
-    inner = hp.map2alm(B**2, lmax=lmax, pol=pol_b)
+    # Error encountered at /project/healpixsubmodule/src/cxx/Healpix_cxx/alm_healpix_tools.cc, line 57
+    # (function void map2alm(const Healpix_Map<T>&, Alm<std::complex<_Tp> >&, const arr<double>&, bool) [with T = double])
+    # map contains undefined pixels
+    # terminate called after throwing an instance of 'PlanckError'
+    inner = hp.map2alm(B**2, lmax=lmax, pol=False)
 
     alm_ng = np.array([dr * radii[i]**2 * hp.almxfl(inner[i], alpha_l[i]) for i in range(len(radii))])   
     return np.sum(alm_ng, axis=0) # type: ignore
         
-alm_ng = Parallel(n_jobs=-1, verbose=11)(delayed(alm_ng_slice)(dr, nside, lmax, pol_b, alm[p], bldivcls, alphals, rs) # type: ignore
+alm_ng = Parallel(n_jobs=-1, verbose=10)(delayed(alm_ng_slice)(dr, nside, lmax, pol_b, alm[p], bldivcls, alphals, rs) # type: ignore
                 for bldivcls, alphals, rs, p in get_alm_ng_slice())
-alm_ng = np.sum(alm_ng, axis=0)
-alm_ng = np.reshape(alm_ng, (npol, alm.shape[1]))
+
+alm_ng = np.reshape(alm_ng, (npol, len(radii_slices), alm.shape[1]))
+alm_ng = np.sum(alm_ng, axis=1)
 alm_ng = np.ascontiguousarray(alm_ng)
 
 print(alm_ng.shape)
+
+# %%
+if debug:
+    ng_map = hp.alm2map(alm_ng, nside=nside, lmax=lmax, pol=pol_b)
+    hp.mollview(ng_map[0], title='non-gaussian map from $a_{lm}^{NG}$', unit='$\mu$K')
+    plt.show()
+    
+    cl1 = hp.anafast(ng_map[0], lmax=lmax, pol=pol_b, use_pixel_weights=True)
+    cl2 = hp.alm2cl(alm_ng[0], lmax=lmax)
+
+    scale = ell * (ell + 1) / 2 / np.pi
+
+    plt.semilogy(ells, scale * cl2, label='alm2cl')
+    plt.semilogy(ells, scale * cl1, label='anafast')
+    plt.semilogy(dls, dls * (dls + 1) / 2 / np.pi * c_ells[2:,0], label='camb')
+
+    plt.xlabel("$\ell$")
+    plt.ylabel("$\ell(\ell+1)/2\pi\,C_{\ell}$")
+    plt.title('Angular power spectrum from non-Gaussian map')
+    plt.legend()
+    plt.grid()
 
 # %%
 def cutSqPatches(fullsky_map, img_size, side_deg, num_patches):
@@ -401,7 +432,7 @@ def append_to_hdf5(file_path, data_dict):
         for key, value in data_dict.items():
             # If dataset exists in file, append to it
             if key in f:
-                f[key].resize((f[key].shape[0] + value.shape[0]), axis = 0)
+                f[key].resize((f[key].shape[0] + value.shape[0]), axis=0)
                 f[key][-value.shape[0]:] = value
             else:
                 maxshape = (None,) + value.shape[1:]
@@ -419,7 +450,7 @@ append_to_hdf5(data_file, {'fnls': fnls})
 def get_sim_run(sims):
     for p in range(npol):
         for sim in sims:
-                    yield sim, p
+            yield sim, p
 
 def run_sim(nside, npatches, patch_side_deg, lmax, pol_b, alm, alm_ng, fnl):
     alm_prime = alm + fnl * alm_ng
@@ -432,8 +463,9 @@ def run_sim(nside, npatches, patch_side_deg, lmax, pol_b, alm, alm_ng, fnl):
     return (maps, patches)
 
 pl.ioff()
-with Parallel(n_jobs=-1, verbose=11) as parallel:
+with Parallel(n_jobs=-1, verbose=10) as parallel:
     for sims in sim_slices:
+        print('started', sims)
         sim_data = parallel(delayed(run_sim)(nside, npatches, patch_side_deg, lmax, pol_b, alm[p], alm_ng[p], fnls[sim]) 
             for sim, p in get_sim_run(sims))
 
@@ -448,19 +480,27 @@ with Parallel(n_jobs=-1, verbose=11) as parallel:
 
         append_to_hdf5(data_file, data_dict)
 
+        # Having memeory issues with large datasets eventually. So trying to prevent a leak
         pl.close('all')
         gc.collect()
+        print('finished', sims)
     
 pl.close('all')
 pl.ion()
 
 print('done with sims') 
+print(maps.shape, patches.shape)
 
 # %%
 os.rename(data_file, data_file.replace('.hdf5.nc', '.hdf5'))
 
 # %% [markdown]
-# Done with generation
+# We are done with generation, if we are not debugging lets just exist, mostly so we dont have to remove these lines everytime we convert the notebook to a python script for batch
+
+# %%
+if not debug:
+    print('Done with Generation!')
+    exit(0)
 
 # %% [markdown]
 # ---
@@ -468,7 +508,7 @@ os.rename(data_file, data_file.replace('.hdf5.nc', '.hdf5'))
 # # Tests
 
 # %%
-random_indices = [(randint(npol), randint(maps.shape[0]), randint(npatches)) for _ in range(4)]
+random_indices = [(randint(npol), randint(maps.shape[1]), randint(npatches)) for _ in range(4)]
 
 print(random_indices)
 
@@ -477,7 +517,6 @@ for pol, sim, patch in random_indices:
     hp.mollview(maps[pol, sim], title=f'Sim {sim}, pol {pol}, fnl {fnls[sim]}', unit='$\mu$K')
 
 # %%
-print(patches.shape)
 for pol, sim, patch in random_indices:
     plt.figure()
     plt.imshow(patches[pol, sim, patch])
@@ -486,39 +525,34 @@ for pol, sim, patch in random_indices:
 
 # %%
 for pol, sim, patch in random_indices:
-    cl = hp.anafast(maps[pol, sim], lmax=lmax)
-    ell = np.arange(len(cl))
-    
     plt.figure()
-    plt.semilogx(ell, ell * (ell + 1) * cl)
-    plt.title(f"sim {sim} pol {pol} [fnl={fnls[sim]}]")
+    cl = hp.anafast(maps[pol, sim], lmax=lmax, pol=pol_b, use_pixel_weights=True)
+    ell = np.arange(len(cl1))
+
+    scale = (ell * (ell + 1) / 2 / np.pi)[2:]
+
+    plt.semilogy(ell[2:], scale * cl2[2:], label=f'anafast {pol} {sim}')
+    plt.semilogy(dls, dls * (dls + 1) / 2 / np.pi * c_ells[2:,0], label='camb')
+
+    plt.xlabel("$\ell$")
+    plt.ylabel("$\ell(\ell+1)/2\pi C_{\ell}$")
+    plt.title('Angular power spectrum from sim map')
+    plt.legend()
+    plt.grid()
     plt.show()
 
 # %%
-# n_unique = 2
-# nfact = 3
+# loc = Shape.prim_local(ns=cosmo_params['ns'], pivot=cosmo_params['pivot_scalar'])
+# cosmo.add_prim_reduced_bispectrum(loc, radii)
 
-# factors = np.ones((n_unique, npol, nell))
-# weights = np.ones((nfact, 3))
-# rule = np.zeros((nfact, 3), dtype=int)
-# rule[0] = [0, 0, 0]
-# rule[1] = [0, 0, 1]
-# rule[2] = [0, 1, 1]
-# beam = lambda alm : alm
-# red_bi = [ReducedBispectrum(factors, rule, weights, ells, 'tester')]
+beam = lambda alm : alm
+icov_nl = data.icov_diag_nonlensed
+est_nl = KSW(cosmo.red_bispectra, icov_nl, beam, lmax, polarizations)
 
-# icov_nl = data.icov_diag_nonlensed
-# est_nl = KSW(red_bi, icov_nl, beam, lmax, polarizations)
-
-# alm = np.array([hp.map2alm(maps[0,0], lmax=lmax)])
-# est_nl.step(np.array([hp.map2alm(maps[0,0], lmax=lmax)]))
-# # est_nl.step(np.array([hp.map2alm(maps[0,1], lmax=lmax)]))
-# # est_nl.step(np.array([hp.map2alm(maps[0,2], lmax=lmax)]))
-# # est_nl.step(np.array([hp.map2alm(maps[0,3], lmax=lmax)]))
-# # est_nl.step(np.array([hp.map2alm(maps[0,4], lmax=lmax)]))
-
-# print(est_nl.compute_linear_term(alm.copy()))
-# print('fnl estimate', est_nl.compute_estimate(alm.copy()))
+for pol, sim, patch in random_indices:
+    alm = hp.map2alm(maps[pol,sim], lmax=lmax)
+    print(est_nl.compute_linear_term(alm.copy()))
+    print('fnl estimate', est_nl.compute_estimate(alm))
 
 # %% [markdown]
 # # Goodbye
