@@ -114,7 +114,7 @@ cosmo_params = {
 # %%
 fnl_range=(-1000, 1000)
 
-nsims = 10000
+nsims = 1000
 npatches = 10                # number of patches to generate per sim
 save_size = 10               # save every n sims, helps control memory usage
 
