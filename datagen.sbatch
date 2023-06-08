@@ -26,4 +26,4 @@ export CPATH="/hpc/m3/spack/opt/spack/linux-ubuntu22.04-zen3/gcc-11.2.0/fftw-3.3
 export C_INCLUDE_PATH="/hpc/m3/spack/opt/spack/linux-ubuntu22.04-zen3/gcc-11.2.0/fftw-3.3.10-gz7qikisgnrxlrj5dwrxmpceu73vg434/include/:$C_INCLUDE_PATH"
 export CPLUS_INCLUDE_PATH="/hpc/m3/spack/opt/spack/linux-ubuntu22.04-zen3/gcc-11.2.0/fftw-3.3.10-gz7qikisgnrxlrj5dwrxmpceu73vg434/include/:$CPLUS_INCLUDE_PATH"
 
-time srun python ksw_datagen.py > logs/dg-$SLURM_JOB_ID.log 2>&1
+time srun python datagen.py > logs/dg-$SLURM_JOB_ID.log 2>&1

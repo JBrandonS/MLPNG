@@ -11,5 +11,4 @@ logs
 *.prof
 *.out
 
-# Jupyter / sbatch generated files, will be the same as the notebooks
-_*.py
+cleanup.sh
