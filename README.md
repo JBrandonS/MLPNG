@@ -1,5 +1,7 @@
 # Machine Learning for Primordial Non-Gaussianity
 
+[Google Doc](https://docs.google.com/document/d/1ogvANs4A7Ddb9--W0YCcQKWKaQXbMvZDO7PQbGw4Vsc/edit?usp=sharing)
+
 ## Overview
 ---
 
@@ -10,12 +12,16 @@
 ---
 
 To install this project, follow these steps:
-
+### datagen
 1. Clone the repository using `git clone` or download the zip file.
    - If you choose to download the zip file, extract the contents to a local directory.
 2. Clone the submodules using `git submodule update --init --recursive` or download and install `KSW` and `optweight` if you prefer not to use git submodules.
+   - I have provided `datagen-m3.yml` which is the conda env I use 
 3. See `datagen.sbatch` for an example of running the script on m3 and which modules to load.
 4. Everything should now be set up and ready to use.
+
+### trainer
+TODO
 
 > Important
 >
