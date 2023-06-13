@@ -3,7 +3,7 @@
 #SBATCH --partition=highmem
 #SBATCH --ntasks=1
 #SBATCH --mem=1024G  # per node
-#SBATCH --cpus-per-task=64
+#SBATCH --cpus-per-task=32
 #SBATCH --output=logs/dg-output_%j.log
 #SBATCH --error=logs/dg-error_%j.log
 

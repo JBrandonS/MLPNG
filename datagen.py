@@ -20,6 +20,7 @@ from ksw import Cosmology, Data, ReducedBispectrum, KSW, Shape
 from ksw.radial_functional import radial_func
 
 import h5py
+from tqdm import tqdm
 
 # %matplotlib inline
 
@@ -121,7 +122,7 @@ print(camb_params_obj)
 # %%
 fnl_range=(-1000, 1000)
 
-nsims = 10000
+nsims = 1000
 npatches = 10                # number of patches to generate per sim
 save_size = 10               # save every n sims, helps control memory usage
 
@@ -136,14 +137,14 @@ r_min = 1                    # Mpc, min radius for the patch, >1e-6, but I've ha
 r_max = 20000                # Mpc, max radius for the patch, should be > SLS distance, check this value
 
 # KSW only supports 'T' and 'E'
-polarizations = ['T'] #, 'E']
+polarizations = ['T']#, 'E']
 
 # FWHM of gaussian beam, use astropy units to make thing easy here
 beam_width = 1 * u.arcmin
 
-# noise settings, for the noise covariance matrix (without beam) in uK^2.
+# noise settings
 noise_loc = 0
-noise_scale = 43 * u.arcmin
+noise_scale = 43 * u.arcmin # in uK * arcmin
 noise_theta = 7.1 * u.arcmin
 
 # not in yet, needs to be map level
@@ -229,12 +230,10 @@ print(dr, len(sim_slices), len(radii_idxs), len(radii_slices))
 
 # %%
 # Order for pol_b is TT,EE,TE
-# noise_ell = normal(noise_loc, noise_scale, (3, nell) if pol_b else (nell))
-# noise_spec = np.fft.fft(noise_ell)
-# print(noise_spec.shape)
 noise_scale_rad = noise_scale.to_value(u.radian)
 noise_theta_rad = noise_theta.to_value(u.radian)
 
+# need to add the QU terms
 noise_ell = np.array([noise_scale_rad**2 * np.exp( (l*(l+1) * noise_theta_rad**2) / (8*np.log(2)) ) for l in range(nell)])
 
 beam_ell = hp.gauss_beam(beam_width.to_value(u.radian), lmax, pol_b)
@@ -264,7 +263,7 @@ data = Data(lmax, noise_ell, beam_ell, polarizations, cosmo)
 
 alm = data.compute_alm_sim(lensing)
 
-c_ells = data.cosmology.c_ell['unlensed_scalar'] # type: ignore
+c_ells = data.cosmology.c_ell['unlensed_scalar']
 
 tr_ell_k = data.cosmology.transfer['tr_ell_k']
 tr_ells = data.cosmology.transfer['ells']
@@ -337,7 +336,7 @@ if debug:
 def interpolate_ells(func, ells_sparse, ls, axis=1):
     return CubicSpline(ells_sparse, func, axis)(ls)
 
-delta_phi = (2 * np.pi) * cosmo_params['As'] * np.sqrt(3 / 5) #/np.sqrt(cosmo_params['TCMB'] * 10**-6)
+delta_phi = (2 * np.pi) * cosmo_params['As'] * np.sqrt(3 / 5)
 
 f_k = np.ones((len(tr_k), 2), dtype=float)
 # f_k[:, 0] = 1                           # f_k for alpha
@@ -470,6 +469,7 @@ def get_sim_run(sims):
 
 def run_sim(nside, npatches, patch_side_deg, lmax, pol_b, alm, alm_ng, fnl):
     alm_prime = alm + fnl * alm_ng
+    
     # do we have sufficent randomization here?
     # we might need to add a randomized noise alm
     maps = hp.alm2map(alm_prime, nside, lmax=lmax, pol=pol_b)
@@ -482,8 +482,8 @@ def run_sim(nside, npatches, patch_side_deg, lmax, pol_b, alm, alm_ng, fnl):
 # estimator = KSW(cosmo.red_bispectra, icov_nl, beam, lmax, polarizations)
 
 pl.ioff()
-with Parallel(n_jobs=-1, verbose=1) as parallel:
-    for sims in sim_slices:
+with Parallel(n_jobs=-1, verbose=0) as parallel:
+    for sims in tqdm(sim_slices):
         sim_data = parallel(delayed(run_sim)(nside, npatches, patch_side_deg, lmax, pol_b, alm[p], alm_ng[p], fnls[sim]) 
             for sim, p in get_sim_run(sims))
 
@@ -495,9 +495,8 @@ with Parallel(n_jobs=-1, verbose=1) as parallel:
         if save_fullsky:
              data_dict['maps'] = maps
 
-        print(f'Saving to {data_file}, patches: {patches.shape}, maps: {save_fullsky} {maps.shape}')
+        # print(f'Saving to {data_file}, patches: {patches.shape}, maps: {save_fullsky} {maps.shape}')
         save_data(data_file, data_dict)
-    
 pl.close('all')
 pl.ion()
 
