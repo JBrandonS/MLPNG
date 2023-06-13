@@ -121,11 +121,11 @@ print(camb_params_obj)
 # %%
 fnl_range=(-1000, 1000)
 
-nsims = 100
+nsims = 10000
 npatches = 10                # number of patches to generate per sim
 save_size = 10               # save every n sims, helps control memory usage
 
-nside=512
+nside=1024
 
 patch_side_deg = 10
 
@@ -136,23 +136,24 @@ r_min = 1                    # Mpc, min radius for the patch, >1e-6, but I've ha
 r_max = 20000                # Mpc, max radius for the patch, should be > SLS distance, check this value
 
 # KSW only supports 'T' and 'E'
-polarizations = ['T', 'E']
+polarizations = ['T'] #, 'E']
 
 # FWHM of gaussian beam, use astropy units to make thing easy here
-beam_width = 1 * u.arcmin # type: ignore
+beam_width = 1 * u.arcmin
 
 # noise settings, for the noise covariance matrix (without beam) in uK^2.
 noise_loc = 0
-noise_scale = 44 * 1e-12
+noise_scale = 43 * u.arcmin
+noise_theta = 7.1 * u.arcmin
 
-# not fully tested
-lensing = True
+# not in yet, needs to be map level
+lensing = False
 
 # should we save the full sky maps, or just the patches
-save_fullsky = True
+save_fullsky = False
 
 # For easy switching between notebook and slurm
-debug = True
+debug = False
 
 # %% [markdown]
 # We set the file name best on settings, this will let us load in the data better and ensure we know what settings we are dealing with
@@ -228,11 +229,19 @@ print(dr, len(sim_slices), len(radii_idxs), len(radii_slices))
 
 # %%
 # Order for pol_b is TT,EE,TE
-noise_ell = normal(noise_loc, noise_scale, (3, nell) if pol_b else (nell))
+# noise_ell = normal(noise_loc, noise_scale, (3, nell) if pol_b else (nell))
+# noise_spec = np.fft.fft(noise_ell)
+# print(noise_spec.shape)
+noise_scale_rad = noise_scale.to_value(u.radian)
+noise_theta_rad = noise_theta.to_value(u.radian)
+
+noise_ell = np.array([noise_scale_rad**2 * np.exp( (l*(l+1) * noise_theta_rad**2) / (8*np.log(2)) ) for l in range(nell)])
 
 beam_ell = hp.gauss_beam(beam_width.to_value(u.radian), lmax, pol_b)
 if pol_b:
     beam_ell = beam_ell[:,:npol].swapaxes(0,1)
+
+print(noise_ell.shape, beam_ell.shape)
 
 # %% [markdown]
 # ## Simulate the patches
@@ -255,8 +264,7 @@ data = Data(lmax, noise_ell, beam_ell, polarizations, cosmo)
 
 alm = data.compute_alm_sim(lensing)
 
-pre = '' if lensing else 'un'
-c_ells = data.cosmology.c_ell[pre+'lensed_scalar'] # type: ignore
+c_ells = data.cosmology.c_ell['unlensed_scalar'] # type: ignore
 
 tr_ell_k = data.cosmology.transfer['tr_ell_k']
 tr_ells = data.cosmology.transfer['ells']
@@ -270,15 +278,18 @@ print(alm.shape, tr_ell_k.shape, tr_ells.shape, tr_k.shape)
 
 # %%
 if debug:
+    camb_cls_n = c_ells['c_ell'][2:lmax] + noise_ell[2:lmax, np.newaxis]
     camb_cls = c_ells['c_ell'][2:lmax]
     camb_ls = np.arange(2, lmax)
     for p in range(npol):
         plt.figure()
-        plt.plot(camb_ls, camb_ls * (camb_ls + 1) / 2 / np.pi * camb_cls[:,p])
+        plt.plot(camb_ls, camb_ls * (camb_ls + 1) / 2 / np.pi * camb_cls_n[:,p], label='noise')
+        plt.plot(camb_ls, camb_ls * (camb_ls + 1) / 2 / np.pi * camb_cls[:,p], label='no noise')
         plt.xlabel("$\ell$")
         plt.ylabel("$C_{\ell}$")
         plt.title(f"Gaussian angular power spectrum from CAMB {p}")
         plt.grid()
+        plt.legend()
         plt.show()
 
 # %%
@@ -300,6 +311,7 @@ if debug:
 
         plt.semilogy(ell[2:], scale[2:] * cl2[2:], label=f'alm2cl {p}')
         plt.semilogy(ell[2:], scale[2:] * cl1[2:], label=f'anafast {p}')
+        plt.semilogy(camb_ls, camb_ls * (camb_ls + 1) / 2 / np.pi * camb_cls_n[:,p], label=f'camb + noise {p}')
         plt.semilogy(camb_ls, camb_ls * (camb_ls + 1) / 2 / np.pi * camb_cls[:,p], label=f'camb {p}')
 
         plt.xlabel("$\ell$")
@@ -322,14 +334,14 @@ if debug:
 # $\Delta_\ell^T(k)$, the transfer functions, are calculated sparsely by CAMB; We thus need to interpolate over the missing values to get `alpha_l`, `beta_l` which are suitable for the calculations. We do this with `CubicSpline`, but this could be changed if needed. We also go ahead and calculate `bl_div_cl`=$\beta_\ell / C_\ell$, which is used to calculate $B(r,\hat{n})$.
 
 # %%
-def interpolate_ells(func, ells_sparse, ls):
-    return CubicSpline(ells_sparse, func, axis=1)(ls)
+def interpolate_ells(func, ells_sparse, ls, axis=1):
+    return CubicSpline(ells_sparse, func, axis)(ls)
 
-delta_phi = (2 * np.pi) * cosmo_params['As'] * np.sqrt(3 / 5)
+delta_phi = (2 * np.pi) * cosmo_params['As'] * np.sqrt(3 / 5) #/np.sqrt(cosmo_params['TCMB'] * 10**-6)
 
 f_k = np.ones((len(tr_k), 2), dtype=float)
-# f_k[:, 0] = 1                         # f_k for alpha
-f_k[:, 1] = (tr_k**-3 * delta_phi)      # f_k for beta
+# f_k[:, 0] = 1                           # f_k for alpha
+f_k[:, 1] = tr_k**-3 * delta_phi          # f_k for beta
 
 rad = radial_func(f_k, tr_ell_k, tr_k, radii, tr_ells)
 
@@ -372,7 +384,7 @@ def alm_ng_slice(dr, nside, lmax, pol_b, alm, bl_div_cl, alpha_l, radii):
     alm_ng = np.array([dr * radii[i]**2 * hp.almxfl(inner[i], alpha_l[i]) for i in range(len(radii))])   
     return np.sum(alm_ng, axis=0) # type: ignore
         
-alm_ng = Parallel(n_jobs=1, verbose=1)(delayed(alm_ng_slice)(dr, nside, lmax, pol_b, alm[p], bldivcls, alphals, rs) # type: ignore
+alm_ng = Parallel(n_jobs=-1, verbose=1)(delayed(alm_ng_slice)(dr, nside, lmax, pol_b, alm[p], bldivcls, alphals, rs) # type: ignore
                 for bldivcls, alphals, rs, p in get_alm_ng_slice())
 
 alm_ng = np.reshape(alm_ng, (npol, len(radii_slices), alm.shape[1]))
@@ -402,6 +414,23 @@ if debug:
         plt.title('Angular power spectrum from non-Gaussian map')
         plt.legend()
         plt.grid()
+
+# %%
+def save_data(file_path, data_dict):
+    with h5py.File(file_path, 'a') as hf:  # Open the file in append mode
+        for key, value in data_dict.items():
+            if key in hf:
+                # Resize the dataset to accommodate the new data
+                hf[key].resize((hf[key].shape[0] + value.shape[0],) + value.shape[1:])
+                # Append the new data
+                hf[key][-value.shape[0]:] = value
+            else:
+                # Create a new dataset for this key
+                hf.create_dataset(key, data=value, maxshape=(None,) + value.shape[1:])
+
+
+fnls = uniform(fnl_range[0], fnl_range[1], nsims).astype(np.float32)
+save_data(data_file, {'fnls': fnls})
 
 # %%
 def cutSqPatches(fullsky_map, img_size, side_deg, num_patches):
@@ -434,26 +463,6 @@ def cutSqPatches(fullsky_map, img_size, side_deg, num_patches):
         
     return np.concatenate((Tmap_datat, Tmap_datab))
 
-def append_to_hdf5(file_path, data_dict):
-    with h5py.File(file_path, 'a') as f:
-        for key, value in data_dict.items():
-            # If dataset exists in file, append to it
-            if key in f:
-                f[key].resize((f[key].shape[0] + value.shape[0]), axis=0)
-                f[key][-value.shape[0]:] = value
-            else:
-                maxshape = (None,) + value.shape[1:]
-                dataset = f.create_dataset(key, shape=value.shape, maxshape=maxshape, chunks=True)
-                dataset[:] = value 
-
-# %% [markdown]
-# fnls are generated per sim, so each patch for each sim has the same fnl
-
-# %%
-fnls = uniform(fnl_range[0], fnl_range[1], nsims).astype(np.float32)
-append_to_hdf5(data_file, {'fnls': fnls})
-
-# %%
 def get_sim_run(sims):
     for p in range(npol):
         for sim in sims:
@@ -487,7 +496,7 @@ with Parallel(n_jobs=-1, verbose=1) as parallel:
              data_dict['maps'] = maps
 
         print(f'Saving to {data_file}, patches: {patches.shape}, maps: {save_fullsky} {maps.shape}')
-        append_to_hdf5(data_file, data_dict)
+        save_data(data_file, data_dict)
     
 pl.close('all')
 pl.ion()
@@ -550,6 +559,7 @@ for pol, sim, patch in random_indices:
     scale = (ell * (ell + 1) / 2 / np.pi)[2:]
 
     plt.semilogy(ell[2:], scale * cl[2:], label=f'anafast {pol} {sim}')
+    plt.semilogy(camb_ls, camb_ls * (camb_ls + 1) / 2 / np.pi * camb_cls_n[:, pol], label='camb + noise')
     plt.semilogy(camb_ls, camb_ls * (camb_ls + 1) / 2 / np.pi * camb_cls[:, pol], label='camb')
 
     plt.xlabel("$\ell$")
