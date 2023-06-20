@@ -3,6 +3,7 @@ import os
 import re
 import gc
 
+import math
 import numpy as np
 from numpy.random import randint, normal, uniform
 import pylab as pl
@@ -11,6 +12,7 @@ from scipy.interpolate import CubicSpline
 
 from functools import partial
 from joblib import Parallel, delayed
+import multiprocessing
 
 from astropy import units as u
 
@@ -25,7 +27,12 @@ from multiprocessing import cpu_count
 from tqdm.auto import tqdm
 from tqdm.contrib.concurrent import process_map
 
-from pixell import enmap, reproject
+from pixell import enmap, reproject, utils, lensing, curvedsky
+
+import concurrent.futures as cf
+import time
+from concurrent.futures import ProcessPoolExecutor
+from itertools import product
 
 # %matplotlib inline
 
@@ -128,7 +135,7 @@ print(camb_params_obj)
 # %%
 fnl_range=(-1000, 1000)
 
-nsims = 1000                   # currently nsims % save_size === 0
+nsims = 100                   # currently nsims % save_size === 0
 npatches = 10                # number of patches to generate per sim
 
 nside=1024
@@ -141,27 +148,42 @@ r_max = 50000                # Mpc, max radius for the patch
 # valid values 'T', 'E', ['T', 'E']
 polarizations = ['T'] #, 'E']
 
-# FWHM of gaussian beam
-beam_width = 7.1 * u.arcmin
-
-# noise settings
 noise_loc = 0
-noise_scale = 43 * u.arcmin # in uK * arcmin
 
-lensing = False
+# Table 1 from smith and zald, planck levels
+# nu is 100, 143, 217
+# we will used 143 as the base for single value
+beam_width = 7.1 * u.arcmin #*10**-12
+noise_scale = 43 * u.arcmin #*10**-12# in uK * arcmin
+
+# Just helps control memory for the alm_ng calculations
+batch_size = 100
+
+do_lensing = True
 
 save_fullsky = True
 
-# should we force generation of new a_{lm}s if existing files are found matching settings
 force_alm_gen = False 
 
 # For easy switching between notebook and slurm, just disables plots
 debug = False
 
-# %% [markdown]
-# We set the file name best on settings, this will let us load in the data better and ensure we know what settings we are dealing with
 
 # %%
+#Settings that are calculated based on others
+
+npol = 1 if isinstance(polarizations, str) else len(polarizations)
+pol_b = False #npol > 1 # TODO fix
+
+nell = lmax + 1
+nelem = hp.Alm.getsize(lmax)
+npix = hp.nside2npix(nside)
+ells = np.arange(nell)
+
+pix_size = patch_side_deg*60 / nside
+
+alm_ls, alm_ms = hp.Alm.getlm(lmax)
+
 if isinstance(polarizations, str):
     chars_of_polarizations = polarizations
 elif isinstance(polarizations, list):
@@ -169,8 +191,14 @@ elif isinstance(polarizations, list):
 else:
     raise TypeError("polarizations must be either a string or a list of strings")
 
+# %% [markdown]
+# We set the file name best on settings, this will let us load in the data better and ensure we know what settings we are dealing with
+
+# %%
 base_name = f'{nside}_{chars_of_polarizations}_{nsims}x{npatches}_fnl{fnl_range[0]}-{fnl_range[1]}'
-data_dir = f'data/ksw' + ('/lensed' if lensing else '/unlensed')
+
+base_dir = 'data/ksw'
+data_dir = base_dir + ('/lensed' if lensing else '/unlensed')
 
 print(f'running sims for {data_dir}/{base_name}')
 
@@ -180,95 +208,66 @@ if not os.path.exists(data_dir):
     print(f'Created directory {data_dir}')
 else:
     print(f'Reusing directory {data_dir}')
-    pattern = re.compile(f"{base_name}\.hdf5(\.nc)?")
-    for file in os.listdir(data_dir):
-        if pattern.match(file):
-            file_path = os.path.join(data_dir, file)
-            os.remove(file_path)
-            print(f"Deleted existing data file: {file_path}")
 
 # %%
-def remove_file_if_exists(path):
-    if os.path.isfile(path):
-        os.remove(path)
-        print(f"File {path} has been removed.")
-
 def load_data(data_file, key):
+    print('Loading data',key,'from',data_file)
     with h5py.File(data_file, 'r') as hdf:
         return hdf.get(key)[()]
 
-data_filename = f'{base_name}.hdf5.nc'
+data_filename = f'{base_name}.hdf5'
 data_file = os.path.join(data_dir, data_filename)
-remove_file_if_exists(data_file)
 
 if save_fullsky:
-    fs_filename = f'{base_name}.fullsky.hdf5.nc'
+    fs_filename = f'{base_name}.fullsky.hdf5'
     fs_file = os.path.join(data_dir, fs_filename)
-    remove_file_if_exists(fs_file)
 
-alm_filename = f'{base_name}.alms.hdf5.nc'
-alm_file = os.path.join(data_dir, alm_filename)
+alm_cache_dir = f'{base_dir}/alm_cache'
+if not os.path.exists(alm_cache_dir): 
+    os.makedirs(alm_cache_dir)
+    print(f'Created cache directory {alm_cache_dir}')
 
-almng_filename = f'{base_name}.alms_ng.hdf5.nc'
-almng_file = os.path.join(data_dir, almng_filename)
+alm_filename = f'{base_name}.alms.hdf5'
+alm_file = os.path.join(alm_cache_dir, alm_filename)
 
-atest = os.path.join(data_dir, alm_filename.replace('.hdf5.nc', '.hdf5'))
-btest = os.path.join(data_dir, almng_filename.replace('.hdf5.nc', '.hdf5'))          
+almng_filename = f'{base_name}.alms_ng.hdf5'
+almng_file = os.path.join(alm_cache_dir, almng_filename)
+
+# %%
+# Check if we need to generate alms, load in alms if we can
+atest = os.path.join(alm_cache_dir, f'{base_name}.alms.hdf5')
+btest = os.path.join(alm_cache_dir, f'{base_name}.alms_ng.hdf5')          
 if not force_alm_gen and os.path.isfile(atest) and os.path.isfile(btest):
-    print('Using existing a_lms from files')
+    print('Found existing alms, using them')
     alms = load_data(atest, 'alm')
     almngs = load_data(btest, 'almng')
     gen_alms = False
-    print(alms.shape)
-    print(almngs.shape)
+    print('alms loaded', alms.shape)
+    print('alm_ng loaded', almngs.shape)
 else:
-    remove_file_if_exists(alm_file)
-    remove_file_if_exists(almng_file)
-
+    print('Generating new alms')
     alms = None
     almngs = None
     gen_alms = True
 
 # %%
-npol = 1 if isinstance(polarizations, str) else len(polarizations)
-pol_b = npol > 1 # TODO fix
+# Setup noise and beams, pol_B isn't working
+# TODO: Figure out QU values for beam and specs for noise
 
-nell = lmax + 1
-nelem = hp.Alm.getsize(lmax)
-npix = hp.nside2npix(nside)
-ells = np.arange(nell)
+noise_scales_rad = noise_scale.to_value(u.radian)
+beam_widths_rad = beam_width.to_value(u.radian)
 
-pix_size = hp.nside2resol(nside, True)          # pixel size in arcmin
-
-alm_ls, alm_ms = hp.Alm.getlm(lmax)
-
-print(npol, pol_b, nell, nelem, npix, alm_ls.shape, alm_ms.shape)
-
-# %%
 # Order for pol_b is TT,EE,TE
-noise_scale_rad = noise_scale.to_value(u.radian)
-beam_width_rad = beam_width.to_value(u.radian)
-
 if pol_b: # TODO
-    noise_ell = np.ones((3, nell)) * np.array([noise_scale_rad**2, 1, 1])[:, np.newaxis] # TODO, this isnt correct
-    beam_ell = hp.gauss_beam(beam_width_rad, lmax, True)
-    beam_ell = beam_ell[:,:npol].swapaxes(0,1)
+    noise_ell = np.ones((3, nell))*noise_scales_rad[:, np.newaxis]**2
+
+    # I don't think beampol is correct
+    beam_ell = hp.gauss_beam(beam_widths_rad, lmax, True)
+    beam_ell = beam_ell.swapaxes(0,1)[:npol]
 else:
-    noise_ell = np.ones((nell)) * noise_scale_rad**2
-    beam_ell = hp.gauss_beam(beam_width_rad, lmax, False)
-
-print(noise_ell.shape, beam_ell.shape)
-
-# %%
-cosmo = Cosmology(camb_params_obj, verbose=debug)
-
-# Additional settings here, i.e.
-# cosmo._setattr_camb('ns', 0.9624, subclass='InitPower')
-
-cosmo.compute_transfer(cosmo_params['max_l'])
-cosmo.compute_c_ell()
-
-data = Data(lmax, noise_ell, beam_ell, polarizations, cosmo)
+    noise_ell = np.ones((nell)) * noise_scales_rad**2
+    beam_ell = hp.gauss_beam(beam_widths_rad, lmax, True)
+    beam_ell = beam_ell.swapaxes(0,1)[:npol]
 
 # %% [markdown]
 # For the radii we follow Table 2. of Smith and Zaldarriaga which gives a greater density of points near reionization and recombination. 
@@ -278,31 +277,55 @@ data = Data(lmax, noise_ell, beam_ell, polarizations, cosmo)
 # radii are in Mpc
 
 # %%
-radii = []
+import numpy as np
 
+radii = []
 #          start,  stop, resolution
 ranges = [(    0,  9500, 150), 
-          ( 9500, 11000, 300), 
-          (11000, 13800, 150), 
-          (13800, 14600, 400), 
-          (14600, 16000, 100), 
-          (16000, 50000, 100)]
+        ( 9500, 11000, 300), 
+        (11000, 13800, 150), 
+        (13800, 14600, 400), 
+        (14600, 16000, 100), 
+        (16000, 50000, 100)]
 
 for r in ranges:
-    if r_max < r[0] or r_min > r[1]:
-        continue
     start = max(r_min, r[0])
     end = min(r_max, r[1])
-    
+
+    if start > end:
+        continue
+
     if r == ranges[-1]: # For the last range, use logspace
         temp_radii = np.logspace(np.log10(start), np.log10(end), num=r[2])
     else:
-        temp_radii = np.linspace(start, end, num=r[2])
-    
-    radii.extend(temp_radii[temp_radii <= end])
+        temp_radii = np.linspace(start, end, num=r[2], endpoint=False)
 
-radii = [r for r in radii if r_min <= r <= r_max]
-drs = [j-i for i, j in zip(radii[:-1], radii[1:])]
+    radii.extend(temp_radii)
+
+radii = np.array([r for r in radii if r_min <= r < r_max])
+drs = np.diff(radii)
+
+# %%
+if gen_alms or debug:
+    cosmo = Cosmology(camb_params_obj, verbose=True)
+
+    # Additional settings here, i.e.
+    # cosmo._setattr_camb('ns', 0.9624, subclass='InitPower')
+
+    cosmo.compute_transfer(cosmo_params['max_l'])
+    cosmo.compute_c_ell()
+
+    data = Data(lmax, noise_ell, beam_ell, polarizations, cosmo)
+
+    c_ells = data.cosmology.c_ell['unlensed_scalar']
+
+    tr_ell_k = data.cosmology.transfer['tr_ell_k']
+    tr_ells = data.cosmology.transfer['ells']
+    tr_k = data.cosmology.transfer['k']
+
+    mask = (tr_ells <= lmax)
+    tr_ell_k = tr_ell_k[mask]
+    tr_ells = tr_ells[mask]
 
 # %% [markdown]
 # `radial_func` computes $f_\ell^X(r) = \frac{2}{\pi} \int k^2 dk f(k) \Delta^{TX}_\ell(k) j_\ell(k r)$, we will use this to find 
@@ -319,19 +342,6 @@ drs = [j-i for i, j in zip(radii[:-1], radii[1:])]
 # We do this with `CubicSpline`, but this could be changed if needed. 
 # 
 # We also go ahead and calculate `bl_div_cl`=$\beta_\ell / C_\ell$, which is used to calculate $B(r,\hat{n})$.
-
-# %%
-c_ells = data.cosmology.c_ell['unlensed_scalar']
-
-tr_ell_k = data.cosmology.transfer['tr_ell_k']
-tr_ells = data.cosmology.transfer['ells']
-tr_k = data.cosmology.transfer['k']
-
-mask = (tr_ells < lmax)
-tr_ell_k = tr_ell_k[mask]
-tr_ells = tr_ells[mask]
-
-print(c_ells['c_ell'].shape, tr_ell_k.shape, tr_ells.shape, tr_k.shape)
 
 # %%
 if gen_alms:
@@ -357,201 +367,41 @@ if gen_alms:
     bl_div_cl = np.concatenate(np.array([interpolate_ells(div, tr_ells, ells)]))
     bl_div_cl = np.ascontiguousarray(bl_div_cl)
 
-    print(alpha_l.shape, bl_div_cl.shape)
+# %%
+if gen_alms:
+    # Each alm takes ~30Mb, TODO: Support splitting 
+    alms = np.array([data.compute_alm_sim(False) for _ in tqdm(range(nsims), desc='a_lm progress')])
+    print(alms.shape)
 
 # %%
-# Lensing code from https://github.com/CMB-S4/CMBAnalysis_SummerSchool/blob/master/CMB_School_Part_10.ipynb
-
-def lens_map(imap,kappa,modlmap,ly,lx,N,pix_size):
-    # First we convert lensing convergence to lensing potential
-    phi = kappa_to_phi(kappa,modlmap,return_fphi=True)
-    # Then we take its gradient to get the deflection field
-    grad_phi = gradient(phi,ly,lx)
-    # Then we calculate the displaced positions by shifting the physical positions by the deflections
-    pos = posmap(N,pix_size) + grad_phi
-    # We convert the displaced positions into fractional displaced pixel numbers
-    # because scipy doesn't know about physical distances
-    pix = sky2pix(pos, N,pix_size)
-    # We prepare an empty output lensed map array
-    omap = np.empty(imap.shape, dtype= imap.dtype)
-    # We then tell scipy to calculate the values of the input lensed map
-    # at the displaced fractional positions by interpolation and grid that onto the final lensed map
-    from scipy.ndimage import map_coordinates
-    map_coordinates(imap, pix, omap, order=5, mode='wrap')
-    return omap
-
-# This function needs to know about the Fourier coordinates of the map
-def get_ells(N,pix_size):
-    # This function returns Fourier wavenumbers for a Cartesian square grid
-    N=int(N)
-    ones = np.ones(N)
-    inds  = (np.arange(N)+.5 - N/2.) /(N-1.)
-    ell_scale_factor = 2. * np.pi 
-    lx = np.outer(ones,inds) / (pix_size/60. * np.pi/180.) * ell_scale_factor
-    ly = np.transpose(lx)
-    modlmap = np.sqrt(lx**2. + ly**2.)
-    return ly,lx,modlmap
-
-# We need to convert kappa to phi
-def kappa_to_phi(kappa,modlmap,return_fphi=False):
-    return filter_map(kappa,kmask(2./modlmap/(modlmap+1.),modlmap,ellmin=2))
-
-# where we used a Fourier space masking function which will come in handy
-def kmask(filter2d,modlmap,ellmin=None,ellmax=None):
-    # Apply a minimum and maximum multipole mask to a filter
-    if ellmin is not None: filter2d[modlmap<ellmin] = 0
-    if ellmax is not None: filter2d[modlmap>ellmax] = 0
-    return filter2d
-
-# To do that we also need to know generally how to filter a map
-def filter_map(Map,filter2d):
-    FMap = np.fft.fftshift(np.fft.fft2(Map))
-    FMap_filtered = FMap * filter2d
-    Map_filtered = np.real(np.fft.ifft2(np.fft.ifftshift(FMap_filtered)))
-    return Map_filtered
-
-# We also need to calculate a gradient
-# We do this in Fourier space
-def gradient(imap,ly,lx):
-    # Filter the map by (i ly, i lx) to get gradient
-    return np.stack([filter_map(imap,ly*1j),filter_map(imap,lx*1j)])
-
-# We also needed the map of physical positions
-def posmap(N,pix_size):
-    pix    = np.mgrid[:N,:N]
-    return pix2sky(pix,N,pix_size)
-
-# For that we need to be able to convert pixel indices to sky positions
-def pix2sky(pix,N,pix_size):
-    py,px = pix
-    dec = np.deg2rad((py - N//2 - 0.5)*pix_size/60.)
-    ra = np.deg2rad((px - N//2 - 0.5)*pix_size/60.)
-    return np.stack([dec,ra])
-
-# Finally, for the lensing operation, we also needed to convert physical sky positions to pixel indices
-# which is just the inverse of the above
-def sky2pix(pos,N,pix_size):
-    dec,ra = np.rad2deg(pos)*60.
-    py = dec/pix_size + N//2 + 0.5
-    px = ra/pix_size + N//2 + 0.5
-    return np.stack([py,px])
-
-def make_CMB_T_map(N,pix_size,ell,ClTT):
-    "makes a realization of a simulated CMB sky map given an input DlTT as a function of ell,"
-    "the pixel size (pix_size) required and the number N of pixels in the linear dimension."
-    #np.random.seed(100)
-    # convert Dl to Cl
-    # ClTT = DlTT * 2 * np.pi / (ell*(ell+1.))
-    ClTT[0] = 0. # set the monopole and the dipole of the Cl spectrum to zero
-    ClTT[1] = 0.
-    
-    # make a 2D real space coordinate system
-    onesvec = np.ones(N)
-    inds  = (np.arange(N)+.5 - N/2.) /(N-1.) # create an array of size N between -0.5 and +0.5
-    # compute the outer product matrix: X[i, j] = onesvec[i] * inds[j] for i,j
-    # in range(N), which is just N rows copies of inds - for the x dimension
-    X = np.outer(onesvec,inds)
-    # compute the transpose for the y dimension
-    Y = np.transpose(X)
-    # radial component R
-    R = np.sqrt(X**2. + Y**2.)
-    
-    # now make a 2D CMB power spectrum
-    pix_to_rad = (pix_size/60. * np.pi/180.) # going from pix_size in arcmins to degrees and then degrees to radians
-    ell_scale_factor = 2. * np.pi /pix_to_rad  # now relating the angular size in radians to multipoles
-    ell2d = R * ell_scale_factor # making a fourier space analogue to the real space R vector
-    ClTT_expanded = np.zeros(int(ell2d.max())+1)
-    # making an expanded Cl spectrum (of zeros) that goes all the way to the size of the 2D ell vector
-    ClTT_expanded[0:(ClTT.size)] = ClTT[:ClTT_expanded.shape[0]] # fill in the Cls until the max of the ClTT vector
-    
-    # the 2D Cl spectrum is defined on the multiple vector set by the pixel scale
-    CLTT2d = ClTT_expanded[ell2d.astype(int)]
-    #plt.imshow(np.log(CLTT2d))
-    
-    
-    # now make a realization of the CMB with the given power spectrum in real space
-    random_array_for_T = np.random.normal(0,1,(N,N))
-    FT_random_array_for_T = np.fft.fft2(random_array_for_T)   # take FFT since we are in Fourier space
-    
-    FT_2d = np.sqrt(CLTT2d) * FT_random_array_for_T # we take the sqrt since the power spectrum is T^2
-    #plt.imshow(np.real(FT_2d))
-    
-    
-    ## make a plot of the 2D cmb simulated map in Fourier space, note the x and y axis labels need to be fixed
-    #Plot_CMB_Map(np.real(np.conj(FT_2d)*FT_2d*ell2d * (ell2d+1)/2/np.pi),0,np.max(np.conj(FT_2d)*FT_2d*ell2d * (ell2d+1)/2/np.pi),ell2d.max(),ell2d.max())  ###
-    
-    # move back from ell space to real space
-    CMB_T = np.fft.ifft2(np.fft.fftshift(FT_2d))
-    # move back to pixel space for the map
-    CMB_T = CMB_T/(pix_size /60.* np.pi/180.)
-    # we only want to plot the real component
-    CMB_T = np.real(CMB_T)
-    
-    ## return the map
-    return(CMB_T)
-
-# %%
-def cutSqPatches(fullsky_map, img_size, side_deg, num_patches):
-    Tmap_datat = np.zeros((num_patches//2, int(img_size), int(img_size)))
-    Tmap_datab = np.zeros((num_patches//2, int(img_size), int(img_size)))
-
-    for counter in range(num_patches//2):
-        Tmap_datat[counter] = np.ma.getdata(hp.cartview(fullsky_map, 
-                                                            fig=0, 
-                                                            xsize=img_size, 
-                                                            ysize=img_size, 
-                                                            rot=[0, 0], 
-                                                            lonra=[side_deg*counter, side_deg*(counter+1)], 
-                                                            latra=[0, side_deg],
-                                                            title="CartView", 
-                                                            unit="mK", 
-                                                            format="%.2g", 
-                                                            return_projected_map=True))
-        
-        Tmap_datab[counter] = np.ma.getdata(hp.cartview(fullsky_map, 
-                                                            fig=1, 
-                                                            xsize=img_size, 
-                                                            ysize=img_size, rot=[0, 0], 
-                                                            lonra=[side_deg*counter, side_deg*(counter+1)], 
-                                                            latra=[-side_deg, 0],
-                                                            title="CartView", 
-                                                            unit="mK", 
-                                                            format="%.2g", 
-                                                            return_projected_map=True))
-    pl.close('all')
-    return np.concatenate((Tmap_datat, Tmap_datab))
-
-def cutSqPatches_pixell(fullsky_map, img_size, side_deg, num_patches):
-    Tmap_datat = np.zeros((num_patches//2, int(img_size), int(img_size)))
-    Tmap_datab = np.zeros((num_patches//2, int(img_size), int(img_size)))
-
-    res = np.deg2rad(side_deg / img_size)
-    map_shape = (img_size, img_size)
-
-    for counter in range(num_patches//2):
-        box = np.array([[(side_deg * counter), 0], [(side_deg * (counter + 1)), side_deg]])
-        _, wcs = enmap.geometry(box, res, (img_size, img_size))
-        Tmap_datat[counter] = reproject.healpix2map(fullsky_map, map_shape, wcs)
-        
-        box = np.array([[(side_deg * counter), -side_deg], [(side_deg * (counter + 1)), 0]])
-        _, wcs = enmap.geometry(box, res, (img_size, img_size))
-        Tmap_datab[counter] = reproject.healpix2map(fullsky_map, map_shape, wcs)
-
-    return np.concatenate((Tmap_datat, Tmap_datab))
-
-# %%
-def _alm_ng(nside, lmax, alm, bl_div_cl, alpha_l, dr, r):
+def get_alm(alm, bl_div_cl, alpha_l, r, dr):
     Balm = hp.almxfl(alm, bl_div_cl)
-    B = hp.alm2map(Balm, nside=nside, lmax=lmax, pol=pol_b)
-    inner = hp.map2alm(B**2, lmax=lmax, pol=pol_b)
-    return dr * r**2 * hp.almxfl(inner, alpha_l)
+    B = hp.alm2map(Balm, nside=nside, lmax=lmax, pol=False)
+    inner = hp.map2alm(B**2, lmax=lmax, pol=False, use_pixel_weights=True)
+    kernel = hp.almxfl(inner, alpha_l)
+    return dr * r**2 * kernel
 
-def get_alm_ng(alm, radii, i, pol):
-    funk = partial(_alm_ng, nside, lmax, alm[pol])
-    data = Parallel(-1, verbose=0)(delayed(funk)(bl_div_cl[r_idx,:,pol], alpha_l[r_idx,:,pol], dr, r) 
-                                   for r_idx, (dr, r) in tqdm(enumerate(zip(drs, radii)), total=len(drs), 
-                                                              desc=f'alm[{pol},{i}] progress', disable=not debug))
-    return np.sum(data, axis=0)
+if gen_alms:
+    # We still hold all almngs in memory, but this should be about 30Mb per sim for 1024
+    almngs = np.zeros((nsims, npol, nelem), dtype=complex)
+
+    with Parallel(-1, verbose=0) as parallel:
+        n_batches = math.ceil(len(radii) / batch_size)
+        for i, pol in tqdm(product(range(nsims), range(npol)), total=nsims*npol, desc='total non-gaussian alm'):
+            for batch_num in tqdm(range(n_batches), total=n_batches, desc=f'Batch {i} progress'):
+                start_index = batch_num * batch_size
+                end_index = min((batch_num + 1) * batch_size, len(radii))
+                
+                batch_radii = radii[start_index:end_index]
+                batch_drs = drs[start_index:end_index]
+                
+                alms_batch = parallel(
+                    delayed(get_alm)(alms[i, pol], bl_div_cl[ri, :, pol], alpha_l[ri, :, pol], batch_radii[ri], batch_drs[ri]) 
+                    for ri in range(len(batch_radii)-1)
+                )
+                almngs[i, pol] += np.sum(alms_batch, axis=0)
+                gc.collect()
+
 
 # %%
 def save_data(file_path, data_dict):
@@ -559,7 +409,8 @@ def save_data(file_path, data_dict):
     compression_opts['compression'] = 'gzip'  # Use gzip compression
     compression_opts['compression_opts'] = 9  # Maximum compression level
 
-    with h5py.File(file_path, 'a') as hf:  # Open the file in append mode
+    print(f'Saving {file_path}...', end=' ')
+    with h5py.File(file_path, 'w') as hf:  # Open the file in append mode
         for key, value in data_dict.items():
             if key in hf:
                 # Resize the dataset to accommodate the new data
@@ -569,64 +420,85 @@ def save_data(file_path, data_dict):
             else:
                 # Create a new dataset for this key with compression options
                 hf.create_dataset(key, data=value, maxshape=(None,) + value.shape[1:], **compression_opts)
+    print('Done!')
 
 # %%
+if gen_alms:
+    save_data(alm_file, {'alm': alms})
+    save_data(almng_file, {'almng': almngs})
+
+# %%
+# Could possibly use band_geometry, since we will only need dec: +/- patch_side_deg
+# Would this do anything noticable?
+res = np.deg2rad(patch_side_deg / nside) # TODO Look into better value for res
+fs_shape, fs_wcs = enmap.fullsky_geometry(res, proj="car")
+fs_map = enmap.empty(fs_shape, fs_wcs)
+
+patch_maps = []
+ps_rad = np.deg2rad(patch_side_deg)
+for counter in np.arange(npatches//2):
+    # [[dec_min,ra_min],[dec_max,ra_max]]
+    top = [[0, ps_rad * counter], [ps_rad, ps_rad * (counter + 1)]]
+    t_geo = enmap.geometry(pos=top, res=res, proj="car")
+    patch_maps.append(t_geo)
+
+    bottom = [[-ps_rad, ps_rad * counter], [0, ps_rad * (counter + 1)]]
+    b_geo = enmap.geometry(pos=bottom, res=res, proj="car")
+    patch_maps.append(b_geo)
+
+# %%
+def cutSqPatches_pixell(do_lensing, shape, wcs, fs_map, alms):
+    car_map = curvedsky.alm2map(alms, fs_map)
+
+    if do_lensing:
+        phi_map = enmap.rand_gauss_harm(shape, wcs)*2*10**-10
+        grad_phi = enmap.grad(phi_map)
+        car_map = lensing.lens_map(car_map, grad_phi)
+
+    patches = []
+    for i in range(npatches):
+        pshape = patch_maps[i][0]
+        pwcs = patch_maps[i][1]
+        patch = car_map.project(pshape, pwcs)
+        patches.append(patch)
+        
+    return car_map, np.array(patches)
+
+cutPatches = partial(cutSqPatches_pixell, do_lensing, fs_shape, fs_wcs, fs_map)
+
 def run_sim(alm, alm_ng):    
     fnl = uniform(fnl_range[0], fnl_range[1])
     alm_prime = alm + fnl * alm_ng
-    
-    map = np.array([hp.alm2map(alm_prime[pol], nside, lmax=lmax, pol=pol_b) for pol in range(npol)])
-    patches = np.array([cutSqPatches_pixell(map[pol], nside, patch_side_deg, npatches) for pol in range(npol)])
+    fsmap, patches = cutPatches(alm_prime)
+    return fnl, fsmap, patches
 
-    if lensing:
-        ly,lx,modlmap = get_ells(nside, pix_size)
-        ls = c_ells['ells']
-        kappa = make_CMB_T_map(nside, pix_size, ls, c_ells['c_ell'][:, 0])
-        patches = np.array([[lens_map(patches[pol, i], kappa,modlmap,ly,lx,nside,pix_size) 
-                             for i in range(npatches)] for pol in range(npol)])
-
-    return alm, alm_ng, fnl, map, patches
-
+sims = Parallel(-1, verbose=10)(delayed(run_sim)(alms[i, pol], almngs[i, pol]) for pol in range(npol) for i in range(nsims))
 
 # %%
-for i in tqdm(range(nsims), desc='Simulation progress'):
-    if gen_alms:
-        alm = data.compute_alm_sim(False)
-        
-        alm_ng = np.array([get_alm_ng(alm, radii, i, pol) for pol in range(npol)])
-    else:
-        alm = alms[i]
-        alm_ng = almngs[i] 
+fnls_list = []
+maps_list = []
+patches_list = []
 
-    alm, almng, fnl, fsmap, patches = run_sim(alm, alm_ng)
+# Loop over sims to extract data and save fullsky data if required
+for sim in sims:
+    fnls_list.append(sim[0])
+    maps_list.append(sim[1])
+    patches_list.append(sim[2])
 
-    if gen_alms:
-        save_data(alm_file, {'alm': alm[np.newaxis]})
-        save_data(almng_file, {'almng': almng[np.newaxis]})
-        
-    if save_fullsky:
-        save_data(fs_file, {'map': fsmap[np.newaxis]})
+# Convert lists to np.array
+fnls = np.array(fnls_list)
+maps = np.array(maps_list)
+patches = np.array(patches_list)
 
-    sdata = {}
-    sdata['fnls'] = np.array([fnl])
-    sdata['patches'] = patches[np.newaxis]
-    save_data(data_file, sdata)
+print(fnls.shape, maps.shape, patches.shape)
 
-# %%
-def rename_save(file_name):
-    new_file = file_name.replace('.hdf5.nc', '.hdf5')
-    remove_file_if_exists(new_file)
-    os.rename(file_name, new_file)
-    print('Data saved to', new_file)
-
-rename_save(data_file)
-
-if gen_alms:
-    rename_save(alm_file)
-    rename_save(almng_file)
+sdata = {}
+sdata['fnls'] = fnls
+sdata['patches'] = patches
+save_data(data_file, sdata)
 
 if save_fullsky:
-    rename_save(fs_file)
+    save_data(fs_file, {'maps': maps})
 
 # %%
 print('Done with Generation!') 
@@ -639,33 +511,47 @@ if not debug:
 # # Plots
 
 # %%
-random_indices = [(randint(npol), randint(npatches)) for _ in range(1)]
+random_indices = [(randint(nsims), randint(npol), randint(npatches)) for _ in range(1)]
+
+print(random_indices)
 
 # %%
-for p, _ in random_indices:
-    hp.mollview(fsmap[p], title=f'Sim pol {p}, fnl {fnl}', unit='$\mu$K')
+for i, p, _ in random_indices:
+    print(maps.shape)
+    plt.imshow(maps[i])
 
 # %%
-for p, n in random_indices:
-    plt.imshow(patches[p, n])
+for i, p, n in random_indices:
+    plt.imshow(patches[i, n])
 
 # %%
-cl = hp.anafast(fsmap[0], lmax=lmax, pol=pol_b, use_pixel_weights=True)
-ell = np.arange(len(cl))
+for i, p, n in random_indices:
+    cl = hp.anafast(maps[i], lmax=lmax, pol=False, use_pixel_weights=True)
+    ell = np.arange(len(cl))
 
-plt.semilogy(ell[2:], (ell * (ell + 1) / 2 / np.pi)[2:] * cl[2:], label=f'sim {0}')
+    plt.loglog(ell[2:], (ell * (ell + 1) / 2 / np.pi)[2:] * cl[2:], label=f'sim {0}')
 
-noise_ell_b = np.array([noise_scale_rad**2 * np.exp( (l*(l+1) * beam_width_rad**2) / (8*np.log(2)) ) for l in range(nell)])
-camb_cls_n = c_ells['c_ell'][2:lmax] + noise_ell_b[2:lmax, np.newaxis]
-camb_ls = np.arange(2, lmax)
+    noise_ell_b = np.array([noise_scales_rad[1]**2 * np.exp( (l*(l+1) * beam_widths_rad[1]**2) / (8*np.log(2)) ) for l in range(nell)])
+    camb_cls_n = c_ells['c_ell'][2:lmax] + noise_ell_b[2:lmax, np.newaxis]
+    camb_ls = np.arange(2, lmax)
 
-plt.semilogy(camb_ls, camb_ls * (camb_ls + 1) / 2 / np.pi * camb_cls_n[:, 0], label='camb + noise')
+    plt.loglog(camb_ls, camb_ls * (camb_ls + 1) / 2 / np.pi * c_ells['c_ell'][2:lmax][:, 0], label='camb ')
+    plt.loglog(camb_ls, camb_ls * (camb_ls + 1) / 2 / np.pi * camb_cls_n[:, 0], label='camb + noise')
 
-plt.xlabel("$\ell$")
-plt.ylabel("$\ell(\ell+1)/2\pi C_{\ell}$")
-plt.title(f'Angular power spectrum from sim map')
-plt.legend()
-plt.grid()
+    plt.xlabel("$\ell$")
+    plt.ylabel("$\ell(\ell+1)/2\pi C_{\ell}$")
+    plt.title(f'Angular power spectrum from sim map')
+    plt.legend()
+    plt.grid()
+    plt.show()
+
+# %%
+for i, p, n in random_indices:
+    delta_cl = (cl[2:lmax] - camb_cls_n[:, 0]) / camb_cls_n[:, 0]
+
+    plt.semilogx(camb_ls, delta_cl, label='...')
+    plt.ylabel('$\Delta C^{TT}_{\ell} / C^{TT}_{\ell}$')
+    plt.show()
 
 # %% [markdown]
 # # Goodbye
