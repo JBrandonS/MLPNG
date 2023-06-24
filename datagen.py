@@ -1,40 +1,81 @@
 # %%
 import os
-import re
 import gc
 
 import math
 import numpy as np
-from numpy.random import randint, normal, uniform
-import pylab as pl
+from numpy.random import randint, uniform
 import matplotlib.pyplot as plt
 from scipy.interpolate import CubicSpline
 
 from functools import partial
 from joblib import Parallel, delayed
-import multiprocessing
 
 from astropy import units as u
 
 import healpy as hp
 import camb
 
-from ksw import Cosmology, Data, ReducedBispectrum, KSW, Shape
+from ksw import Cosmology, Data
 from ksw.radial_functional import radial_func
 
 import h5py
-from multiprocessing import cpu_count
 from tqdm.auto import tqdm
-from tqdm.contrib.concurrent import process_map
+from pixell import enmap, lensing, curvedsky
 
-from pixell import enmap, reproject, utils, lensing, curvedsky
-
-import concurrent.futures as cf
-import time
-from concurrent.futures import ProcessPoolExecutor
-from itertools import product
+import tempfile
 
 # %matplotlib inline
+
+# %%
+import time
+from psutil import Process
+from threading import Thread
+
+class MemoryMonitor(Thread):
+    """Monitor the memory usage in MB in a separate thread.
+
+    Note that this class is good enough to highlight the memory profile of
+    Parallel in this example, but is not a general purpose profiler fit for
+    all cases.
+    """
+    def __init__(self):
+        super().__init__()
+        self.stop = False
+        self.memory_buffer = []
+        self.start()
+
+    def get_memory(self):
+        "Get memory of a process and its children."
+        p = Process()
+        memory = p.memory_info().rss
+        for c in p.children():
+            memory += c.memory_info().rss
+        return memory
+
+    def run(self):
+        memory_start = self.get_memory()
+        while not self.stop:
+            self.memory_buffer.append(self.get_memory() - memory_start)
+            time.sleep(0.2)
+
+    def join(self):
+        self.stop = True
+        super().join()
+
+    def join_and_plot(self):
+        self.join()
+        peak = max(self.memory_buffer) / 1e9
+        print(f"Peak memory usage: {peak:.2f}GB")
+
+        plt.semilogy(
+            np.maximum.accumulate(self.memory_buffer),
+        )
+        plt.xlabel("Time")
+        plt.xticks([], [])
+        plt.ylabel("Memory usage")
+        plt.yticks([1e9, 1e10, 1e11, 1e12], ['1GB', '10GB', '100GB', '1TB'])
+        plt.show()
 
 # %% [markdown]
 # # Data Generator
@@ -91,11 +132,10 @@ cosmo_params = {
     'mnu': 0.06,
     'tau': 0.0561,
     'TCMB': 2.7255,
+
     'max_l': 3000,
-
     'lmax': 2000,
-    'lens_potential_accuracy': 4,
-
+    'lens_potential_accuracy': 2,
 
     ## These are forced by ksw
     "DoLateRadTruncation": False,
@@ -128,40 +168,38 @@ print(camb_params_obj)
 # 
 # patch_side_deg \* num_patches \<\= 180, patch_side_deg \<\= 45; or you will overlap patches 
 # 
-# r_max is given in Mpc, we preform r_res slices over this volume to do the integral. Values have been picked by guestimation, with r_res being set low to help test. Will want to raise this for better calculations.
+# r_max is given in Mpc
 # 
-# KSW only supports polarization values of 'T', 'E', ['T', 'E'].
+# KSW only supports values of 'T', 'E', ['T', 'E'].
 
 # %%
 fnl_range=(-1000, 1000)
 
-nsims = 100                   # currently nsims % save_size === 0
+nsims = 1000                    # currently nsims % save_size === 0
 npatches = 10                # number of patches to generate per sim
 
 nside=1024
 
 patch_side_deg = 10
 
-r_min = 1                    # Mpc, min radius for the patch     
-r_max = 50000                # Mpc, max radius for the patch
-
 # valid values 'T', 'E', ['T', 'E']
 polarizations = ['T'] #, 'E']
 
+disable_noise = False # To prevent issues this actually just multiples the noise and beam by 10**-12
+
 noise_loc = 0
 
-# Table 1 from smith and zald, planck levels
-# nu is 100, 143, 217
-# we will used 143 as the base for single value
-beam_width = 7.1 * u.arcmin #*10**-12
-noise_scale = 43 * u.arcmin #*10**-12# in uK * arcmin
+noise_scale_tt = 43 * u.arcmin # in uK * arcmin # type: ignore
 
-# Just helps control memory for the alm_ng calculations
-batch_size = 100
+## TODO find correct noise levels, 143 hz
+noise_scale_ee = 4.3 * u.arcmin  # type: ignore
+noise_scale_te = .43 * u.arcmin  # type: ignore
+
+beam_width = 7.1 * u.arcmin # type: ignore
+
+batch_size = 50 # Just helps control memory for the alm_ng calculations
 
 do_lensing = True
-
-save_fullsky = True
 
 force_alm_gen = False 
 
@@ -170,17 +208,12 @@ debug = False
 
 
 # %%
-#Settings that are calculated based on others
-
 npol = 1 if isinstance(polarizations, str) else len(polarizations)
-pol_b = False #npol > 1 # TODO fix
 
 nell = lmax + 1
 nelem = hp.Alm.getsize(lmax)
 npix = hp.nside2npix(nside)
 ells = np.arange(nell)
-
-pix_size = patch_side_deg*60 / nside
 
 alm_ls, alm_ms = hp.Alm.getlm(lmax)
 
@@ -213,30 +246,28 @@ else:
 def load_data(data_file, key):
     print('Loading data',key,'from',data_file)
     with h5py.File(data_file, 'r') as hdf:
-        return hdf.get(key)[()]
+        return np.array(hdf.get(key)[()]) # type: ignore
 
 data_filename = f'{base_name}.hdf5'
 data_file = os.path.join(data_dir, data_filename)
-
-if save_fullsky:
-    fs_filename = f'{base_name}.fullsky.hdf5'
-    fs_file = os.path.join(data_dir, fs_filename)
 
 alm_cache_dir = f'{base_dir}/alm_cache'
 if not os.path.exists(alm_cache_dir): 
     os.makedirs(alm_cache_dir)
     print(f'Created cache directory {alm_cache_dir}')
 
-alm_filename = f'{base_name}.alms.hdf5'
+alm_filename = f'{base_name}.alms.hdf5.nc'
+alm_final_filename = f'{base_name}.alms.hdf5'
 alm_file = os.path.join(alm_cache_dir, alm_filename)
 
-almng_filename = f'{base_name}.alms_ng.hdf5'
+almng_filename = f'{base_name}.alms_ng.hdf5.nc'
+almng_final_filename = f'{base_name}.alms_ng.hdf5'
 almng_file = os.path.join(alm_cache_dir, almng_filename)
 
 # %%
 # Check if we need to generate alms, load in alms if we can
-atest = os.path.join(alm_cache_dir, f'{base_name}.alms.hdf5')
-btest = os.path.join(alm_cache_dir, f'{base_name}.alms_ng.hdf5')          
+atest = os.path.join(alm_cache_dir, alm_final_filename)
+btest = os.path.join(alm_cache_dir, almng_final_filename)          
 if not force_alm_gen and os.path.isfile(atest) and os.path.isfile(btest):
     print('Found existing alms, using them')
     alms = load_data(atest, 'alm')
@@ -250,24 +281,42 @@ else:
     almngs = None
     gen_alms = True
 
+# %% [markdown]
+# # $a_{\ell m}$ Calculation
+
 # %%
-# Setup noise and beams, pol_B isn't working
-# TODO: Figure out QU values for beam and specs for noise
+# Setup noise and beams
 
-noise_scales_rad = noise_scale.to_value(u.radian)
-beam_widths_rad = beam_width.to_value(u.radian)
+beam_ell_pre = hp.gauss_beam(beam_width.to_value(u.radian), lmax=lmax, pol=True)
+beam_ell_pre = np.swapaxes(beam_ell_pre, 0, 1)
 
-# Order for pol_b is TT,EE,TE
-if pol_b: # TODO
-    noise_ell = np.ones((3, nell))*noise_scales_rad[:, np.newaxis]**2
+noise_ell = []
+beam_ell = []
+if 'T' in polarizations:
+    noise = np.ones((nell)) * noise_scale_tt.to_value(u.radian)**2
 
-    # I don't think beampol is correct
-    beam_ell = hp.gauss_beam(beam_widths_rad, lmax, True)
-    beam_ell = beam_ell.swapaxes(0,1)[:npol]
-else:
-    noise_ell = np.ones((nell)) * noise_scales_rad**2
-    beam_ell = hp.gauss_beam(beam_widths_rad, lmax, True)
-    beam_ell = beam_ell.swapaxes(0,1)[:npol]
+    noise_ell.append(noise)
+    beam_ell.append(beam_ell_pre[0])
+
+if 'E' in polarizations:
+    noise = np.ones((nell)) * noise_scale_ee.to_value(u.radian)**2
+
+    noise_ell.append(noise)
+    beam_ell.append(beam_ell_pre[1])
+    
+if polarizations == ['T', 'E']:
+    noise = np.ones((nell)) * noise_scale_te.to_value(u.radian)**2
+    noise_ell.append(noise)
+
+noise_ell = np.array(noise_ell).squeeze()
+beam_ell = np.array(beam_ell).squeeze()
+
+if disable_noise:
+    noise_ell = noise_ell * 10**-12
+    beam_ell = beam_ell * 10**-12
+
+print('noise_ell', noise_ell.shape)
+print('beam_ell', beam_ell.shape)
 
 # %% [markdown]
 # For the radii we follow Table 2. of Smith and Zaldarriaga which gives a greater density of points near reionization and recombination. 
@@ -277,16 +326,17 @@ else:
 # radii are in Mpc
 
 # %%
-import numpy as np
+r_min = 1                    # Mpc, min radius for the patch     
+r_max = 50000                # Mpc, max radius for the patch
 
 radii = []
 #          start,  stop, resolution
 ranges = [(    0,  9500, 150), 
-        ( 9500, 11000, 300), 
-        (11000, 13800, 150), 
-        (13800, 14600, 400), 
-        (14600, 16000, 100), 
-        (16000, 50000, 100)]
+          ( 9500, 11000, 300), 
+          (11000, 13800, 150), 
+          (13800, 14600, 400), 
+          (14600, 16000, 100), 
+          (16000, 50000, 100)]
 
 for r in ranges:
     start = max(r_min, r[0])
@@ -306,26 +356,68 @@ radii = np.array([r for r in radii if r_min <= r < r_max])
 drs = np.diff(radii)
 
 # %%
-if gen_alms or debug:
-    cosmo = Cosmology(camb_params_obj, verbose=True)
+cosmo = Cosmology(camb_params_obj, verbose=True)
 
-    # Additional settings here, i.e.
-    # cosmo._setattr_camb('ns', 0.9624, subclass='InitPower')
+# Additional settings here, i.e.
+# cosmo._setattr_camb('ns', 0.9624, subclass='InitPower')
 
-    cosmo.compute_transfer(cosmo_params['max_l'])
-    cosmo.compute_c_ell()
+cosmo.compute_transfer(cosmo_params['max_l'])
+cosmo.compute_c_ell()
 
-    data = Data(lmax, noise_ell, beam_ell, polarizations, cosmo)
+data = Data(lmax, noise_ell, beam_ell, polarizations, cosmo)
 
-    c_ells = data.cosmology.c_ell['unlensed_scalar']
+c_ells = data.cosmology.c_ell['unlensed_scalar'] # type: ignore
 
-    tr_ell_k = data.cosmology.transfer['tr_ell_k']
-    tr_ells = data.cosmology.transfer['ells']
-    tr_k = data.cosmology.transfer['k']
+tr_ell_k = data.cosmology.transfer['tr_ell_k']
+tr_ells = data.cosmology.transfer['ells']
+tr_k = data.cosmology.transfer['k']
 
-    mask = (tr_ells <= lmax)
-    tr_ell_k = tr_ell_k[mask]
-    tr_ells = tr_ells[mask]
+mask = (tr_ells <= lmax)
+tr_ell_k = tr_ell_k[mask]
+tr_ells = tr_ells[mask]
+
+# %%
+if debug:
+    noise_ell_b = np.array([noise_scale_tt.to_value(u.radian)**2 * np.exp( (l*(l+1) * beam_width.to_value(u.radian)**2) / (8*np.log(2)) ) for l in range(nell)])
+    camb_cls_n = c_ells['c_ell'][2:lmax] + noise_ell_b[2:lmax, np.newaxis]
+    camb_ls = np.arange(2, lmax)
+
+    # TODO: suport for T vs E
+    camb_inner_plt = camb_ls * (camb_ls + 1) / 2 / np.pi * c_ells['c_ell'][2:lmax][:, 0]
+    camb_n_inner_plt = camb_ls * (camb_ls + 1) / 2 / np.pi * camb_cls_n[:, 0]
+
+def plot_cl(cl, 
+               plt_func=plt.semilogy,
+               plt_camb=True,
+               title='Angular power spectrum from cl',
+               label='data'):
+    if not debug: return
+        
+    ell = np.arange(len(cl))
+    plt_func(ell[2:], (ell * (ell + 1) / 2 / np.pi)[2:] * cl[2:], label=label)
+
+    if plt_camb and debug:
+        plt_func(camb_ls, camb_inner_plt, label='camb')
+        plt_func(camb_ls, camb_n_inner_plt, label='camb + noise')
+
+    plt.xlabel(r"$\ell$")
+    plt.ylabel(r"$\ell(\ell+1)/2\pi C_{\ell}$")
+    plt.title(title)
+    plt.legend()
+    plt.grid()
+    plt.show()
+
+def plot_cl_alm(alm, plt_func=plt.semilogy, plt_camb=True, title='Angular power spectrum from alm'):
+    if not debug: return
+    cl = curvedsky.alm2cl(alm)
+    plot_cl(cl, plt_func, plt_camb, title)
+
+def plot_cl_map(map, wcs, plt_func=plt.semilogy, plt_camb=True, title='Angular power spectrum from map'):
+    if not debug: return
+    tmap = enmap.ndmap(map, wcs)
+    almsd = curvedsky.map2alm(tmap, lmax=lmax)
+    cl = curvedsky.alm2cl(almsd)
+    plot_cl(cl, plt_func, plt_camb, title)
 
 # %% [markdown]
 # `radial_func` computes $f_\ell^X(r) = \frac{2}{\pi} \int k^2 dk f(k) \Delta^{TX}_\ell(k) j_\ell(k r)$, we will use this to find 
@@ -368,10 +460,39 @@ if gen_alms:
     bl_div_cl = np.ascontiguousarray(bl_div_cl)
 
 # %%
+def save_data(file_path, data_dict):
+    # compression_opts = dict()  # Compression options
+    # compression_opts['compression'] = 'gzip'  # Use gzip compression
+    # compression_opts['compression_opts'] = 9  # Maximum compression level
+
+    with h5py.File(file_path, 'a') as hf:  # Open the file in append mode
+        for key, value in data_dict.items():
+            if key in hf:
+                # Resize the dataset to accommodate the new data
+                hf[key].resize((hf[key].shape[0] + value.shape[0],) + value.shape[1:]) # type: ignore
+                # Append the new data
+                hf[key][-value.shape[0]:] = value # type: ignore
+            else:
+                # Create a new dataset for this key with compression options
+                hf.create_dataset(key, data=value, maxshape=(None,) + value.shape[1:]) #, **compression_opts)
+
+# %%
 if gen_alms:
-    # Each alm takes ~30Mb, TODO: Support splitting 
+    # Each alm takes ~30Mb at 1024, This is fast enought we don't need to parallelize
     alms = np.array([data.compute_alm_sim(False) for _ in tqdm(range(nsims), desc='a_lm progress')])
+
+    # Make sure we dont get error from the beam_ell being a vector
+    beam_ell_2d = np.atleast_2d(beam_ell)
+
+    # KSW expects the alms to be coevoled with the beam
+    for i in range(nsims):
+        for j in range(npol):
+            alms[i, j] = hp.almxfl(alms[i, j], beam_ell_2d[j]**-1)
+
+    save_data(alm_file, {'alm': alms})
+    
     print(alms.shape)
+    plot_cl_alm(alms[0, 0])
 
 # %%
 def get_alm(alm, bl_div_cl, alpha_l, r, dr):
@@ -382,123 +503,174 @@ def get_alm(alm, bl_div_cl, alpha_l, r, dr):
     return dr * r**2 * kernel
 
 if gen_alms:
-    # We still hold all almngs in memory, but this should be about 30Mb per sim for 1024
-    almngs = np.zeros((nsims, npol, nelem), dtype=complex)
+    if debug:
+        monitor = MemoryMonitor()
 
-    with Parallel(-1, verbose=0) as parallel:
-        n_batches = math.ceil(len(radii) / batch_size)
-        for i, pol in tqdm(product(range(nsims), range(npol)), total=nsims*npol, desc='total non-gaussian alm'):
-            for batch_num in tqdm(range(n_batches), total=n_batches, desc=f'Batch {i} progress'):
-                start_index = batch_num * batch_size
-                end_index = min((batch_num + 1) * batch_size, len(radii))
-                
-                batch_radii = radii[start_index:end_index]
-                batch_drs = drs[start_index:end_index]
-                
-                alms_batch = parallel(
-                    delayed(get_alm)(alms[i, pol], bl_div_cl[ri, :, pol], alpha_l[ri, :, pol], batch_radii[ri], batch_drs[ri]) 
-                    for ri in range(len(batch_radii)-1)
-                )
-                almngs[i, pol] += np.sum(alms_batch, axis=0)
-                gc.collect()
+    # m3's /tmp only has 500gb of storage which was causing issues
+    # set dir to something on /scracth
+    with tempfile.TemporaryDirectory(dir='data/tmp') as tempdir:
+        with Parallel(-1, verbose=0, temp_folder=tempdir) as parallel:
+            n_batches = math.ceil(len(radii) / batch_size)
+            
+            for i in tqdm(range(nsims), total=nsims, desc='almng progress'):
+                almngs = np.zeros((npol, nelem), dtype=complex)
+
+                for pol in range(npol):
+                    for batch_num in range(n_batches):
+                        start_index = batch_num * batch_size
+                        end_index = min((batch_num + 1) * batch_size, len(drs))
+                        
+                        batch_radii = radii[start_index:end_index]
+                        batch_drs = drs[start_index:end_index]
+                        
+                        almngs[pol] += np.sum(parallel(
+                                delayed(get_alm)(
+                                    alms[i, pol], 
+                                    bl_div_cl[ri, :, pol], 
+                                    alpha_l[ri, :, pol], 
+                                    batch_radii[ri], 
+                                    batch_drs[ri]) 
+                                for ri in range(len(batch_drs))
+                            ), # type: ignore
+                            axis = 0
+                        )
+                # TODO: Allow setting save interval
+                save_data(almng_file, {'almng': np.array([almngs])})
+
+        plot_cl_alm(almngs[0])
+
 
 
 # %%
-def save_data(file_path, data_dict):
-    compression_opts = dict()  # Compression options
-    compression_opts['compression'] = 'gzip'  # Use gzip compression
-    compression_opts['compression_opts'] = 9  # Maximum compression level
+if gen_alms and debug:
+    monitor.join_and_plot()
 
-    print(f'Saving {file_path}...', end=' ')
-    with h5py.File(file_path, 'w') as hf:  # Open the file in append mode
-        for key, value in data_dict.items():
-            if key in hf:
-                # Resize the dataset to accommodate the new data
-                hf[key].resize((hf[key].shape[0] + value.shape[0],) + value.shape[1:])
-                # Append the new data
-                hf[key][-value.shape[0]:] = value
-            else:
-                # Create a new dataset for this key with compression options
-                hf.create_dataset(key, data=value, maxshape=(None,) + value.shape[1:], **compression_opts)
-    print('Done!')
+# %%
+def rename_save(file_path):
+    new_file_path = file_path.replace('.nc', '')
+    print(f'Renaming {file_path} to {new_file_path}...')
+    os.replace(file_path, new_file_path)
+
+# def finalize_data(file_path):
+#     # Remove '.nc' from the end of the file name if it exists
+#     base_name = os.path.basename(file_path)
+#     if base_name.endswith('.nc'):
+#         base_name = base_name[:-3]
+#     dir_name = os.path.dirname(file_path)
+
+#     # New file path without '.nc'
+#     new_file_path = os.path.join(dir_name, base_name)
+#     os.rename(file_path, new_file_path)
+
+#     # Compress file with gzip, level 9 compression
+#     with open(new_file_path, 'rb') as f_in:
+#         with gzip.open(new_file_path + '.gz', 'wb', compresslevel=9) as f_out:
+#             shutil.copyfileobj(f_in, f_out)
+
+#     # remove the uncompressed file
+#     os.remove(new_file_path)
+
 
 # %%
 if gen_alms:
-    save_data(alm_file, {'alm': alms})
-    save_data(almng_file, {'almng': almngs})
+    rename_save(alm_file)
+    rename_save(almng_file)
 
 # %%
-# Could possibly use band_geometry, since we will only need dec: +/- patch_side_deg
-# Would this do anything noticable?
+gc.collect() # Just force a garbage collection to free up memory
+
+# %% [markdown]
+# # Sims
+
+# %%
+# Just load everything into memory right now, shouldn't be much of a problem until >10k sims
+alms = load_data(alm_file.replace('.nc', ''), 'alm')
+almngs = load_data(almng_file.replace('.nc', ''), 'almng')
+
+print(alms.shape)
+print(almngs.shape)
+
+plot_cl_alm(alms[0,0])
+plot_cl_alm(almngs[0,0])
+
+# %%
 res = np.deg2rad(patch_side_deg / nside) # TODO Look into better value for res
 fs_shape, fs_wcs = enmap.fullsky_geometry(res, proj="car")
 fs_map = enmap.empty(fs_shape, fs_wcs)
 
-patch_maps = []
 ps_rad = np.deg2rad(patch_side_deg)
+
+patch_shapes = []
+patch_wcss = [] # dont really need this, could just have 1
 for counter in np.arange(npatches//2):
     # [[dec_min,ra_min],[dec_max,ra_max]]
     top = [[0, ps_rad * counter], [ps_rad, ps_rad * (counter + 1)]]
-    t_geo = enmap.geometry(pos=top, res=res, proj="car")
-    patch_maps.append(t_geo)
+    s,w = enmap.geometry(pos=top, res=res, proj="car")
+    patch_shapes.append(s)
+    patch_wcss.append(w)
 
     bottom = [[-ps_rad, ps_rad * counter], [0, ps_rad * (counter + 1)]]
-    b_geo = enmap.geometry(pos=bottom, res=res, proj="car")
-    patch_maps.append(b_geo)
+    s, w = enmap.geometry(pos=bottom, res=res, proj="car")
+    patch_shapes.append(s)
+    patch_wcss.append(w)
 
 # %%
-def cutSqPatches_pixell(do_lensing, shape, wcs, fs_map, alms):
+def cutSqPatches_pixell(do_lensing, fs_shape, fs_wcs, fs_map, pshapes, pwcs, cl_phi, alms):
+    fs_map = enmap.empty(fs_shape, fs_wcs)
     car_map = curvedsky.alm2map(alms, fs_map)
 
     if do_lensing:
-        phi_map = enmap.rand_gauss_harm(shape, wcs)*2*10**-10
+        phi_map = curvedsky.rand_map(fs_shape, fs_wcs, cl_phi)
         grad_phi = enmap.grad(phi_map)
         car_map = lensing.lens_map(car_map, grad_phi)
 
     patches = []
     for i in range(npatches):
-        pshape = patch_maps[i][0]
-        pwcs = patch_maps[i][1]
-        patch = car_map.project(pshape, pwcs)
+        patch = car_map.project(pshapes[i], pwcs[i]) # type: ignore
         patches.append(patch)
         
-    return car_map, np.array(patches)
+    return np.array(patches)
 
-cutPatches = partial(cutSqPatches_pixell, do_lensing, fs_shape, fs_wcs, fs_map)
+cl_phi = data.cosmology._camb_data.get_lens_potential_cls(lmax, CMB_unit='muK', raw_cl=True)
+cutPatches = partial(cutSqPatches_pixell, do_lensing, fs_shape, fs_wcs, fs_map, patch_shapes, patch_wcss, cl_phi[:,0])
 
+# %%
 def run_sim(alm, alm_ng):    
     fnl = uniform(fnl_range[0], fnl_range[1])
     alm_prime = alm + fnl * alm_ng
-    fsmap, patches = cutPatches(alm_prime)
-    return fnl, fsmap, patches
+    return fnl, cutPatches(alm_prime)
 
-sims = Parallel(-1, verbose=10)(delayed(run_sim)(alms[i, pol], almngs[i, pol]) for pol in range(npol) for i in range(nsims))
+if debug:
+    monitor = MemoryMonitor()
+
+with tempfile.TemporaryDirectory(dir='data/tmp') as tempdir:
+    sims = Parallel(-1, verbose=10, temp_folder=tempdir)(
+            delayed(run_sim)(alms[i, pol], almngs[i, pol]) 
+            for pol in range(npol) for i in range(nsims)
+        )
+
+# %%
+if debug:
+    monitor.join_and_plot()
+
 
 # %%
 fnls_list = []
-maps_list = []
 patches_list = []
 
-# Loop over sims to extract data and save fullsky data if required
-for sim in sims:
+# Loop over sims to extract data
+for sim in sims: # type: ignore
     fnls_list.append(sim[0])
-    maps_list.append(sim[1])
-    patches_list.append(sim[2])
+    patches_list.append(sim[1])
 
 # Convert lists to np.array
 fnls = np.array(fnls_list)
-maps = np.array(maps_list)
 patches = np.array(patches_list)
-
-print(fnls.shape, maps.shape, patches.shape)
 
 sdata = {}
 sdata['fnls'] = fnls
 sdata['patches'] = patches
 save_data(data_file, sdata)
-
-if save_fullsky:
-    save_data(fs_file, {'maps': maps})
 
 # %%
 print('Done with Generation!') 
@@ -516,42 +688,8 @@ random_indices = [(randint(nsims), randint(npol), randint(npatches)) for _ in ra
 print(random_indices)
 
 # %%
-for i, p, _ in random_indices:
-    print(maps.shape)
-    plt.imshow(maps[i])
-
-# %%
 for i, p, n in random_indices:
     plt.imshow(patches[i, n])
-
-# %%
-for i, p, n in random_indices:
-    cl = hp.anafast(maps[i], lmax=lmax, pol=False, use_pixel_weights=True)
-    ell = np.arange(len(cl))
-
-    plt.loglog(ell[2:], (ell * (ell + 1) / 2 / np.pi)[2:] * cl[2:], label=f'sim {0}')
-
-    noise_ell_b = np.array([noise_scales_rad[1]**2 * np.exp( (l*(l+1) * beam_widths_rad[1]**2) / (8*np.log(2)) ) for l in range(nell)])
-    camb_cls_n = c_ells['c_ell'][2:lmax] + noise_ell_b[2:lmax, np.newaxis]
-    camb_ls = np.arange(2, lmax)
-
-    plt.loglog(camb_ls, camb_ls * (camb_ls + 1) / 2 / np.pi * c_ells['c_ell'][2:lmax][:, 0], label='camb ')
-    plt.loglog(camb_ls, camb_ls * (camb_ls + 1) / 2 / np.pi * camb_cls_n[:, 0], label='camb + noise')
-
-    plt.xlabel("$\ell$")
-    plt.ylabel("$\ell(\ell+1)/2\pi C_{\ell}$")
-    plt.title(f'Angular power spectrum from sim map')
-    plt.legend()
-    plt.grid()
-    plt.show()
-
-# %%
-for i, p, n in random_indices:
-    delta_cl = (cl[2:lmax] - camb_cls_n[:, 0]) / camb_cls_n[:, 0]
-
-    plt.semilogx(camb_ls, delta_cl, label='...')
-    plt.ylabel('$\Delta C^{TT}_{\ell} / C^{TT}_{\ell}$')
-    plt.show()
 
 # %% [markdown]
 # # Goodbye
