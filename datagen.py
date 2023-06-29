@@ -28,6 +28,12 @@ import tempfile
 # %matplotlib inline
 
 # %%
+job_array_index = os.environ.get('SLURM_ARRAY_TASK_ID')
+
+if job_array_index is not None:
+    print('Running job array index', job_array_index)
+
+# %%
 import time
 from psutil import Process
 from threading import Thread
@@ -67,6 +73,7 @@ class MemoryMonitor(Thread):
         self.join()
         peak = max(self.memory_buffer) / 1e9
         print(f"Peak memory usage: {peak:.2f}GB")
+        plt.title(f"Peak memory usage: {peak:.2f}GB")
 
         plt.semilogy(
             np.maximum.accumulate(self.memory_buffer),
@@ -175,7 +182,7 @@ print(camb_params_obj)
 # %%
 fnl_range=(-1000, 1000)
 
-nsims = 1000                    # currently nsims % save_size === 0
+nsims = 5                    # currently nsims % save_size === 0
 npatches = 10                # number of patches to generate per sim
 
 nside=1024
@@ -185,7 +192,7 @@ patch_side_deg = 10
 # valid values 'T', 'E', ['T', 'E']
 polarizations = ['T'] #, 'E']
 
-disable_noise = False # To prevent issues this actually just multiples the noise and beam by 10**-12
+disable_noise = False
 
 noise_loc = 0
 
@@ -197,7 +204,9 @@ noise_scale_te = .43 * u.arcmin  # type: ignore
 
 beam_width = 7.1 * u.arcmin # type: ignore
 
-batch_size = 50 # Just helps control memory for the alm_ng calculations
+batch_size = 1200               # Just helps control memory for the alm_ng calculations
+nthreads_alm = 5                # controls overall memeory usage, -1 is all available
+nthreads_sim = 5
 
 do_lensing = True
 
@@ -206,6 +215,13 @@ force_alm_gen = False
 # For easy switching between notebook and slurm, just disables plots
 debug = False
 
+
+# %%
+# simplest way to prevent issues with alms
+# TODO: be smarter about this
+if job_array_index is not None:
+    force_alm_gen = True
+    # debug = False
 
 # %%
 npol = 1 if isinstance(polarizations, str) else len(polarizations)
@@ -228,10 +244,12 @@ else:
 # We set the file name best on settings, this will let us load in the data better and ensure we know what settings we are dealing with
 
 # %%
-base_name = f'{nside}_{chars_of_polarizations}_{nsims}x{npatches}_fnl{fnl_range[0]}-{fnl_range[1]}'
+ja_str = '' if job_array_index is None else f'_{job_array_index}'
+base_name = f'{nside}_{chars_of_polarizations}_{nsims}x{npatches}_fnl{fnl_range[0]}-{fnl_range[1]}{ja_str}'
 
-base_dir = 'data/ksw'
+base_dir = f'data/ksw'
 data_dir = base_dir + ('/lensed' if lensing else '/unlensed')
+plot_dir = f'{data_dir}/plots/'
 
 print(f'running sims for {data_dir}/{base_name}')
 
@@ -242,37 +260,53 @@ if not os.path.exists(data_dir):
 else:
     print(f'Reusing directory {data_dir}')
 
+if not os.path.exists(plot_dir): 
+    os.makedirs(plot_dir)
+
 # %%
 def load_data(data_file, key):
     print('Loading data',key,'from',data_file)
     with h5py.File(data_file, 'r') as hdf:
         return np.array(hdf.get(key)[()]) # type: ignore
 
-data_filename = f'{base_name}.hdf5'
-data_file = os.path.join(data_dir, data_filename)
-
 alm_cache_dir = f'{base_dir}/alm_cache'
 if not os.path.exists(alm_cache_dir): 
     os.makedirs(alm_cache_dir)
     print(f'Created cache directory {alm_cache_dir}')
 
-alm_filename = f'{base_name}.alms.hdf5.nc'
-alm_final_filename = f'{base_name}.alms.hdf5'
-alm_file = os.path.join(alm_cache_dir, alm_filename)
+alm_file = os.path.join(alm_cache_dir, f'{base_name}.alms.hdf5.nc')
+alm_final_file = os.path.join(alm_cache_dir, f'{base_name}.alms.hdf5')
 
-almng_filename = f'{base_name}.alms_ng.hdf5.nc'
-almng_final_filename = f'{base_name}.alms_ng.hdf5'
-almng_file = os.path.join(alm_cache_dir, almng_filename)
+almng_file = os.path.join(alm_cache_dir, f'{base_name}.alms_ng.hdf5.nc')
+almng_final_file = os.path.join(alm_cache_dir, f'{base_name}.alms_ng.hdf5')
+
+# Noise is applied at data level, not alms so just append there
+nn_str = 'nn-' if disable_noise else ''
+data_file = os.path.join(data_dir, f'{nn_str}{base_name}.hdf5.nc')
+data_final_file = os.path.join(data_dir, f'{nn_str}{base_name}.hdf5')
+
 
 # %%
-# Check if we need to generate alms, load in alms if we can
-atest = os.path.join(alm_cache_dir, alm_final_filename)
-btest = os.path.join(alm_cache_dir, almng_final_filename)          
-if not force_alm_gen and os.path.isfile(atest) and os.path.isfile(btest):
+if os.path.isfile(alm_file):
+    print('removing existing incomplete alm file', alm_file)
+    os.remove(alm_file)
+
+if os.path.isfile(almng_file):
+    print('removing existing incomplete alm_ng file', almng_file)
+    os.remove(almng_file)
+
+if os.path.isfile(data_file):
+    print('removing existing incomplete data file', data_file)
+    os.remove(data_file)
+
+# %%
+# Check if we need to generate alms, load in alms if we can        
+if not force_alm_gen and os.path.isfile(alm_final_file) and os.path.isfile(almng_final_file):
     print('Found existing alms, using them')
-    alms = load_data(atest, 'alm')
-    almngs = load_data(btest, 'almng')
+    alms = load_data(alm_final_file, 'alm')
+    almngs = load_data(almng_final_file, 'almng')
     gen_alms = False
+    
     print('alms loaded', alms.shape)
     print('alm_ng loaded', almngs.shape)
 else:
@@ -396,7 +430,7 @@ def plot_cl(cl,
     ell = np.arange(len(cl))
     plt_func(ell[2:], (ell * (ell + 1) / 2 / np.pi)[2:] * cl[2:], label=label)
 
-    if plt_camb and debug:
+    if plt_camb:
         plt_func(camb_ls, camb_inner_plt, label='camb')
         plt_func(camb_ls, camb_n_inner_plt, label='camb + noise')
 
@@ -418,6 +452,11 @@ def plot_cl_map(map, wcs, plt_func=plt.semilogy, plt_camb=True, title='Angular p
     almsd = curvedsky.map2alm(tmap, lmax=lmax)
     cl = curvedsky.alm2cl(almsd)
     plot_cl(cl, plt_func, plt_camb, title)
+
+runtime = time.time()
+def save_plt(name):
+    file = f'{plot_dir}/{runtime}-{name}.png'
+    plt.savefig(file)
 
 # %% [markdown]
 # `radial_func` computes $f_\ell^X(r) = \frac{2}{\pi} \int k^2 dk f(k) \Delta^{TX}_\ell(k) j_\ell(k r)$, we will use this to find 
@@ -460,12 +499,8 @@ if gen_alms:
     bl_div_cl = np.ascontiguousarray(bl_div_cl)
 
 # %%
-def save_data(file_path, data_dict):
-    # compression_opts = dict()  # Compression options
-    # compression_opts['compression'] = 'gzip'  # Use gzip compression
-    # compression_opts['compression_opts'] = 9  # Maximum compression level
-
-    with h5py.File(file_path, 'a') as hf:  # Open the file in append mode
+def save_data(file_path, data_dict, write_mode='a'):
+    with h5py.File(file_path, write_mode) as hf:  # Open the file in append mode
         for key, value in data_dict.items():
             if key in hf:
                 # Resize the dataset to accommodate the new data
@@ -474,7 +509,7 @@ def save_data(file_path, data_dict):
                 hf[key][-value.shape[0]:] = value # type: ignore
             else:
                 # Create a new dataset for this key with compression options
-                hf.create_dataset(key, data=value, maxshape=(None,) + value.shape[1:]) #, **compression_opts)
+                hf.create_dataset(key, data=value, maxshape=(None,) + value.shape[1:])
 
 # %%
 if gen_alms:
@@ -493,6 +528,7 @@ if gen_alms:
     
     print(alms.shape)
     plot_cl_alm(alms[0, 0])
+    save_plt('alm')
 
 # %%
 def get_alm(alm, bl_div_cl, alpha_l, r, dr):
@@ -509,7 +545,7 @@ if gen_alms:
     # m3's /tmp only has 500gb of storage which was causing issues
     # set dir to something on /scracth
     with tempfile.TemporaryDirectory(dir='data/tmp') as tempdir:
-        with Parallel(-1, verbose=0, temp_folder=tempdir) as parallel:
+        with Parallel(nthreads_alm, verbose=0, temp_folder=tempdir) as parallel:
             n_batches = math.ceil(len(radii) / batch_size)
             
             for i in tqdm(range(nsims), total=nsims, desc='almng progress'):
@@ -535,21 +571,22 @@ if gen_alms:
                             axis = 0
                         )
                 # TODO: Allow setting save interval
-                save_data(almng_file, {'almng': np.array([almngs])})
+                save_data(almng_file, {'almng': np.array([almngs])}, write_mode='a')
 
         plot_cl_alm(almngs[0])
+        save_plt('almng')
 
 
 
 # %%
 if gen_alms and debug:
+    plt.close('all')
     monitor.join_and_plot()
+    save_plt('alm_memory')
 
 # %%
-def rename_save(file_path):
-    new_file_path = file_path.replace('.nc', '')
-    print(f'Renaming {file_path} to {new_file_path}...')
-    os.replace(file_path, new_file_path)
+def rename_save(old, new):
+    os.replace(old, new)
 
 # def finalize_data(file_path):
 #     # Remove '.nc' from the end of the file name if it exists
@@ -573,8 +610,8 @@ def rename_save(file_path):
 
 # %%
 if gen_alms:
-    rename_save(alm_file)
-    rename_save(almng_file)
+    rename_save(alm_file, alm_final_file)
+    rename_save(almng_file, almng_final_file)
 
 # %%
 gc.collect() # Just force a garbage collection to free up memory
@@ -584,14 +621,11 @@ gc.collect() # Just force a garbage collection to free up memory
 
 # %%
 # Just load everything into memory right now, shouldn't be much of a problem until >10k sims
-alms = load_data(alm_file.replace('.nc', ''), 'alm')
-almngs = load_data(almng_file.replace('.nc', ''), 'almng')
+alms = load_data(alm_final_file, 'alm')
+almngs = load_data(almng_final_file, 'almng')
 
 print(alms.shape)
 print(almngs.shape)
-
-plot_cl_alm(alms[0,0])
-plot_cl_alm(almngs[0,0])
 
 # %%
 res = np.deg2rad(patch_side_deg / nside) # TODO Look into better value for res
@@ -615,7 +649,8 @@ for counter in np.arange(npatches//2):
     patch_wcss.append(w)
 
 # %%
-def cutSqPatches_pixell(do_lensing, fs_shape, fs_wcs, fs_map, pshapes, pwcs, cl_phi, alms):
+def cutSqPatches_pixell(do_lensing, fs_shape, fs_wcs, fs_map, pshapes, pwcs, cl_phi, alm, fnl, alm_ng):
+    alms = alm + fnl * alm_ng
     fs_map = enmap.empty(fs_shape, fs_wcs)
     car_map = curvedsky.alm2map(alms, fs_map)
 
@@ -634,43 +669,33 @@ def cutSqPatches_pixell(do_lensing, fs_shape, fs_wcs, fs_map, pshapes, pwcs, cl_
 cl_phi = data.cosmology._camb_data.get_lens_potential_cls(lmax, CMB_unit='muK', raw_cl=True)
 cutPatches = partial(cutSqPatches_pixell, do_lensing, fs_shape, fs_wcs, fs_map, patch_shapes, patch_wcss, cl_phi[:,0])
 
-# %%
-def run_sim(alm, alm_ng):    
-    fnl = uniform(fnl_range[0], fnl_range[1])
-    alm_prime = alm + fnl * alm_ng
-    return fnl, cutPatches(alm_prime)
-
 if debug:
     monitor = MemoryMonitor()
 
 with tempfile.TemporaryDirectory(dir='data/tmp') as tempdir:
-    sims = Parallel(-1, verbose=10, temp_folder=tempdir)(
-            delayed(run_sim)(alms[i, pol], almngs[i, pol]) 
+    fnls = uniform(fnl_range[0], fnl_range[1], (nsims,))
+    patches = np.array(Parallel(nthreads_sim, verbose=10, temp_folder=tempdir)(
+            delayed(cutPatches)(alms[i, pol], fnls[i], almngs[i, pol]) 
             for pol in range(npol) for i in range(nsims)
-        )
+        )).reshape((nsims, npol, npatches, nside, nside))
 
 # %%
 if debug:
+    plt.close('all')
     monitor.join_and_plot()
-
+    save_plt('patch_memory')
 
 # %%
-fnls_list = []
-patches_list = []
+print('fnls', fnls.shape, fnls)
+print('patches', patches.shape)
 
-# Loop over sims to extract data
-for sim in sims: # type: ignore
-    fnls_list.append(sim[0])
-    patches_list.append(sim[1])
-
-# Convert lists to np.array
-fnls = np.array(fnls_list)
-patches = np.array(patches_list)
-
+# %%
 sdata = {}
 sdata['fnls'] = fnls
-sdata['patches'] = patches
+sdata['patches'] = np.array(patches)
+
 save_data(data_file, sdata)
+rename_save(data_file, data_final_file)
 
 # %%
 print('Done with Generation!') 
@@ -683,13 +708,41 @@ if not debug:
 # # Plots
 
 # %%
-random_indices = [(randint(nsims), randint(npol), randint(npatches)) for _ in range(1)]
+random_indices = [(randint(nsims), randint(npol), randint(npatches)) for _ in range(12)]
 
 print(random_indices)
 
 # %%
-for i, p, n in random_indices:
-    plt.imshow(patches[i, n])
+# Compute the grid size
+grid_size = math.isqrt(len(random_indices))
+if grid_size ** 2 < len(random_indices):
+    grid_size += 1
+
+# Create the grid of subplots
+fig, axs = plt.subplots(grid_size, grid_size, sharex=True, sharey=True, figsize=(10, 10))
+
+# If there's only one plot, put it in a list within a list to emulate a 2D list
+if grid_size == 1:
+    axs = [[axs]]
+
+# Iterate over the random_indices
+for idx, (i, p, n) in enumerate(random_indices):
+    # Compute the subplot coordinates
+    row = idx // grid_size
+    col = idx % grid_size
+    # Plot the image
+    axs[row][col].imshow(patches[i, p, n])
+
+# Hide the remaining unused subplots if any
+if len(random_indices) < grid_size * grid_size:
+    for idx in range(len(random_indices), grid_size * grid_size):
+        row = idx // grid_size
+        col = idx % grid_size
+        axs[row][col].axis('off')
+
+plt.title('Sample Patches')
+plt.show()
+save_plt('sample_patches')
 
 # %% [markdown]
 # # Goodbye

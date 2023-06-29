@@ -1,11 +1,12 @@
 #! /bin/bash
-#SBATCH --job-name=datagen-100
-#SBATCH --partition=highmem
+#SBATCH --job-name=2k-datagen
+#SBATCH --partition=highmem,standard-l,standard-s
 #SBATCH --ntasks=1
-#SBATCH --mem=750G  # per node
-#SBATCH --cpus-per-task=100
-#SBATCH --output=logs/dg-output_%j.log
-#SBATCH --error=logs/dg-error_%j.log
+#SBATCH --mem=500G  # per node
+#SBATCH --cpus-per-task=5
+#SBATCH --output=logs/%x_%j.log
+#SBATCH --error=logs/%x_%j.log
+#SBATCH --array=1-2000
 
 module load spack conda gcc/11.2.0 gcc-11.2.0/intel-oneapi-mkl gcc-11.2.0/openmpi fftw
 
