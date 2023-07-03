@@ -25,19 +25,27 @@ from pixell import enmap, lensing, curvedsky
 
 import tempfile
 
-# %matplotlib inline
-
-# %%
-job_array_index = os.environ.get('SLURM_ARRAY_TASK_ID')
-
-if job_array_index is not None:
-    print('Running job array index', job_array_index)
-
-# %%
 import time
 from psutil import Process
 from threading import Thread
 
+# %matplotlib inline
+
+# %% [markdown]
+# The code supports using slurm job arrays to speed up computation due to the memory requirements of the data generation process.
+# 
+# It is recommened to use job arrays for any dataset with more than 10 sims due to time saving. Once run you will want to use the `combiner.ipynb` notebook to combine the data into a single file for training.
+
+# %%
+job_array_index = os.environ.get('SLURM_ARRAY_TASK_ID')
+if job_array_index is not None:
+    job_array_index = int(job_array_index)
+    njobs = int(os.environ.get('SLURM_ARRAY_TASK_COUNT'))  # type: ignore
+    job_array_min = int(os.environ.get('SLURM_ARRAY_TASK_MIN')) # type: ignore
+    job_array_max = int(os.environ.get('SLURM_ARRAY_TASK_MAX')) # type: ignore
+    print('Running job array index', job_array_index)
+
+# %%
 class MemoryMonitor(Thread):
     """Monitor the memory usage in MB in a separate thread.
 
@@ -69,10 +77,11 @@ class MemoryMonitor(Thread):
         self.stop = True
         super().join()
 
-    def join_and_plot(self):
+    def join_and_plot(self, save_name=None):
         self.join()
         peak = max(self.memory_buffer) / 1e9
         print(f"Peak memory usage: {peak:.2f}GB")
+        plt.figure()
         plt.title(f"Peak memory usage: {peak:.2f}GB")
 
         plt.semilogy(
@@ -83,17 +92,22 @@ class MemoryMonitor(Thread):
         plt.ylabel("Memory usage")
         plt.yticks([1e9, 1e10, 1e11, 1e12], ['1GB', '10GB', '100GB', '1TB'])
         plt.show()
+        if save_name is not None:
+            save_plt(save_name)
+
+# %% [markdown]
+# 
 
 # %% [markdown]
 # # Data Generator
 # 
-# This code primamrly uses [KSW](https://github.com/AdriJD/ksw/tree/master/src), as a means to generate non-gaussian cmb maps. These get stored in a data file with the fnls, fullsky maps, and patches.
+# This code primamrly uses [KSW](https://github.com/AdriJD/ksw/tree/master/src), as a means to generate non-gaussian cmb maps. These get stored in a data file with the fnls, and patches.
 # 
 # The fullsky maps are generated using the method discussed in [CMB lensing and primordial non-Gaussianity](https://arxiv.org/abs/0905.4732), where we find (eq. 6) 
 # $$
-# a_{\ell m} = a_{\ell m}^{{G}} + f_{NL}^X a_{\ell m}{^{NG}}
+# a_{\ell m} = a_{\ell m}^{{G}} + f_{NL}^X a_{\ell m}^{NG}
 # $$
-# and generated the full sky map by passing these $a_{\ell m}$ into healpy.
+# and generated the full sky map from the $a_{\ell m}$.
 # 
 # Most of this code is to calculate the term (eq. 27)
 # 
@@ -164,25 +178,23 @@ camb_params_obj = camb.set_params(**cosmo_params)
 print(camb_params_obj)
 
 # %% [markdown]
-# lmax >= 300 is enforced by the ksw code due to errors with CAMB. 
-# lmax needs to be somewhat smaller then max_l, if you get errors about c_ell change these.
+# `lmax` >= 300 is enforced by the ksw code due to errors with CAMB. 
+# `lmax` needs to be somewhat smaller then `max_l`, if you get errors about c_ell change these.
 # 
-# You will get warning messages if lmax > 4\* nside.  
+# You will get warning messages if `lmax` > 4\* `nside`.  
 # 
-# nside should be of type 2\*\*n
+# `nside` should be of type $2^n$.
 # 
-# num_patches should be even.
+# `num_patches` should be even.
 # 
-# patch_side_deg \* num_patches \<\= 180, patch_side_deg \<\= 45; or you will overlap patches 
+# `patch_side_deg` \* `num_patches` \<\= 180, patch_side_deg \<\= 45; or you will overlap patches 
 # 
-# r_max is given in Mpc
-# 
-# KSW only supports values of 'T', 'E', ['T', 'E'].
+# KSW only supports `polarizations` values of 'T', 'E', ['T', 'E']. Currently only T is tested by this code.
 
 # %%
 fnl_range=(-1000, 1000)
 
-nsims = 5                    # currently nsims % save_size === 0
+nsims = 10                    # currently nsims % save_size === 0
 npatches = 10                # number of patches to generate per sim
 
 nside=1024
@@ -192,7 +204,7 @@ patch_side_deg = 10
 # valid values 'T', 'E', ['T', 'E']
 polarizations = ['T'] #, 'E']
 
-disable_noise = False
+disable_noise = True
 
 noise_loc = 0
 
@@ -205,27 +217,25 @@ noise_scale_te = .43 * u.arcmin  # type: ignore
 beam_width = 7.1 * u.arcmin # type: ignore
 
 batch_size = 1200               # Just helps control memory for the alm_ng calculations
-nthreads_alm = 5                # controls overall memeory usage, -1 is all available
+nthreads_alm = 50                # controls overall memeory usage, -1 is all available
 nthreads_sim = 5
 
 do_lensing = True
 
-force_alm_gen = False 
+force_alm_gen = True 
 
 # For easy switching between notebook and slurm, just disables plots
-debug = False
+debug = True
+save_plots = True
 
 
 # %%
-# simplest way to prevent issues with alms
-# TODO: be smarter about this
 if job_array_index is not None:
-    force_alm_gen = True
-    # debug = False
+    if job_array_index % 100 != 1:
+        debug = False
+        save_plots = False
 
 # %%
-npol = 1 if isinstance(polarizations, str) else len(polarizations)
-
 nell = lmax + 1
 nelem = hp.Alm.getsize(lmax)
 npix = hp.nside2npix(nside)
@@ -235,8 +245,10 @@ alm_ls, alm_ms = hp.Alm.getlm(lmax)
 
 if isinstance(polarizations, str):
     chars_of_polarizations = polarizations
+    npol = 1
 elif isinstance(polarizations, list):
     chars_of_polarizations = ''.join(polarizations)
+    npol = len(polarizations)
 else:
     raise TypeError("polarizations must be either a string or a list of strings")
 
@@ -244,14 +256,12 @@ else:
 # We set the file name best on settings, this will let us load in the data better and ensure we know what settings we are dealing with
 
 # %%
-ja_str = '' if job_array_index is None else f'_{job_array_index}'
-base_name = f'{nside}_{chars_of_polarizations}_{nsims}x{npatches}_fnl{fnl_range[0]}-{fnl_range[1]}{ja_str}'
-
 base_dir = f'data/ksw'
+alm_cache_dir = f'{base_dir}/alm_cache'
+tmp_dir = f'{base_dir}/tmp'
+
 data_dir = base_dir + ('/lensed' if lensing else '/unlensed')
 plot_dir = f'{data_dir}/plots/'
-
-print(f'running sims for {data_dir}/{base_name}')
 
 # %%
 if not os.path.exists(data_dir): 
@@ -263,48 +273,54 @@ else:
 if not os.path.exists(plot_dir): 
     os.makedirs(plot_dir)
 
-# %%
-def load_data(data_file, key):
-    print('Loading data',key,'from',data_file)
-    with h5py.File(data_file, 'r') as hdf:
-        return np.array(hdf.get(key)[()]) # type: ignore
-
-alm_cache_dir = f'{base_dir}/alm_cache'
 if not os.path.exists(alm_cache_dir): 
     os.makedirs(alm_cache_dir)
     print(f'Created cache directory {alm_cache_dir}')
 
-alm_file = os.path.join(alm_cache_dir, f'{base_name}.alms.hdf5.nc')
-alm_final_file = os.path.join(alm_cache_dir, f'{base_name}.alms.hdf5')
-
-almng_file = os.path.join(alm_cache_dir, f'{base_name}.alms_ng.hdf5.nc')
-almng_final_file = os.path.join(alm_cache_dir, f'{base_name}.alms_ng.hdf5')
-
-# Noise is applied at data level, not alms so just append there
-nn_str = 'nn-' if disable_noise else ''
-data_file = os.path.join(data_dir, f'{nn_str}{base_name}.hdf5.nc')
-data_final_file = os.path.join(data_dir, f'{nn_str}{base_name}.hdf5')
-
+if not os.path.exists(tmp_dir): 
+    os.makedirs(tmp_dir)
 
 # %%
-if os.path.isfile(alm_file):
-    print('removing existing incomplete alm file', alm_file)
-    os.remove(alm_file)
+def load_data(data_file, key, start_index=None, end_index=None):
+    print('Loading data', key, 'from', data_file)
+    with h5py.File(data_file, 'r') as hdf:
+        if start_index is not None and end_index is not None:
+            print('Loading data from', start_index, 'to', end_index)
+            return np.array(hdf[key][start_index:end_index]) # type: ignore
+        else:
+            return np.array(hdf.get(key)[()]) # type: ignore
 
-if os.path.isfile(almng_file):
-    print('removing existing incomplete alm_ng file', almng_file)
-    os.remove(almng_file)
+# %%
+nsims_str = nsims if job_array_index is None else nsims * njobs
+nn_str = 'nn_' if disable_noise else ''
+base_name = f'{nside}_{nn_str}{chars_of_polarizations}_{nsims_str}'
+
+ja_str = '' if job_array_index is None else f'_{job_array_index}'
+
+data_str = f'{base_name}x{npatches}_fnl{fnl_range[0]}-{fnl_range[1]}{ja_str}'
+data_file = os.path.join(data_dir, f'{data_str}.hdf5.nc')
+data_final_file = os.path.join(data_dir, f'{data_str}.hdf5')
 
 if os.path.isfile(data_file):
     print('removing existing incomplete data file', data_file)
     os.remove(data_file)
 
 # %%
-# Check if we need to generate alms, load in alms if we can        
-if not force_alm_gen and os.path.isfile(alm_final_file) and os.path.isfile(almng_final_file):
-    print('Found existing alms, using them')
-    alms = load_data(alm_final_file, 'alm')
-    almngs = load_data(almng_final_file, 'almng')
+if os.path.isfile(os.path.join(alm_cache_dir, f'{base_name}.alms.hdf5')) and not force_alm_gen:
+    print('Found alms file, skipping alm generation')
+
+    alm_final_file = os.path.join(alm_cache_dir, f'{base_name}.alms.hdf5')
+
+    if job_array_index is not None:
+        start_idx = (int(job_array_index)-job_array_min) * nsims
+        end_idx = start_idx + nsims
+    else:
+        start_idx = None
+        end_idx = None
+
+    alms = load_data(alm_final_file, 'alm', start_idx, end_idx)
+    almngs = load_data(alm_final_file, 'almng', start_idx, end_idx)
+    
     gen_alms = False
     
     print('alms loaded', alms.shape)
@@ -314,6 +330,14 @@ else:
     alms = None
     almngs = None
     gen_alms = True
+
+    alm_str = f'{base_name}{ja_str}'
+    alm_file = os.path.join(alm_cache_dir, f'{alm_str}.alms.hdf5.nc')
+    alm_final_file = os.path.join(alm_cache_dir, f'{alm_str}.alms.hdf5')
+
+    if os.path.isfile(alm_file):
+        print('removing existing incomplete alm file', alm_file)
+        os.remove(alm_file)
 
 # %% [markdown]
 # # $a_{\ell m}$ Calculation
@@ -347,8 +371,8 @@ beam_ell = np.array(beam_ell).squeeze()
 
 if disable_noise:
     noise_ell = noise_ell * 10**-12
-    beam_ell = beam_ell * 10**-12
-
+    beam_ell = np.ones_like(beam_ell)
+    
 print('noise_ell', noise_ell.shape)
 print('beam_ell', beam_ell.shape)
 
@@ -424,9 +448,13 @@ def plot_cl(cl,
                plt_func=plt.semilogy,
                plt_camb=True,
                title='Angular power spectrum from cl',
-               label='data'):
+               label='data',
+               save_name=None):
+    
     if not debug: return
-        
+    
+    # plt.figure()
+
     ell = np.arange(len(cl))
     plt_func(ell[2:], (ell * (ell + 1) / 2 / np.pi)[2:] * cl[2:], label=label)
 
@@ -441,21 +469,28 @@ def plot_cl(cl,
     plt.grid()
     plt.show()
 
-def plot_cl_alm(alm, plt_func=plt.semilogy, plt_camb=True, title='Angular power spectrum from alm'):
-    if not debug: return
-    cl = curvedsky.alm2cl(alm)
-    plot_cl(cl, plt_func, plt_camb, title)
+    if save_name is not None:
+        save_plt(save_name)
 
-def plot_cl_map(map, wcs, plt_func=plt.semilogy, plt_camb=True, title='Angular power spectrum from map'):
+def plot_cl_alm(alm, plt_func=plt.semilogy, plt_camb=True, title='Angular power spectrum from alm', save_name=None):
     if not debug: return
+
+    cl = curvedsky.alm2cl(alm)
+    plot_cl(cl, plt_func, plt_camb, title, save_name)
+
+def plot_cl_map(map, wcs, plt_func=plt.semilogy, plt_camb=True, title='Angular power spectrum from map', save_name=None):
+    if not debug: return
+    
     tmap = enmap.ndmap(map, wcs)
     almsd = curvedsky.map2alm(tmap, lmax=lmax)
     cl = curvedsky.alm2cl(almsd)
-    plot_cl(cl, plt_func, plt_camb, title)
+    plot_cl(cl, plt_func, plt_camb, title, save_name)
 
-runtime = time.time()
+starttime = time.time()
 def save_plt(name):
-    file = f'{plot_dir}/{runtime}-{name}.png'
+    if not save_plots: return
+
+    file = f'{plot_dir}/{starttime}-{name}.png'
     plt.savefig(file)
 
 # %% [markdown]
@@ -469,7 +504,6 @@ def save_plt(name):
 # $. 
 # 
 # $\Delta_\ell^T(k)$, the transfer functions, are calculated sparsely (in l) by CAMB; We thus need to interpolate over the missing values to get `alpha_l`, `beta_l` which are suitable for the calculations. 
-# 
 # We do this with `CubicSpline`, but this could be changed if needed. 
 # 
 # We also go ahead and calculate `bl_div_cl`=$\beta_\ell / C_\ell$, which is used to calculate $B(r,\hat{n})$.
@@ -499,8 +533,8 @@ if gen_alms:
     bl_div_cl = np.ascontiguousarray(bl_div_cl)
 
 # %%
-def save_data(file_path, data_dict, write_mode='a'):
-    with h5py.File(file_path, write_mode) as hf:  # Open the file in append mode
+def save_data(file_path, data_dict):
+    with h5py.File(file_path, 'a') as hf:
         for key, value in data_dict.items():
             if key in hf:
                 # Resize the dataset to accommodate the new data
@@ -513,8 +547,10 @@ def save_data(file_path, data_dict, write_mode='a'):
 
 # %%
 if gen_alms:
-    # Each alm takes ~30Mb at 1024, This is fast enought we don't need to parallelize
-    alms = np.array([data.compute_alm_sim(False) for _ in tqdm(range(nsims), desc='a_lm progress')])
+    # Each alm takes ~30Mb at 1024. This is fast enought we don't need to parallelize even for very large datasets
+    alms = np.array([data.compute_alm_sim(False) 
+                     for _ in tqdm(range(nsims), desc='a_lm progress')
+                     ])
 
     # Make sure we dont get error from the beam_ell being a vector
     beam_ell_2d = np.atleast_2d(beam_ell)
@@ -525,10 +561,7 @@ if gen_alms:
             alms[i, j] = hp.almxfl(alms[i, j], beam_ell_2d[j]**-1)
 
     save_data(alm_file, {'alm': alms})
-    
-    print(alms.shape)
-    plot_cl_alm(alms[0, 0])
-    save_plt('alm')
+    plot_cl_alm(alms[0, 0], save_name='alm')
 
 # %%
 def get_alm(alm, bl_div_cl, alpha_l, r, dr):
@@ -544,7 +577,7 @@ if gen_alms:
 
     # m3's /tmp only has 500gb of storage which was causing issues
     # set dir to something on /scracth
-    with tempfile.TemporaryDirectory(dir='data/tmp') as tempdir:
+    with tempfile.TemporaryDirectory(dir=tmp_dir) as tempdir:
         with Parallel(nthreads_alm, verbose=0, temp_folder=tempdir) as parallel:
             n_batches = math.ceil(len(radii) / batch_size)
             
@@ -571,47 +604,21 @@ if gen_alms:
                             axis = 0
                         )
                 # TODO: Allow setting save interval
-                save_data(almng_file, {'almng': np.array([almngs])}, write_mode='a')
-
-        plot_cl_alm(almngs[0])
-        save_plt('almng')
+                save_data(alm_file, {'almng': almngs})
 
 
 
 # %%
 if gen_alms and debug:
-    plt.close('all')
-    monitor.join_and_plot()
-    save_plt('alm_memory')
+    monitor.join_and_plot('alm_memory')
 
 # %%
 def rename_save(old, new):
     os.replace(old, new)
 
-# def finalize_data(file_path):
-#     # Remove '.nc' from the end of the file name if it exists
-#     base_name = os.path.basename(file_path)
-#     if base_name.endswith('.nc'):
-#         base_name = base_name[:-3]
-#     dir_name = os.path.dirname(file_path)
-
-#     # New file path without '.nc'
-#     new_file_path = os.path.join(dir_name, base_name)
-#     os.rename(file_path, new_file_path)
-
-#     # Compress file with gzip, level 9 compression
-#     with open(new_file_path, 'rb') as f_in:
-#         with gzip.open(new_file_path + '.gz', 'wb', compresslevel=9) as f_out:
-#             shutil.copyfileobj(f_in, f_out)
-
-#     # remove the uncompressed file
-#     os.remove(new_file_path)
-
-
 # %%
 if gen_alms:
     rename_save(alm_file, alm_final_file)
-    rename_save(almng_file, almng_final_file)
 
 # %%
 gc.collect() # Just force a garbage collection to free up memory
@@ -622,7 +629,7 @@ gc.collect() # Just force a garbage collection to free up memory
 # %%
 # Just load everything into memory right now, shouldn't be much of a problem until >10k sims
 alms = load_data(alm_final_file, 'alm')
-almngs = load_data(almng_final_file, 'almng')
+almngs = load_data(alm_final_file, 'almng')
 
 print(alms.shape)
 print(almngs.shape)
@@ -635,7 +642,7 @@ fs_map = enmap.empty(fs_shape, fs_wcs)
 ps_rad = np.deg2rad(patch_side_deg)
 
 patch_shapes = []
-patch_wcss = [] # dont really need this, could just have 1
+patch_wcss = []
 for counter in np.arange(npatches//2):
     # [[dec_min,ra_min],[dec_max,ra_max]]
     top = [[0, ps_rad * counter], [ps_rad, ps_rad * (counter + 1)]]
@@ -651,6 +658,7 @@ for counter in np.arange(npatches//2):
 # %%
 def cutSqPatches_pixell(do_lensing, fs_shape, fs_wcs, fs_map, pshapes, pwcs, cl_phi, alm, fnl, alm_ng):
     alms = alm + fnl * alm_ng
+    
     fs_map = enmap.empty(fs_shape, fs_wcs)
     car_map = curvedsky.alm2map(alms, fs_map)
 
@@ -672,7 +680,7 @@ cutPatches = partial(cutSqPatches_pixell, do_lensing, fs_shape, fs_wcs, fs_map, 
 if debug:
     monitor = MemoryMonitor()
 
-with tempfile.TemporaryDirectory(dir='data/tmp') as tempdir:
+with tempfile.TemporaryDirectory(dir=tmp_dir) as tempdir:
     fnls = uniform(fnl_range[0], fnl_range[1], (nsims,))
     patches = np.array(Parallel(nthreads_sim, verbose=10, temp_folder=tempdir)(
             delayed(cutPatches)(alms[i, pol], fnls[i], almngs[i, pol]) 
@@ -681,9 +689,7 @@ with tempfile.TemporaryDirectory(dir='data/tmp') as tempdir:
 
 # %%
 if debug:
-    plt.close('all')
-    monitor.join_and_plot()
-    save_plt('patch_memory')
+    monitor.join_and_plot('patch_memory')
 
 # %%
 print('fnls', fnls.shape, fnls)
@@ -699,6 +705,8 @@ rename_save(data_file, data_final_file)
 
 # %%
 print('Done with Generation!') 
+
+# Just exit if we dont want the plots
 if not debug:
     exit(0)        
 
@@ -708,7 +716,7 @@ if not debug:
 # # Plots
 
 # %%
-random_indices = [(randint(nsims), randint(npol), randint(npatches)) for _ in range(12)]
+random_indices = [(randint(nsims), randint(npol), randint(npatches)) for _ in range(10)]
 
 print(random_indices)
 
@@ -743,6 +751,10 @@ if len(random_indices) < grid_size * grid_size:
 plt.title('Sample Patches')
 plt.show()
 save_plt('sample_patches')
+
+# %%
+for sim, pol, patch in random_indices:
+    plot_cl_map(patches[sim, pol, patch], patch_wcss[patch], title='Angular power from patch')
 
 # %% [markdown]
 # # Goodbye
