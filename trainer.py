@@ -235,17 +235,16 @@ d = tf.data.Dataset.from_generator(
 )
 d = d.with_options(options)
 
-def get_data(start, step):
+def get_data(start, step, name=None):
     ret = d.skip(start).take(step)
-    # ret = ret.shuffle(step)
     ret = ret.cache()
-    ret = ret.batch(batch_size)
+    ret = ret.batch(batch_size, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False, name=name)
     ret = ret.prefetch(tf.data.AUTOTUNE)
     return ret
 
-train_dataset = get_data(0, train_size)
-val_dataset = get_data(train_size, val_size)
-test_dataset = get_data(train_size + val_size, test_size)
+train_dataset = get_data(0, train_size, 'train')
+val_dataset = get_data(train_size, val_size, 'val')
+test_dataset = get_data(train_size + val_size, test_size, 'test')
 
 print('data sizes', train_size, val_size, test_size)
 

@@ -7,7 +7,7 @@ class DataLoader:
         self.file = file
 
     def __call__(self):
-        with h5py.File(self.file) as f:
+        with h5py.File(self.file, mode='r', swmr=True, locking=False) as f:
             # This does not load the data into memory
             fnls = f['fnls']
             patches = f['patches']
