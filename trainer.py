@@ -173,14 +173,14 @@ with strategy.scope():
 nside = 1024
 no_noise = True
 pols = 'T'
-nsims = 10000
+nsims = 1000
 
 lensed = True
 npatches = 10
 fnl_range = [-1000, 1000]
 
 use_tensorboard = True
-batch_size = 1
+batch_size = 8 # 2**n for GPU
 max_epochs = 100
 
 save_models=True
@@ -237,6 +237,10 @@ d = d.with_options(options)
 
 def get_data(start, step, name=None):
     ret = d.skip(start).take(step)
+
+    # This just fixes the logging output not knowing the dataset size
+    ret = ret.apply(tf.data.experimental.assert_cardinality(step))
+
     ret = ret.cache()
     ret = ret.batch(batch_size, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False, name=name)
     ret = ret.prefetch(tf.data.AUTOTUNE)
@@ -272,7 +276,7 @@ with strategy.scope():
 
     if use_tensorboard:
         tblog_dir = f"{tb_dir}/{basename}_{run_time}"
-        callbacks.append(TensorBoard(log_dir=tblog_dir))
+        callbacks.append(TensorBoard(log_dir=tblog_dir, write_images=True))
 
 # %% [markdown]
 # Train the isensee model
@@ -366,7 +370,6 @@ def isensee2017_model(
         optimizer=optimizer(learning_rate=initial_learning_rate),
         loss=loss_function,
         metrics=tf.keras.metrics.RootMeanSquaredError(),
-        # jit_compile=True
     )
     return model
 
@@ -498,7 +501,9 @@ def plt_pred(dataset, name, save=False):
     ipreds = isensee_model.predict(dataset, batch_size=batch_size, verbose="auto")[:, 0]
     bpreds = bs_model.predict(dataset, batch_size=batch_size, verbose="auto")[:, 0]
 
-    truth = dataset.map(lambda x, y: y)
+    truth = dataset.map(lambda x, y: y).unbatch().as_numpy_iterator()
+    truth = np.array(list(truth))
+
 
     irmse = np.sqrt(((ipreds - truth) ** 2).mean())
     brmse = np.sqrt(((bpreds - truth) ** 2).mean())
@@ -521,12 +526,12 @@ def plt_pred(dataset, name, save=False):
 plt_pred(train_dataset, 'training', True)
 
 # %%
-plt_pred(X_val, y_val, 'validation', True)
+plt_pred(val_dataset, 'validation', True)
 
 # %% [markdown]
 # Model has not seen the test data, so this is the best view of preformance.
 
 # %%
-plt_pred(X_test, y_test, 'test', True)
+plt_pred(test_dataset, 'test', True)
 
 
