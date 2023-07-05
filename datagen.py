@@ -194,7 +194,7 @@ print(camb_params_obj)
 # %%
 fnl_range=(-1000, 1000)
 
-nsims = 10                    # currently nsims % save_size === 0
+nsims = 1                    # currently nsims % save_size === 0
 npatches = 10                # number of patches to generate per sim
 
 nside=1024
@@ -204,7 +204,7 @@ patch_side_deg = 10
 # valid values 'T', 'E', ['T', 'E']
 polarizations = ['T'] #, 'E']
 
-disable_noise = True
+disable_noise = False
 
 noise_loc = 0
 
@@ -226,13 +226,14 @@ force_alm_gen = True
 
 # For easy switching between notebook and slurm, just disables plots
 debug = True
-save_plots = True
+save_plots = False
 
 
 # %%
 if job_array_index is not None:
+    debug = False
+
     if job_array_index % 100 != 1:
-        debug = False
         save_plots = False
 
 # %%
@@ -256,7 +257,7 @@ else:
 # We set the file name best on settings, this will let us load in the data better and ensure we know what settings we are dealing with
 
 # %%
-base_dir = f'data/ksw'
+base_dir = f'data'
 alm_cache_dir = f'{base_dir}/alm_cache'
 tmp_dir = f'{base_dir}/tmp'
 
@@ -264,21 +265,28 @@ data_dir = base_dir + ('/lensed' if lensing else '/unlensed')
 plot_dir = f'{data_dir}/plots/'
 
 # %%
+def safe_makedirs(dir):
+    # just prevents a race condition for multiple jobs
+    try:
+        os.makedirs(dir)
+    except FileExistsError:
+        pass
+
 if not os.path.exists(data_dir): 
-    os.makedirs(data_dir)
+    safe_makedirs(data_dir)
     print(f'Created directory {data_dir}')
 else:
     print(f'Reusing directory {data_dir}')
 
 if not os.path.exists(plot_dir): 
-    os.makedirs(plot_dir)
+    safe_makedirs(plot_dir)
 
 if not os.path.exists(alm_cache_dir): 
-    os.makedirs(alm_cache_dir)
+    safe_makedirs(alm_cache_dir)
     print(f'Created cache directory {alm_cache_dir}')
 
 if not os.path.exists(tmp_dir): 
-    os.makedirs(tmp_dir)
+    safe_makedirs(tmp_dir)
 
 # %%
 def load_data(data_file, key, start_index=None, end_index=None):

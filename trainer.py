@@ -3,7 +3,7 @@ import os
 import re
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"  # 1
-os.environ["TF_XLA_FLAGS"]="--tf_xla_auto_jit=2"
+os.environ["TF_XLA_FLAGS"]="--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit"
 os.environ["XLA_FLAGS"] = "--xla_gpu_cuda_data_dir=/hpc/mp/spack/opt/spack/linux-ubuntu20.04-zen2/gcc-10.3.0/cuda-11.4.4-ctldo35wmmwws3jbgwkgjjcjawddu3qz/"
 
 import tensorflow as tf
@@ -190,26 +190,29 @@ debug = True
 def mk_dir(dir):
     if not os.path.exists(dir):
         print(f"Creating dir: {dir}")
-        os.makedirs(dir)
+        try:
+            os.makedirs(dir)
+        except FileExistsError:
+            # race condition, can happen in job arrays
+            pass
     else:
         print(f'Using existing folder: {dir}')
 
 npol = len(pols)
 
 # some base settings for files
-model_name = "ksw"
 lensed_str = 'lensed' if lensed else 'unlensed'
 nn_str = '_nn' if no_noise else ''
-
-data_dir = f"data/{model_name}/{lensed_str}"
-model_dir = f"{data_dir}/models"
-plot_dir = f"{data_dir}/plots"
-tb_dir = f"{data_dir}/tensorboard"
 
 basename = f'{nside}{nn_str}_{pols}_{nsims}'
 data_filename = f'{basename}x{npatches}_fnl{fnl_range[0]}-{fnl_range[1]}'
 
 run_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+data_dir = f"data/{lensed_str}"
+model_dir = f"{data_dir}/{basename}/models"
+plot_dir = f"{data_dir}/{basename}/plots"
+tb_dir = f"{data_dir}/{basename}/tensorboard"
 
 print('Using data file', data_filename)
 
@@ -225,6 +228,7 @@ n = npatches * nsims
 train_size = int(n * 0.8)
 val_size = int(n * 0.1)
 test_size = int(n * 0.1)
+print('data sizes', train_size, val_size, test_size)
 
 options = tf.data.Options()
 options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
@@ -240,7 +244,6 @@ def get_data(start, step, name=None):
 
     # This just fixes the logging output not knowing the dataset size
     ret = ret.apply(tf.data.experimental.assert_cardinality(step))
-
     ret = ret.cache()
     ret = ret.batch(batch_size, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False, name=name)
     ret = ret.prefetch(tf.data.AUTOTUNE)
@@ -249,8 +252,6 @@ def get_data(start, step, name=None):
 train_dataset = get_data(0, train_size, 'train')
 val_dataset = get_data(train_size, val_size, 'val')
 test_dataset = get_data(train_size + val_size, test_size, 'test')
-
-print('data sizes', train_size, val_size, test_size)
 
 # %% [markdown]
 # ## Train Model
@@ -276,7 +277,7 @@ with strategy.scope():
 
     if use_tensorboard:
         tblog_dir = f"{tb_dir}/{basename}_{run_time}"
-        callbacks.append(TensorBoard(log_dir=tblog_dir, write_images=True))
+        callbacks.append(TensorBoard(log_dir=tblog_dir))
 
 # %% [markdown]
 # Train the isensee model

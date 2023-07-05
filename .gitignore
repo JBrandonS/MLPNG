@@ -10,5 +10,3 @@ logs
 # Files
 *.prof
 *.out
-
-cleanup.sh

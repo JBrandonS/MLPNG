@@ -2,8 +2,8 @@
 #SBATCH --job-name=trainer
 #SBATCH --partition=batch
 #SBATCH --ntasks=1
-#SBATCH --mem=1000G  # per node
-#SBATCH --cpus-per-task=64
+#SBATCH --mem=500G  # per node
+#SBATCH --cpus-per-task=32
 #SBATCH --gpus-per-task=4
 #SBATCH --output=logs/%x_%j.log
 #SBATCH --error=logs/%x_%j.log
