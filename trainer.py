@@ -55,7 +55,7 @@ from keras.callbacks import (
 import h5py
 import healpy as hp
 
-from dataloader import DataLoader
+from utils import DataLoader
 
 # %matplotlib inline
 print(f"tf version: {tf.__version__}")

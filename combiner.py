@@ -7,7 +7,10 @@ import glob
 import h5py
 import numpy as np
 import re
+import json
 from tqdm.auto import tqdm
+
+from config import base_name, data_dir, data_str, alm_cache_dir
 
 def extract_number(filename):
     # Extracts the number from a filename
@@ -24,9 +27,10 @@ def combine_data(directory, base_name, ext, remove_files=True):
     files_to_combine = sorted(files_to_combine, key=extract_number)
 
     # Create a new h5py file to hold all the combined data
-    with h5py.File(directory + base_name + ext + '.nc', 'w') as hf_combined:
+    with h5py.File(os.path.join(directory, base_name + ext + '.nc'), 'w') as hf_combined:
         for file in tqdm(files_to_combine, desc='processing files'):
             with h5py.File(file, 'r') as hf:
+                print(f'Combining {file}')
                 # For each key (dataset) in the file
                 for key in hf.keys():
                     # If the dataset already exists in the combined file, append to it
@@ -37,21 +41,12 @@ def combine_data(directory, base_name, ext, remove_files=True):
                         # Else, copy the entire dataset to the combined file
                         hf_combined.create_dataset(key, data=hf[key], maxshape=(None,) + hf[key].shape[1:], compression="gzip")
 
-    os.replace(directory + base_name + ext + '.nc', directory + base_name + ext)
+    os.replace(os.path.join(directory, base_name + ext + '.nc'), 
+               os.path.join(directory, base_name + ext))
 
     if remove_files:
         for file in tqdm(files_to_combine, desc='removing partial files'):
             os.remove(file)
 
-# %%
-if __name__ == '__main__':
-    base_name = '1024_nn_T_10000'
-    data_name = f'{base_name}x10_fnl-1000-1000'
-
-    cache_dir = 'data/ksw/alm_cache/'
-    data_dir = 'data/ksw/lensed/'
-
-    combine_data(cache_dir, base_name, '.alms.hdf5')
-    combine_data(data_dir, data_name, '.hdf5')
-# %%
-
+combine_data(alm_cache_dir, base_name, '.alms.hdf5')
+combine_data(data_dir, data_str, '.hdf5')
