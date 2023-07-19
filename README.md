@@ -31,13 +31,7 @@ TODO
 
 The best method to run large amounts data is to use slurm job arrays. The Jupyter notebook is good for small sims but the risk of disconnecting, the large runtime, and the added benefit of being able to run multiple sims at once without risk of running out of memory 10 hours in makes slurm job arrays the best option.
 
-1. Set a low number of sims (10) within the `datagen.py` and change any settings in this file that you want.
-2. Modify the `datagen.sbatch` script to point to the correct conda env, provide enough ram, about 500G for 10 sims, and change any other settings you want.
-3. You can then run the generator with `sbatch datagen.sbatch`.
-4. Once done, you can run `sbatch combiner.sbatch` which will combine the partial data files into one and remove the partial files.
-   - You will want to modify the `combiner.py` file to have the correct `base_name`, you will also need to make sure that it is pointing to the correct `data_dir` for lensed or unlensed data to combine the data.
-   - I only use sbatch for this due to internet issues possibly causing problems with how I run jupyter notebooks, but you can run the `combiner.py` file in a notebook if you want.
-5. You should be good now to run the training.
+1. TODO
 
 ## Data Generation
 

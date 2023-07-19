@@ -25,4 +25,6 @@ rm -rivf tmp/* 2>/dev/null
 cd ..
 rm -rivf logs/* 2>/dev/null
 
+rm nohup.out 2>/dev/null
+
 echo "Cleanup completed successfully."

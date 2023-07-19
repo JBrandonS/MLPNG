@@ -68,7 +68,7 @@ class MemoryMonitor(Thread):
     def join_and_plot(self, plot_dir, save_name):
         self.join()
         peak = max(self.memory_buffer) / 1e9
-        dp(f"Peak memory usage: {peak:.2f}GB")
+        print(f"Peak memory usage: {peak:.2f}GB")
         plt.figure()
         plt.title(f"Peak memory usage: {peak:.2f}GB")
 
@@ -81,28 +81,22 @@ class MemoryMonitor(Thread):
         plt.yticks([1e9, 1e10, 1e11, 1e12], ['1GB', '10GB', '100GB', '1TB'])
         plt.show()
         if save_name is not None:
-            save_plt(plot_dir, save_name)
+            file = f'{plot_dir}/{save_name}.png'
+            plt.savefig(file)
 
-def dp(*args, **kwargs):
-    for arg in args:
-        print(arg, end=' ')
-    for key, value in kwargs.items():
-        print(f"{key}: {value}", end=' ')
-    print()  # Print a newline at the end
-
-def safe_makedirs(dir):
+def safe_makedirs(dir, verbose=False):
     if not os.path.exists(dir): 
         # Handles a race condition found during array jobs
         try:
             os.makedirs(dir)
-            dp(f'Created directory {dir}')
-            return
+            if verbose: 
+                print(f'Created directory {dir}')
         except FileExistsError:
             pass
 
-    # dp(f'Reusing directory {dir}')
-
-def save_data(file_path, data_dict):
+def save_data(file_path, data_dict, verbose=False):
+    if verbose:
+        print('Saving data to', file_path, 'with keys', data_dict.keys(), end='...')
     with h5py.File(file_path, 'a') as hf:
         for key, value in data_dict.items():
             if key in hf:
@@ -113,15 +107,18 @@ def save_data(file_path, data_dict):
             else:
                 # Create a new dataset for this key
                 hf.create_dataset(key, data=value, maxshape=(None,) + value.shape[1:])
+    if verbose:
+        print('done')
 
 def rename_save(old, new):
     os.replace(old, new)
 
-def load_data(data_file, key, start_index=None, end_index=None):
-    dp('Loading data', key, 'from', data_file)
+def load_data(data_file, key, start_index=None, end_index=None, verbose=False):
+    if verbose:
+        print('Loading data', key, 'from', data_file)
     with h5py.File(data_file, 'r') as hdf:
         if start_index is not None and end_index is not None:
-            dp(' => Loading data from', start_index, 'to', end_index)
+            if verbose: print(' => Loading data from', start_index, 'to', end_index)
             return np.array(hdf[key][start_index:end_index]) # type: ignore
         else:
             return np.array(hdf.get(key)[()]) # type: ignore
@@ -130,48 +127,48 @@ def save_plt(plot_dir, name):
     file = f'{plot_dir}/{name}.png'
     plt.savefig(file)
 
-def plot_cl(cl,
-            plot_noise=True, 
-            plt_func=plt.semilogy,
-            plt_camb=True,
-            title='Angular power spectrum from cl',
-            label='data',
-            save_name=None,
-            lmax=2000):
-    ell = np.arange(len(cl))
-    plt_func(ell[2:], (ell * (ell + 1) / 2 / np.pi)[2:] * cl[2:], label=label)
+# def plot_cl(cl,
+#             plot_noise=True, 
+#             plt_func=plt.semilogy,
+#             plt_camb=True,
+#             title='Angular power spectrum from cl',
+#             label='data',
+#             save_name=None,
+#             lmax=2000):
+#     ell = np.arange(len(cl))
+#     plt_func(ell[2:], (ell * (ell + 1) / 2 / np.pi)[2:] * cl[2:], label=label)
 
-    if plt_camb:
-        camb_ls = np.arange(2, lmax)
-        if plot_noise:
-            noise_ell_b = np.array([noise_scale_tt.to_value(u.radian)**2 * np.exp( (l*(l+1) * beam_width.to_value(u.radian)**2) / (8*np.log(2)) ) for l in range(nell)])
-            camb_cls_n = c_ells['c_ell'][2:lmax] + noise_ell_b[2:lmax, np.newaxis]
-            camb_n_inner_plt = camb_ls * (camb_ls + 1) / 2 / np.pi * camb_cls_n[:, 0]
-            plt_func(camb_ls, camb_n_inner_plt, label='camb')
-        else:
-            camb_inner_plt = camb_ls * (camb_ls + 1) / 2 / np.pi * c_ells['c_ell'][2:lmax][:, 0]
-            plt_func(camb_ls, camb_inner_plt, label='camb + noise')
+#     if plt_camb:
+#         camb_ls = np.arange(2, lmax)
+#         if plot_noise:
+#             noise_ell_b = np.array([noise_scale_tt.to_value(u.radian)**2 * np.exp( (l*(l+1) * beam_width.to_value(u.radian)**2) / (8*np.log(2)) ) for l in range(nell)])
+#             camb_cls_n = c_ells['c_ell'][2:lmax] + noise_ell_b[2:lmax, np.newaxis]
+#             camb_n_inner_plt = camb_ls * (camb_ls + 1) / 2 / np.pi * camb_cls_n[:, 0]
+#             plt_func(camb_ls, camb_n_inner_plt, label='camb')
+#         else:
+#             camb_inner_plt = camb_ls * (camb_ls + 1) / 2 / np.pi * c_ells['c_ell'][2:lmax][:, 0]
+#             plt_func(camb_ls, camb_inner_plt, label='camb + noise')
 
-    plt.xlabel(r"$\ell$")
-    plt.ylabel(r"$\ell(\ell+1)/2\pi\;C_{\ell}$")
-    plt.title(title)
-    plt.legend()
-    plt.grid()
+#     plt.xlabel(r"$\ell$")
+#     plt.ylabel(r"$\ell(\ell+1)/2\pi\;C_{\ell}$")
+#     plt.title(title)
+#     plt.legend()
+#     plt.grid()
 
-    if save_name is not None:
-        save_plt(plot_dir, save_name)
+#     if save_name is not None:
+#         save_plt(plot_dir, save_name)
 
-    plt.show()
+#     plt.show()
 
-def plot_cl_alm(alm, plt_func=plt.semilogy, plt_camb=True, title='Angular power spectrum from alm', save_name=None):
-    cl = curvedsky.alm2cl(alm)
-    plot_cl(cl, plt_func, plt_camb, title, save_name)
+# def plot_cl_alm(alm, plt_func=plt.semilogy, plt_camb=True, title='Angular power spectrum from alm', save_name=None):
+#     cl = curvedsky.alm2cl(alm)
+#     plot_cl(cl, plt_func, plt_camb, title, save_name)
 
-def plot_cl_map(map, wcs, plt_func=plt.semilogy, plt_camb=True, title='Angular power spectrum from map', save_name=None):   
-    tmap = enmap.ndmap(map, wcs)
-    almsd = curvedsky.map2alm(tmap, lmax=lmax)
-    cl = curvedsky.alm2cl(almsd)
-    plot_cl(cl, plt_func, plt_camb, title, save_name)
+# def plot_cl_map(map, wcs, plt_func=plt.semilogy, plt_camb=True, title='Angular power spectrum from map', save_name=None):   
+#     tmap = enmap.ndmap(map, wcs)
+#     almsd = curvedsky.map2alm(tmap, lmax=lmax)
+#     cl = curvedsky.alm2cl(almsd)
+#     plot_cl(cl, plt_func, plt_camb, title, save_name)
 
 def get_radii(r_min, r_max):
     # For the radii we follow Table 2. of Smith and Zaldarriaga which gives a greater density of points near reionization and recombination. 

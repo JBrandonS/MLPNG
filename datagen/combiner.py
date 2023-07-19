@@ -3,14 +3,13 @@
 
 # %%
 import os
+import sys
 import glob
 import h5py
-import numpy as np
 import re
-import json
 from tqdm.auto import tqdm
 
-from config import base_name, data_dir, data_str, alm_cache_dir
+from config import SimConfig
 
 def extract_number(filename):
     # Extracts the number from a filename
@@ -48,5 +47,9 @@ def combine_data(directory, base_name, ext, remove_files=True):
         for file in tqdm(files_to_combine, desc='removing partial files'):
             os.remove(file)
 
-combine_data(alm_cache_dir, base_name, '.alms.hdf5')
-combine_data(data_dir, data_str, '.hdf5')
+if __name__ == '__main__':
+    config_file = sys.argv[1] if len(sys.argv) > 1 else 'settings/settings.json'
+    s = SimConfig(config_file)
+
+    combine_data(s.alm_cache_dir, s.base_name, '.alms.hdf5')
+    combine_data(s.data_dir, s.data_str, '.hdf5')

@@ -24,8 +24,9 @@
     "nsims" : 10,
     "narray": 10,                   
     "npatches" : 10,
-    "do_lensing" : false,
+    "lensing" : false,
     "disable_noise" : true,
+    "double_precision": false,
 
     "fnl_range":[-1000, 1000],        
     "nside":1024,
@@ -33,13 +34,11 @@
     "polarizations" : ["T"], 
 
     "debug" : true,
-    "save_plots" : true,
-    "silent" : false,
+    "verbose" : true,
     "force_alm_gen" : false, 
 
     "base_dir" : "data",
     "alm_cache_dir" : "data/alm_cache",
-    "tmp_dir" : "data/tmp",
     "plot_dir" : "data/plots",
 
     "noise_scale_tt" : 43,
