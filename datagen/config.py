@@ -8,13 +8,16 @@ from astropy import units as u
 from utils import safe_makedirs
 
 class SimConfig:
-    def __init__(self, settings_file):
+    def __init__(self, settings_file, print_settings=True):
         with open(settings_file, 'r') as f:
             self.settings = settings = json.load(f)
 
-        print('Loaded settings from file:', settings_file)
-        if settings['verbose']:
-            print(settings)
+        if print_settings:
+            print('Loaded settings from file:', settings_file)
+
+            import pprint
+            pp = pprint.PrettyPrinter(indent=2)
+            pp.pprint(settings)
 
         self.cosmo_params = settings['cosmo_params']
         self.lmax = settings['cosmo_params']['lmax']
@@ -43,19 +46,16 @@ class SimConfig:
         # TODO: Find a better way to do this
         self.job_array_index = os.environ.get('SLURM_ARRAY_TASK_ID')
         if self.job_array_index is not None:
-            self.in_ja = True
             self.job_array_index = int(self.job_array_index)
             self.njobs = int(os.environ.get('SLURM_ARRAY_TASK_COUNT'))       # type: ignore
             self.job_array_min = int(os.environ.get('SLURM_ARRAY_TASK_MIN'))  # type: ignore
             self.job_array_max = int(os.environ.get('SLURM_ARRAY_TASK_MAX'))  # type: ignore
-            print('Running job array index', self.job_array_index)
+            self.total_sims = self.njobs * self.nsims
 
-            if self.job_array_index % 100 != 1:
-                self.debug = False  # auto disable plots
-                self.save_plots = False
+            print('Running job array index', self.job_array_index)
         else:
-            self.in_ja = False
             self.njobs = 1
+            self.total_sims = self.nsims * self.narray
 
         self.nell = self.lmax + 1
         self.nelem = hp.Alm.getsize(self.lmax)
@@ -72,10 +72,9 @@ class SimConfig:
             self.r_dtype = np.float32
             self.c_dtype = np.complex64
 
-        self.nsims_str = str(self.nsims*self.narray)
         self.nn_str = 'nn_' if self.disable_noise else ''
 
-        self.base_name = f'{self.nside}_{self.nn_str}{self.chars_of_polarizations}_{self.nsims_str}'
+        self.base_name = f'{self.nside}_{self.nn_str}{self.chars_of_polarizations}_{self.total_sims}'
 
         self.ja_str = '' if self.job_array_index is None else f'_{self.job_array_index}'
 
@@ -98,13 +97,11 @@ class SimConfig:
         beam_ell = []
         if 'T' in self.polarizations:
             noise = np.ones((self.nell), dtype=self.r_dtype) * self.noise_scale_tt.to_value(u.radian)**2
-
             noise_ell.append(noise)
             beam_ell.append(beam_ell_pre[0])
 
         if 'E' in self.polarizations:
             noise = np.ones((self.nell), dtype=self.r_dtype) * self.noise_scale_ee.to_value(u.radian)**2
-
             noise_ell.append(noise)
             beam_ell.append(beam_ell_pre[1])
 
@@ -117,6 +114,7 @@ class SimConfig:
 
         if self.disable_noise:
             noise_ell = noise_ell * 10**-12
-            beam_ell = np.ones_like(beam_ell, dtype=self.r_dtype)
+            beam_ell = np.ones_like(beam_ell, dtype=self.c_dtype)
+
         return noise_ell, beam_ell
     

@@ -11,6 +11,7 @@ import h5py
 
 import time
 import os
+import json
 
 class DataLoader:
     def __init__(self, file, shuffle=True, seed=0):
@@ -67,8 +68,10 @@ class MemoryMonitor(Thread):
 
     def join_and_plot(self, plot_dir, save_name):
         self.join()
+
         peak = max(self.memory_buffer) / 1e9
         print(f"Peak memory usage: {peak:.2f}GB")
+
         plt.figure()
         plt.title(f"Peak memory usage: {peak:.2f}GB")
 
@@ -78,15 +81,17 @@ class MemoryMonitor(Thread):
         plt.xlabel("Time")
         plt.xticks([], [])
         plt.ylabel("Memory usage")
-        plt.yticks([1e9, 1e10, 1e11, 1e12], ['1GB', '10GB', '100GB', '1TB'])
+        plt.yticks([1e9, 1e10, 1e11, 1e12], 
+                   ['1GB', '10GB', '100GB', '1TB'])
         plt.show()
+
         if save_name is not None:
             file = f'{plot_dir}/{save_name}.png'
             plt.savefig(file)
 
 def safe_makedirs(dir, verbose=False):
+    "Create a directory if it does not exist. Handles a race condition"
     if not os.path.exists(dir): 
-        # Handles a race condition found during array jobs
         try:
             os.makedirs(dir)
             if verbose: 
@@ -96,9 +101,17 @@ def safe_makedirs(dir, verbose=False):
 
 def save_data(file_path, data_dict, verbose=False):
     if verbose:
-        print('Saving data to', file_path, 'with keys', data_dict.keys(), end='...')
+        print('Saving data to', file_path, end='...')
+
     with h5py.File(file_path, 'a') as hf:
         for key, value in data_dict.items():
+            if isinstance(value, dict):
+                grp = hf.create_group(key)
+                for k, v in value.items():
+                    grp[k] = json.dumps(v)
+
+                continue
+
             if key in hf:
                 # Resize the dataset to accommodate the new data
                 hf[key].resize((hf[key].shape[0] + value.shape[0],) + value.shape[1:]) # type: ignore
@@ -110,18 +123,32 @@ def save_data(file_path, data_dict, verbose=False):
     if verbose:
         print('done')
 
-def rename_save(old, new):
-    os.replace(old, new)
-
 def load_data(data_file, key, start_index=None, end_index=None, verbose=False):
     if verbose:
         print('Loading data', key, 'from', data_file)
-    with h5py.File(data_file, 'r') as hdf:
+        
+    with h5py.File(data_file, 'r', swmr=True, locking=False) as hdf:
+        kv = hdf.get(key, None)
+        if kv is None:
+            raise ValueError(f'Key {key} not found in {data_file}')
+        
         if start_index is not None and end_index is not None:
-            if verbose: print(' => Loading data from', start_index, 'to', end_index)
-            return np.array(hdf[key][start_index:end_index]) # type: ignore
+            if verbose: 
+                print(' => Loading data from', start_index, 'to', end_index)
+            return np.array(kv[start_index:end_index]) # type: ignore
         else:
-            return np.array(hdf.get(key)[()]) # type: ignore
+            return np.array(kv[()]) # type: ignore
+        
+def load_single_data(data_file, key, index, verbose=False):
+    if verbose:
+        print('Loading data', key, 'from', data_file, 'index', index)
+        
+    with h5py.File(data_file, 'r', swmr=True, locking=False) as hdf:
+        kv = hdf.get(key, None)
+        if kv is None:
+            raise ValueError(f'Key {key} not found in {data_file}')
+        else:
+            return np.array(kv[index]) # type: ignore
 
 def save_plt(plot_dir, name):
     file = f'{plot_dir}/{name}.png'

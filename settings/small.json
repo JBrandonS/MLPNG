@@ -11,8 +11,8 @@
         "tau": 0.0561,
         "TCMB": 2.7255,
 
-        "max_l": 5500,
-        "lmax": 5000,
+        "max_l": 1000,
+        "lmax": 500,
         "lens_potential_accuracy": 2,
 
         "DoLateRadTruncation": false,
@@ -21,21 +21,21 @@
         "lAccuracyBoost": 2.0
     },
 
-    "nsims" : 1,
-    "narray": 100,                   
+    "nsims" : 10,
+    "narray": 10,                   
     "npatches" : 10,
-    "lensing" : false,
-    "disable_noise" : true,
-    "double_precision" : false,
+    "lensing" : true,
+    "disable_noise" : false,
+    "double_precision": false,
 
     "fnl_range":[-1000, 1000],        
-    "nside":2048,
+    "nside":128,
     "patch_side_deg" : 10,
     "polarizations" : ["T"], 
 
     "debug" : true,
     "verbose" : true,
-    "force_alm_gen" : true, 
+    "force_alm_gen" : false, 
 
     "base_dir" : "data",
     "alm_cache_dir" : "data/alm_cache",
@@ -47,8 +47,8 @@
 
     "beam_width" : 7.1,
 
-    "nthreads_alm" : 32,            
-    "nthreads_sim" : 20,
+    "nthreads_alm" : 10,            
+    "nthreads_sim" : 5,
 
     "r_min" : 1,                      
     "r_max" : 50000               

@@ -22,10 +22,10 @@
     },
 
     "nsims" : 1,
-    "narray": 100,                   
+    "narray": 1000,                   
     "npatches" : 10,
-    "lensing" : false,
-    "disable_noise" : true,
+    "lensing" : true,
+    "disable_noise" : false,
     "double_precision" : false,
 
     "fnl_range":[-1000, 1000],        
@@ -33,19 +33,19 @@
     "patch_side_deg" : 10,
     "polarizations" : ["T"], 
 
-    "debug" : true,
-    "verbose" : true,
-    "force_alm_gen" : true, 
+    "debug" : false,
+    "verbose" : false,
+    "force_alm_gen" : false, 
 
     "base_dir" : "data",
     "alm_cache_dir" : "data/alm_cache",
     "plot_dir" : "data/plots",
 
-    "noise_scale_tt" : 43,
+    "noise_scale_tt" : 9,
     "noise_scale_ee" : 4.3,
     "noise_scale_te" : 0.43, 
 
-    "beam_width" : 7.1,
+    "beam_width" : 1.0,
 
     "nthreads_alm" : 32,            
     "nthreads_sim" : 20,

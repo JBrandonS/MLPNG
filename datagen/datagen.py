@@ -2,6 +2,7 @@
 import os
 import sys
 import math
+import datetime
 import numpy as np
 from numpy.random import randint, uniform
 import matplotlib.pyplot as plt
@@ -19,7 +20,7 @@ from ksw.radial_functional import radial_func
 from tqdm.auto import tqdm
 from pixell import enmap, lensing, curvedsky
 
-from utils import MemoryMonitor, load_data, save_data, rename_save, save_plt, get_radii
+from utils import MemoryMonitor, load_data, save_data, save_plt, get_radii
 from config import SimConfig
 
 # %matplotlib inline
@@ -64,7 +65,7 @@ s = SimConfig(config_file)
 
 def vp(*args, **kwargs):
     if s.verbose:
-        print(*args, **kwargs)
+        print(f'{datetime.datetime.now()}:', *args, **kwargs)
 
 # %% [markdown]
 # # $a_{\ell m}$ Calculation
@@ -114,6 +115,10 @@ if os.path.isfile(s.alm_final_file) and not s.settings['force_alm_gen']:
     alms = load_data(s.alm_final_file, 'alm', start_idx, end_idx, verbose=s.verbose)
     almngs = load_data(s.alm_final_file, 'almng', start_idx, end_idx, verbose=s.verbose)
 else:
+    if os.path.isfile(s.alm_file):
+        vp('Removing stale alm file', s.alm_file)
+        os.remove(s.alm_file)
+
     vp('Generating new alms')
     alms = None
     almngs = None
@@ -139,6 +144,8 @@ if gen_alms:
     def interpolate_ells(func, ells_sparse, ls, axis=1):
         return CubicSpline(ells_sparse, func, axis)(ls)
 
+    vp('Calculating alpha_l and beta_l')
+
     delta_phi = (2 * np.pi) * s.cosmo_params['As'] * np.sqrt(3 / 5)
 
     f_k = np.ones((len(tr_k), 2), dtype=s.r_dtype)
@@ -158,6 +165,8 @@ if gen_alms:
     bl_div_cl = np.concatenate(np.array([interpolate_ells(div, tr_ells, s.ells)]))
     bl_div_cl = np.ascontiguousarray(bl_div_cl)
 
+    vp('Done!')
+
 # %%
 if gen_alms:
     # Each alm takes ~30Mb at 1024. This is fast enought we don't need to parallelize even for very large datasets
@@ -173,7 +182,10 @@ if gen_alms:
         for j in range(s.npol):
             alms[i, j] = hp.almxfl(alms[i, j], beam_ell_2d[j]**-1)
 
-    save_data(s.alm_file, {'alm': alms}, verbose=s.verbose)
+    sdata = {}
+    sdata['alm'] = alms
+    sdata['settings'] = s.settings
+    save_data(s.alm_file, sdata, verbose=s.verbose)
 
 # %%
 def get_alm(alm, bl_div_cl, alpha_l, r, dr):
@@ -188,35 +200,32 @@ if gen_alms:
         monitor = MemoryMonitor()
 
     # m3's /tmp only has 500gb of storage which was causing issues
-    with Parallel(s.settings['nthreads_alm'], verbose=0) as parallel:
-        for i in tqdm(range(s.nsims), total=s.nsims, desc='almng progress'):
-            almngs = np.zeros((s.npol, s.nelem), dtype=s.c_dtype)
+    pbar = tqdm(total=s.nsims*s.npol, desc='almng progress')
+    for i in range(s.nsims):
+        almngs = np.zeros((s.npol, s.nelem), dtype=s.c_dtype)
 
-            for pol in range(s.npol):
-                # Expermental versions of joblib have from_generator which would be much better here
-                # But its not on pip yet so....
-                almngs[pol] += np.sum(parallel(
-                        delayed(get_alm)(
-                            alms[i, pol], 
-                            bl_div_cl[ri, :, pol], 
-                            alpha_l[ri, :, pol], 
-                            radii[ri], 
-                            drs[ri]) 
-                        for ri in range(len(drs))
-                    ), # type: ignore
-                    axis = 0,
-                    dtype=s.c_dtype
+        for pol in range(s.npol):
+            alm_gen = Parallel(n_jobs=s.settings['nthreads_alm'], verbose=0, return_as="generator")(
+                delayed(get_alm)(
+                        alms[i, pol], 
+                        bl_div_cl[ri, :, pol], 
+                        alpha_l[ri, :, pol], 
+                        radii[ri], 
+                        drs[ri]) 
+                    for ri in range(len(drs))
                 )
-            save_data(s.alm_file, {'almng': np.reshape(almngs, (1, s.npol, s.nelem))}, verbose=s.verbose)
+            
+            for alm in tqdm(alm_gen, total=len(drs), desc=f'almng {i}:{pol} progress'):
+                almngs[pol] += alm
 
+            pbar.update(1)
+        save_data(s.alm_file, {'almng': np.reshape(almngs, (1, s.npol, s.nelem))}, verbose=False)
 
+    os.replace(s.alm_file, s.alm_final_file)
+    pbar.close()
 
-# %%
-if gen_alms:
     if s.debug:
-        monitor.join_and_plot(s.plot_dir, 'alm_memory')
-
-    rename_save(s.alm_file, s.alm_final_file)
+        monitor.join_and_plot(s.plot_dir, 'almng_memory')
 
 # %% [markdown]
 # # Sims
@@ -230,37 +239,41 @@ almngs = load_data(s.alm_final_file, 'almng', verbose=s.verbose)
 # This generates the patch shapes and WCSs for later
 # We could probably get some memory improvements by chaning from fullsky but its not a big deal
 
+vp('Generating patch shapes and WCSs')
 res = np.deg2rad(s.settings['patch_side_deg'] / s.nside) # TODO Look into better value for res
 fs_shape, fs_wcs = enmap.fullsky_geometry(res, proj="car")
 fs_map = enmap.empty(fs_shape, fs_wcs)
+vp('Done!')
 
 ps_rad = np.deg2rad(s.settings['patch_side_deg'])
 
 patch_shapes = []
 patch_wcss = []
+vp(f'Generating {s.npatches} patches...')
 for counter in np.arange(s.npatches//2):
     # [[dec_min,ra_min],[dec_max,ra_max]]
     top = [[0, ps_rad * counter], [ps_rad, ps_rad * (counter + 1)]]
-    s,w = enmap.geometry(pos=top, res=res, proj="car")
-    patch_shapes.append(s)
+    gs,w = enmap.geometry(pos=top, res=res, proj="car")
+    patch_shapes.append(gs)
     patch_wcss.append(w)
 
     bottom = [[-ps_rad, ps_rad * counter], [0, ps_rad * (counter + 1)]]
-    s, w = enmap.geometry(pos=bottom, res=res, proj="car")
-    patch_shapes.append(s)
+    gs, w = enmap.geometry(pos=bottom, res=res, proj="car")
+    patch_shapes.append(gs)
     patch_wcss.append(w)
+vp('Done!')
 
 # %%
 ## Finally we can generate the patches
 
-def cutSqPatches_pixell(do_lensing, fs_shape, fs_wcs, fs_map, pshapes, pwcs, cl_phi, alm, fnl, alm_ng):
+def cutSqPatches_pixell(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, cl_phi, alm, fnl, alm_ng):
     alms = alm + fnl * alm_ng
     
     fs_map = enmap.empty(fs_shape, fs_wcs)
-    car_map = curvedsky.alm2map(alms, fs_map, verbose=s.verbose)
+    car_map = curvedsky.alm2map(alms, fs_map)
 
-    if do_lensing:
-        phi_map = curvedsky.rand_map(fs_shape, fs_wcs, cl_phi, verbose=s.verbose)
+    if s.lensing:
+        phi_map = curvedsky.rand_map(fs_shape, fs_wcs, cl_phi)
         grad_phi = enmap.grad(phi_map)
         car_map = lensing.lens_map(car_map, grad_phi)
 
@@ -272,18 +285,19 @@ def cutSqPatches_pixell(do_lensing, fs_shape, fs_wcs, fs_map, pshapes, pwcs, cl_
     return np.ascontiguousarray(patches)
 
 cl_phi = data.cosmology._camb_data.get_lens_potential_cls(s.lmax, CMB_unit='muK', raw_cl=True)
-cutPatches = partial(cutSqPatches_pixell, s.lensing, fs_shape, fs_wcs, fs_map, patch_shapes, patch_wcss, cl_phi[:,0])
+cutPatches = partial(cutSqPatches_pixell, s, fs_shape, fs_wcs, fs_map, patch_shapes, patch_wcss, cl_phi[:,0])
 
 if s.debug:
     monitor = MemoryMonitor()
 
 fnls = uniform(s.settings['fnl_range'][0], s.settings['fnl_range'][1], (s.nsims,))
-patches = np.array(
-    Parallel(s.settings['nthreads_sim'], verbose=10)(
-        delayed(cutPatches)(alms[i, pol], fnls[i], almngs[i, pol]) 
-        for pol in range(s.npol) 
-        for i in range(s.nsims)
-    ))
+patches = np.empty((s.nsims, s.npol, s.npatches, s.nside, s.nside), dtype=s.r_dtype)
+with Parallel(s.settings['nthreads_sim'], verbose=1) as parallel:
+    for pol in range(s.npol):
+        patches[:, pol] = np.array(parallel(
+            delayed(cutPatches)(alms[i, pol], fnls[i], almngs[i, pol]) 
+            for i in range(s.nsims)
+        ))
 patches = patches.reshape((s.nsims, s.npol, s.npatches, s.nside, s.nside))
 
 # %%
@@ -294,13 +308,21 @@ if s.debug:
 # # Save data
 
 # %%
+
 sdata = {}
-sdata['sim_settings'] = s.settings
-sdata['fnls'] = fnls
+sdata['fnls'] = np.atleast_1d(fnls)
 sdata['patches'] = np.array(patches)
 
+if s.job_array_index is None or s.job_array_index == 1:
+    # we only want one copy of the settings
+    sdata['settings'] = s.settings
+
+if os.path.isfile(s.data_file):
+    vp('Removing stale data file', s.data_file)
+    os.remove(s.data_file)
+
 save_data(s.data_file, sdata, verbose=s.verbose)
-rename_save(s.data_file, s.data_final_file)
+os.replace(s.data_file, s.data_final_file)
 
 # %%
 vp('Done with Generation!') 
@@ -317,7 +339,7 @@ if not s.debug:
 # %%
 nplots = 10
 random_indices = [(randint(s.nsims), randint(s.npol), randint(s.settings['npatches'])) for _ in range(nplots)]
-vp(random_indices)
+# vp(random_indices)
 
 # %%
 # Compute the grid size
