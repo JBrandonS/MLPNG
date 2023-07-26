@@ -71,22 +71,22 @@ The data is stored in `hdf5` files as they allow reading and appending data with
   - `alm` : the gaussian $a_{\ell m}$ values in `shape: (nims, len(polarizations), data)`
   - `almng`: the non-gaussian $a_{\ell m}^{NG}$ values in `shape :(nsims, len(polarizations), data)`
     - where the size of `data` depends on the settings used in a complicated way.
-  - `settings`: A copy of the settings file used to generate the data for refrence.
+  - `settings`: A copy of the settings file used to generate the data for reference.
 
 - For the data files in `data/[un]lensed/`:
   - `estimates`: the KSW estimates of the bispectrum in `shape: (nsims,)`
-  - `errors`: the precent diff errors of the estimates vs true fnls in `shape: (nsims,)`
+  - `errors`: the percent diff errors of the estimates vs true fnls in `shape: (nsims,)`
   - `fnls`: the fnl values used to generate the data in `shape: (nsims,)`
     - if you need to align the fnls with the patches use `np.repeat(fnls, npatches)`.
   - `patches`: the patches used to generate the data in `shape: (nsims, len(polarizations), npatches, nside, nside)`
-  - `settings`: A copy of the settings file used to generate the data for refrence.
+  - `settings`: A copy of the settings file used to generate the data for reference.
 
 - The KSW uses a MC which is saved as `data/[un]lensed/kswmc_*`.
   - These are not important for us but are used to quicken future runs with the same settings (based on filename).
 
 ### Notes on files
 
-Simultaneous runs are supported as long as the filenames do not collide. The alms settings may match as long as they have been previously generated. Existing non-completed files (ending with `.nc`) will be overritten in the data generation step. Completed alm files will be overriden once the alms are fully generated and, if useing slurm job arrays, combined. Completed data files will be overriden once the estimator is finished. 
+Simultaneous runs are supported as long as the filenames do not collide. The alms settings may match as long as they have been previously generated. Existing non-completed files (ending with `.nc`) will be overwritten in the data generation step. Completed alm files will be overwritten once the alms are fully generated and, if using slurm job arrays, combined. Completed data files will be overwritten once the estimator is finished.
 
 For best results use the `cleanup.sh` script to remove all incomplete files before starting a new run.
 
