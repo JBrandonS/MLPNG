@@ -21,6 +21,7 @@
         "lAccuracyBoost": 2.0
     },
 
+    "name" : "planck",
     "nsims" : 10,
     "narray": 10,                   
     "npatches" : 10,

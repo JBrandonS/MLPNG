@@ -1,6 +1,8 @@
 #!/bin/bash
 # run with `nohup bash datagenerator.sh &`
 
+set -e
+
 SETTINGSFILE="settings/cmb-s4.json"
 
 JOB1="datagen/datagen.sbatch"

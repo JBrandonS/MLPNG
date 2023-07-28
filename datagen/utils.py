@@ -7,33 +7,13 @@ from threading import Thread
 from pixell import enmap, lensing, curvedsky
 from psutil import Process
 
+from astropy import units as u
+
 import h5py
 
 import time
 import os
 import json
-
-class DataLoader:
-    def __init__(self, file, shuffle=True, seed=0):
-        self.file = file
-        self.shuffle = shuffle
-        self.seed = seed
-
-    def __call__(self):
-        with h5py.File(self.file, mode='r', swmr=True, locking=False) as f:
-            # This does not load the data into memory
-            fnls = f['fnls']
-            patches = f['patches']
-
-            nsims, npol, npatches, nside, _ = patches.shape
-
-            patch_vec = product(range(nsims), range(npol), range(npatches))
-            if self.shuffle:
-                np.random.seed(self.seed)
-                patch_vec = np.random.permutation(list(patch_vec))
-                 
-            for (i,j,k) in patch_vec:
-                yield np.ascontiguousarray(patches[i, j, k]), fnls[i]
 
 class MemoryMonitor(Thread):
     """Monitor the memory usage in MB in a separate thread.
@@ -123,21 +103,29 @@ def save_data(file_path, data_dict, verbose=False):
     if verbose:
         print('done')
 
-def load_data(data_file, key, start_index=None, end_index=None, verbose=False):
-    if verbose:
-        print('Loading data', key, 'from', data_file)
+def load_data(data_file, keys, start_index=None, end_index=None, verbose=False):
+    if isinstance(keys, str):
+        keys = [keys]
         
+    data = {}
+    
     with h5py.File(data_file, 'r', swmr=True, locking=False) as hdf:
-        kv = hdf.get(key, None)
-        if kv is None:
-            raise ValueError(f'Key {key} not found in {data_file}')
-        
-        if start_index is not None and end_index is not None:
-            if verbose: 
-                print(' => Loading data from', start_index, 'to', end_index)
-            return np.array(kv[start_index:end_index]) # type: ignore
-        else:
-            return np.array(kv[()]) # type: ignore
+        for key in keys:
+            if verbose:
+                print('Loading data', key, 'from', data_file)
+
+            kv = hdf.get(key, None)
+            if kv is None:
+                raise ValueError(f'Key {key} not found in {data_file}')
+                
+            if start_index is not None and end_index is not None:
+                if verbose: 
+                    print(' => Loading data from', start_index, 'to', end_index)
+                data[key] = np.array(kv[start_index:end_index]) # type: ignore
+            else:
+                data[key] = np.array(kv[()]) # type: ignore
+
+    return data
         
 def load_single_data(data_file, key, index, verbose=False):
     if verbose:
@@ -154,48 +142,78 @@ def save_plt(plot_dir, name):
     file = f'{plot_dir}/{name}.png'
     plt.savefig(file)
 
-# def plot_cl(cl,
-#             plot_noise=True, 
-#             plt_func=plt.semilogy,
-#             plt_camb=True,
-#             title='Angular power spectrum from cl',
-#             label='data',
-#             save_name=None,
-#             lmax=2000):
-#     ell = np.arange(len(cl))
-#     plt_func(ell[2:], (ell * (ell + 1) / 2 / np.pi)[2:] * cl[2:], label=label)
+def plot_cl(cl,
+            settings,
+            plt_func=plt.semilogy,
+            plt_camb=True,
+            plot_noise=True, 
+            c_ells = None,
+            title='Angular power spectrum from cl',
+            save_name=None,
+            save=True):
+    lmax = settings.lmax
+    ells = settings.ells[2:lmax]
+    scale = ells * (ells + 1) / 2 / np.pi
 
-#     if plt_camb:
-#         camb_ls = np.arange(2, lmax)
-#         if plot_noise:
-#             noise_ell_b = np.array([noise_scale_tt.to_value(u.radian)**2 * np.exp( (l*(l+1) * beam_width.to_value(u.radian)**2) / (8*np.log(2)) ) for l in range(nell)])
-#             camb_cls_n = c_ells['c_ell'][2:lmax] + noise_ell_b[2:lmax, np.newaxis]
-#             camb_n_inner_plt = camb_ls * (camb_ls + 1) / 2 / np.pi * camb_cls_n[:, 0]
-#             plt_func(camb_ls, camb_n_inner_plt, label='camb')
-#         else:
-#             camb_inner_plt = camb_ls * (camb_ls + 1) / 2 / np.pi * c_ells['c_ell'][2:lmax][:, 0]
-#             plt_func(camb_ls, camb_inner_plt, label='camb + noise')
+    plt.figure()
+    plt_func(ells, scale * cl[2:lmax], label='data')
 
-#     plt.xlabel(r"$\ell$")
-#     plt.ylabel(r"$\ell(\ell+1)/2\pi\;C_{\ell}$")
-#     plt.title(title)
-#     plt.legend()
-#     plt.grid()
+    if plt_camb:
+        camb_cl = c_ells['c_ell'][2:lmax][:, 0]
 
-#     if save_name is not None:
-#         save_plt(plot_dir, save_name)
+        if plot_noise:
+            nstt = settings.noise_scale_tt.to_value(u.radian)
+            bwr = settings.beam_width.to_value(u.radian)
+            noise_ell_b = np.array([
+                nstt**2 * np.exp( (l*(l+1) * bwr**2) / (8*np.log(2)) ) 
+                                    for l in range(settings.nell)])
+            
+            camb_cls_n = camb_cl + noise_ell_b[2:lmax]
+            camb_n_inner_plt = scale * camb_cls_n
+            plt_func(ells, camb_n_inner_plt, label='camb + noise')
 
-#     plt.show()
+        camb_inner_plt = scale * camb_cl
+        plt_func(ells, camb_inner_plt, label='camb')
 
-# def plot_cl_alm(alm, plt_func=plt.semilogy, plt_camb=True, title='Angular power spectrum from alm', save_name=None):
-#     cl = curvedsky.alm2cl(alm)
-#     plot_cl(cl, plt_func, plt_camb, title, save_name)
+    plt.xlabel(r"$\ell$")
+    plt.ylabel(r"$\ell(\ell+1)/2\pi\;C_{\ell}$")
+    plt.title(title)
+    plt.legend()
+    plt.grid()
 
-# def plot_cl_map(map, wcs, plt_func=plt.semilogy, plt_camb=True, title='Angular power spectrum from map', save_name=None):   
-#     tmap = enmap.ndmap(map, wcs)
-#     almsd = curvedsky.map2alm(tmap, lmax=lmax)
-#     cl = curvedsky.alm2cl(almsd)
-#     plot_cl(cl, plt_func, plt_camb, title, save_name)
+    if save:
+        save_plt('data/plots', save_name)
+
+    plt.show()
+    plt.close()
+
+def plot_cl_alm(alm, 
+                settings, 
+                plt_func=plt.semilogy, 
+                plt_camb=True, 
+                plt_noise=True, 
+                c_ells = None, 
+                title='Angular power spectrum from alm', 
+                save_name='alm', 
+                save=True):
+    cl = curvedsky.alm2cl(alm)
+    plot_cl(cl, settings, plt_func, plt_camb, plt_noise, c_ells, title, save_name, save)
+
+def plot_cl_map(map, 
+                wcs, 
+                settings, 
+                plt_func=plt.semilogy, 
+                plt_camb=True, 
+                plt_noise=True, 
+                c_ells = None,
+                title='Angular power spectrum from map', 
+                save_name='cl', 
+                save=True):   
+    tmap = enmap.ndmap(map, wcs)
+    almsd = curvedsky.map2alm(tmap, lmax=settings.lmax)
+    cl = curvedsky.alm2cl(almsd)
+
+    plot_cl(cl, settings, plt_func, plt_camb, plt_noise, c_ells, title, save_name, save)
 
 def get_radii(r_min, r_max):
     # For the radii we follow Table 2. of Smith and Zaldarriaga which gives a greater density of points near reionization and recombination. 
@@ -227,5 +245,5 @@ def get_radii(r_min, r_max):
         radii.extend(temp_radii)
 
     radii = np.array([r for r in radii if r_min <= r < r_max])
-    drs = np.diff(radii)
+    drs = np.diff(radii) / 2.
     return radii, drs

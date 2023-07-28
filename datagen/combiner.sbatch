@@ -1,6 +1,6 @@
 #! /bin/bash
 #SBATCH --job-name=combiner
-#SBATCH --partition=highmem,standard-l,standard-s
+#SBATCH --partition=standard-s
 #SBATCH --ntasks=1
 #SBATCH --mem=500G  # per node
 #SBATCH --cpus-per-task=10

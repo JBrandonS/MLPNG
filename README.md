@@ -6,6 +6,12 @@
 
 ## Tasks
 
+Use lenspyx
+
+Fix issue with alm cache not using correct files
+
+Duplicate fnls
+
 ## Installing
 
 To install this project, follow these steps:

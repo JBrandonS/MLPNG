@@ -21,6 +21,7 @@
         "lAccuracyBoost": 2.0
     },
 
+    "name": "2k-settings",
     "nsims" : 1,
     "narray": 100,                   
     "npatches" : 10,

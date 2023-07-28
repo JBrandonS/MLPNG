@@ -21,8 +21,9 @@
         "lAccuracyBoost": 2.0
     },
 
-    "nsims" : 10,
-    "narray": 10,                   
+    "name" : "small-test",
+    "nsims" : 1,
+    "narray": 1,                   
     "npatches" : 10,
     "lensing" : true,
     "disable_noise" : false,
@@ -35,7 +36,7 @@
 
     "debug" : true,
     "verbose" : true,
-    "force_alm_gen" : false, 
+    "force_alm_gen" : true, 
 
     "base_dir" : "data",
     "alm_cache_dir" : "data/alm_cache",
@@ -47,8 +48,8 @@
 
     "beam_width" : 7.1,
 
-    "nthreads_alm" : 10,            
-    "nthreads_sim" : 5,
+    "nthreads_alm" : 32,            
+    "nthreads_sim" : 32,
 
     "r_min" : 1,                      
     "r_max" : 50000               

@@ -19,6 +19,7 @@ class SimConfig:
             pp = pprint.PrettyPrinter(indent=2)
             pp.pprint(settings)
 
+        self.name = settings['name']
         self.cosmo_params = settings['cosmo_params']
         self.lmax = settings['cosmo_params']['lmax']
         self.polarizations = settings['polarizations']
@@ -47,14 +48,13 @@ class SimConfig:
         self.job_array_index = os.environ.get('SLURM_ARRAY_TASK_ID')
         if self.job_array_index is not None:
             self.job_array_index = int(self.job_array_index)
-            self.njobs = int(os.environ.get('SLURM_ARRAY_TASK_COUNT'))       # type: ignore
+            njobs = int(os.environ.get('SLURM_ARRAY_TASK_COUNT'))       # type: ignore
             self.job_array_min = int(os.environ.get('SLURM_ARRAY_TASK_MIN'))  # type: ignore
             self.job_array_max = int(os.environ.get('SLURM_ARRAY_TASK_MAX'))  # type: ignore
-            self.total_sims = self.njobs * self.nsims
+            self.total_sims = njobs * self.nsims
 
             print('Running job array index', self.job_array_index)
         else:
-            self.njobs = 1
             self.total_sims = self.nsims * self.narray
 
         self.nell = self.lmax + 1
@@ -73,10 +73,9 @@ class SimConfig:
             self.c_dtype = np.complex64
 
         self.nn_str = 'nn_' if self.disable_noise else ''
+        self.ja_str =  f'_{self.job_array_index}' if self.job_array_index is not None else ''
 
         self.base_name = f'{self.nside}_{self.nn_str}{self.chars_of_polarizations}_{self.total_sims}'
-
-        self.ja_str = '' if self.job_array_index is None else f'_{self.job_array_index}'
 
         self.data_str = f'{self.base_name}x{settings["npatches"]}_fnl{settings["fnl_range"][0]}-{settings["fnl_range"][1]}{self.ja_str}'
         self.data_file = os.path.join(self.data_dir, f'{self.data_str}.hdf5.nc')
@@ -114,7 +113,7 @@ class SimConfig:
 
         if self.disable_noise:
             noise_ell = noise_ell * 10**-12
-            beam_ell = np.ones_like(beam_ell, dtype=self.c_dtype)
+            beam_ell = np.ones_like(beam_ell, dtype=self.r_dtype)
 
         return noise_ell, beam_ell
     

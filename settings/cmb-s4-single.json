@@ -21,12 +21,12 @@
         "lAccuracyBoost": 2.0
     },
 
-    "name" : "cmb-s4",
+    "name" : "cmb-s4-single",
     "nsims" : 1,
-    "narray": 1000,                   
+    "narray": 1,                   
     "npatches" : 10,
-    "lensing" : false,
-    "disable_noise" : true,
+    "lensing" : true,
+    "disable_noise" : false,
     "double_precision" : false,
 
     "fnl_range":[-1000, 1000],        
@@ -36,7 +36,7 @@
 
     "debug" : true,
     "verbose" : true,
-    "force_alm_gen" : false, 
+    "force_alm_gen" : true, 
 
     "base_dir" : "data",
     "alm_cache_dir" : "data/alm_cache",

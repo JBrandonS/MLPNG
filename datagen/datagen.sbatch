@@ -1,8 +1,8 @@
 #! /bin/bash
-#SBATCH --job-name=1-datagen
-#SBATCH --partition=highmem,standard-l,standard-s
+#SBATCH --job-name=datagen
+#SBATCH --partition=standard-s
 #SBATCH --ntasks=1
-#SBATCH --mem=80G  # per node
+#SBATCH --mem=200G
 #SBATCH --cpus-per-task=32
 #SBATCH --output=logs/%x_%j.log
 #SBATCH --error=logs/%x_%j.log
