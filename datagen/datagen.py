@@ -108,9 +108,13 @@ tr_ells = tr_ells[mask]
 
 radii, drs = get_radii(s.settings['r_min'], s.settings['r_max'])
 
-# TODO, check for the true final file too
-if os.path.isfile(s.alm_final_file) and not s.settings['force_alm_gen']:
-    vp('Found alms file, skipping alm generation')
+if (os.path.isfile(s.alm_file_nc) or os.path.isfile(s.alm_file_complete)) and not s.settings['force_alm_gen']:
+    if os.path.isfile(s.alm_file_complete):
+        vp('Found completed alms file, skipping alm generation')
+        alm_file = s.alm_file_complete
+    else:
+        vp(f'Found partial alms file {s.alm_file_partial}, skipping alm generation')
+        alm_file = s.alm_file_partial
     gen_alms = False
     if s.job_array_index is not None:
         start_idx = (int(s.job_array_index)-s.job_array_min) * s.nsims
@@ -119,13 +123,14 @@ if os.path.isfile(s.alm_final_file) and not s.settings['force_alm_gen']:
         start_idx = None
         end_idx = None
 
-    alm_data = load_data(s.alm_final_file, ['alm', 'almng'], start_idx, end_idx, verbose=s.verbose)
+    alm_data = load_data(alm_file, ['alm', 'almng'], start_idx, end_idx, verbose=s.verbose)
     alms = alm_data['alm']
     almngs = alm_data['almng']
 else:
-    if os.path.isfile(s.alm_file):
-        vp('Removing stale alm file', s.alm_file)
-        os.remove(s.alm_file)
+    alm_file = s.alm_file_partial
+    if os.path.isfile(s.alm_file_nc):
+        vp('Removing stale alm file', s.alm_file_nc)
+        os.remove(s.alm_file_nc)
 
     vp('Generating new alms')
     alms = None
@@ -191,7 +196,7 @@ if gen_alms:
     sdata = {}
     sdata['alm'] = alms
     sdata['settings'] = s.settings
-    save_data(s.alm_file, sdata, verbose=s.verbose)
+    save_data(s.alm_file_nc, sdata, verbose=s.verbose)
 
     if s.debug:
         random_indices = [(randint(s.nsims), randint(s.npol)) for _ in range(1)]
@@ -228,12 +233,12 @@ if gen_alms:
             for alm in alm_gen:
                 sim_data[0, pol] += alm
                 
-        save_data(s.alm_file, {'almng': sim_data}, verbose=False)
+        save_data(s.alm_file_nc, {'almng': sim_data}, verbose=False)
 
         if s.debug:
             plot_cl_alm(sim_data[0, 0], s, c_ells=c_ells, save_name=f'{s.name}-almng')
 
-    os.replace(s.alm_file, s.alm_final_file)
+    os.replace(s.alm_file_nc, s.alm_file_partial)
 
     del sim_data
     del alm_gen
@@ -246,7 +251,7 @@ if gen_alms:
 
 # %%
 # Just load everything into memory right now, shouldn't be much of a problem until >10k sims
-ldata = load_data(s.alm_final_file, ['alm', 'almng'], verbose=s.verbose)
+ldata = load_data(alm_file, ['alm', 'almng'], verbose=s.verbose)
 alms = ldata['alm']
 almngs = ldata['almng']
 
@@ -293,14 +298,14 @@ def cutSqPatches_lenspyx(s, fs_shape, fs_wcs, pshapes, pwcs, cl_phi, alm, fnl, a
     # Create a full sky map with lenspyx
     plm = lenspyx.utils_hp.synalm(cl_phi, lmax=lmax_unl, mmax=None)
     fl =  np.sqrt(np.arange(lmax_unl + 1) * np.arange(1, lmax_unl + 2), dtype=s.r_dtype)
-    dlm = lenspyx.utils_hp.almxfl(plm, fl, mmax=None, inplace=False)
+    dlm = lenspyx.utils_hp.almxfl(plm, fl, mmax=None, inplace=False) # inplace breaks, for some reason
 
-    lens_map = lenspyx.alm2lenmap(alms, dlm, geometry=geom_info, nthreads=0, verbose=1, epsilon=epsilon, pol=False)
+    lens_map = lenspyx.alm2lenmap(alms, dlm, geometry=geom_info, nthreads=s.settings['nthreads_sim'], verbose=1, epsilon=epsilon, pol=False)
     hp_map = reproject.healpix2map(lens_map, fs_shape, fs_wcs, s.lmax)
 
-    # if s.debug:
-    #     # hp.mollview(lens_map)
-    #     plot_cl_map(lens_map, fs_wcs, s, c_ells=c_ells, save_name=f'{s.name}-{fnl}-lfullsky')
+    if s.debug:
+        # hp.mollview(lens_map)
+        plot_cl_map(hp_map, fs_wcs, s, c_ells=c_ells, save_name=f'{s.name}-{fnl}-lfullsky')
     
     patches = []
     for i in range(s.npatches):
@@ -315,8 +320,8 @@ def cutSqPatches_pixell(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, alm, fnl, al
     fs_map = enmap.empty(fs_shape, fs_wcs)
     car_map = curvedsky.alm2map(alms, fs_map)
 
-    # if s.debug:
-    #     plot_cl_map(car_map, fs_wcs, s, c_ells=c_ells, save_name=f'{s.name}-{fnl}-pfullsky')
+    if s.debug:
+        plot_cl_map(car_map, fs_wcs, s, c_ells=c_ells, save_name=f'{s.name}-{fnl}-pfullsky')
 
     patches = []
     for i in range(s.npatches):
@@ -357,12 +362,12 @@ if s.job_array_index is None or s.job_array_index == 1:
     # we only want one copy of the settings
     sdata['settings'] = s.settings
 
-if os.path.isfile(s.data_file):
-    vp('Removing stale data file', s.data_file)
-    os.remove(s.data_file)
+if os.path.isfile(s.data_file_nc):
+    vp('Removing stale data file', s.data_file_nc)
+    os.remove(s.data_file_nc)
 
-save_data(s.data_file, sdata, verbose=s.verbose)
-os.replace(s.data_file, s.data_final_file)
+save_data(s.data_file_nc, sdata, verbose=s.verbose)
+os.replace(s.data_file_nc, s.data_file_complete)
 
 # %%
 vp('Done with Generation!') 

@@ -151,6 +151,7 @@ def plot_cl(cl,
             title='Angular power spectrum from cl',
             save_name=None,
             save=True):
+    
     lmax = settings.lmax
     ells = settings.ells[2:lmax]
     scale = ells * (ells + 1) / 2 / np.pi
@@ -170,10 +171,10 @@ def plot_cl(cl,
             
             camb_cls_n = camb_cl + noise_ell_b[2:lmax]
             camb_n_inner_plt = scale * camb_cls_n
-            plt_func(ells, camb_n_inner_plt, label='camb + noise')
+            plt_func(ells, camb_n_inner_plt, label='camb + noise', linestyle='dashed')
 
         camb_inner_plt = scale * camb_cl
-        plt_func(ells, camb_inner_plt, label='camb')
+        plt_func(ells, camb_inner_plt, label='camb', linestyle='dotted')
 
     plt.xlabel(r"$\ell$")
     plt.ylabel(r"$\ell(\ell+1)/2\pi\;C_{\ell}$")

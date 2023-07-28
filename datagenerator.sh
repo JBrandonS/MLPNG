@@ -3,7 +3,7 @@
 
 set -e
 
-SETTINGSFILE="settings/cmb-s4.json"
+SETTINGSFILE="settings/small.json"
 
 JOB1="datagen/datagen.sbatch"
 JOB2="datagen/combiner.sbatch"
@@ -15,11 +15,11 @@ while squeue -j $JOB1_ID | grep -q $JOB1_ID; do
   sleep 1
 done
 
-# # Submit and wait for the second job
+# # # Submit and wait for the second job
 JOB2_ID=$(sbatch $JOB2 $SETTINGSFILE | awk '{print $4}')
 while squeue -j $JOB2_ID | grep -q $JOB2_ID; do
   sleep 1
 done
 
-# Submit the final job and let it run
+# # Submit the final job and let it run
 sbatch $JOB3 $SETTINGSFILE

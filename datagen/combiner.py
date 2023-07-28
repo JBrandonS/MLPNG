@@ -66,4 +66,4 @@ if __name__ == '__main__':
     s = SimConfig(config_file)
 
     combine_data(s.alm_cache_dir, s.base_name, '.alms.hdf5', finalize=True)
-    combine_data(s.data_dir, s.data_str, '.hdf5')
+    combine_data(s.data_dir, s.data_str, '.hdf5.nc')

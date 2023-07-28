@@ -78,12 +78,13 @@ class SimConfig:
         self.base_name = f'{self.nside}_{self.nn_str}{self.chars_of_polarizations}_{self.total_sims}'
 
         self.data_str = f'{self.base_name}x{settings["npatches"]}_fnl{settings["fnl_range"][0]}-{settings["fnl_range"][1]}{self.ja_str}'
-        self.data_file = os.path.join(self.data_dir, f'{self.data_str}.hdf5.nc')
-        self.data_final_file = os.path.join(self.data_dir, f'{self.data_str}.hdf5')
+        self.data_file_nc = os.path.join(self.data_dir, f'{self.data_str}.hdf5.nc')
+        self.data_file_complete = os.path.join(self.data_dir, f'{self.data_str}.hdf5')
 
         self.alm_str = f'{self.base_name}{self.ja_str}'
-        self.alm_file = os.path.join(self.alm_cache_dir, f'{self.alm_str}.alms.hdf5.nc')
-        self.alm_final_file = os.path.join(self.alm_cache_dir, f'{self.alm_str}.alms.hdf5')
+        self.alm_file_nc = os.path.join(self.alm_cache_dir, f'{self.alm_str}.alms.hdf5.nc')
+        self.alm_file_partial = os.path.join(self.alm_cache_dir, f'{self.alm_str}.alms.hdf5')
+        self.alm_file_complete = os.path.join(self.alm_cache_dir, f'{self.base_name}.alms.hdf5')
 
         for s in [self.data_dir, self.plot_dir, self.alm_cache_dir]:
             safe_makedirs(s)

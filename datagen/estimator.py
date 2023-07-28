@@ -66,9 +66,9 @@ vp('done', flush=True)
 def alm_loader(str_idx):
     vp('loading alms')
     idx = int(str_idx)
-    alm = load_single_data(s.alm_final_file, 'alm', idx, verbose=s.verbose)
-    almng = load_single_data(s.alm_final_file, 'almng', idx, verbose=s.verbose)
-    fnl = load_single_data(s.data_file, 'fnls', idx, verbose=s.verbose)
+    alm = load_single_data(s.alm_file_complete, 'alm', idx, verbose=s.verbose)
+    almng = load_single_data(s.alm_file_complete, 'almng', idx, verbose=s.verbose)
+    fnl = load_single_data(s.data_file_nc, 'fnls', idx, verbose=s.verbose)
     vp('Done')
     return alm + fnl * almng
 
@@ -103,8 +103,8 @@ if rank == 0:
     sdata['estimates'] = ests
     # # # sdata['errors'] = (ests - fnls) / fnls
 
-    save_data(s.data_file, sdata, verbose=s.verbose)
-    os.replace(s.data_file, s.data_final_file)
+    save_data(s.data_file_nc, sdata, verbose=s.verbose)
+    os.replace(s.data_file_nc, s.data_file_complete)
 
 vp('Finished', rank, '!')
     
