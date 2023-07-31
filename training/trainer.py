@@ -55,7 +55,10 @@ from keras.callbacks import (
 import h5py
 import healpy as hp
 
-from utils import DataLoader
+from dataloader import DataLoader
+
+tf.debugging.experimental.enable_dump_debug_info('data/tensorboard', tensor_debug_mode="FULL_HEALTH", circular_buffer_size=-1)
+tf.debugging.experimental.disable_dump_debug_info()
 
 # %matplotlib inline
 print(f"tf version: {tf.__version__}")
@@ -170,8 +173,8 @@ with strategy.scope():
     create_convolution_block = partial(create_convolution_block, activation=LeakyReLU, instance_normalization=True)
 
 # %%
-nside = 1024
-no_noise = True
+nside = 2048
+no_noise = False
 pols = 'T'
 nsims = 1000
 
@@ -180,7 +183,7 @@ npatches = 10
 fnl_range = [-1000, 1000]
 
 use_tensorboard = True
-batch_size = 8 # 2**n for GPU
+batch_size = 2 # 2**n for GPU
 max_epochs = 100
 
 save_models=True
@@ -210,9 +213,9 @@ data_filename = f'{basename}x{npatches}_fnl{fnl_range[0]}-{fnl_range[1]}'
 run_time = datetime.now().strftime("%Y%m%d-%H%M%S")
 
 data_dir = f"data/{lensed_str}"
-model_dir = f"{data_dir}/{basename}/models"
-plot_dir = f"{data_dir}/{basename}/plots"
-tb_dir = f"{data_dir}/{basename}/tensorboard"
+model_dir = f"data/models"
+plot_dir = f"data/plots"
+tb_dir = f"data/tensorboard"
 
 print('Using data file', data_filename)
 
@@ -244,6 +247,7 @@ def get_data(start, step, name=None):
 
     # This just fixes the logging output not knowing the dataset size
     ret = ret.apply(tf.data.experimental.assert_cardinality(step))
+    
     ret = ret.cache()
     ret = ret.batch(batch_size, num_parallel_calls=tf.data.AUTOTUNE, deterministic=False, name=name)
     ret = ret.prefetch(tf.data.AUTOTUNE)
@@ -266,18 +270,25 @@ with strategy.scope():
     )
 
     callbacks = [
-        EarlyStopping(monitor="val_root_mean_squared_error", patience=8),
+        EarlyStopping(monitor="val_loss", patience=10, verbose=1, restore_best_weights=True),
         ModelCheckpoint(
             filepath=f"{model_dir}/checkpoint_{run_time}.keras",
-            monitor="val_root_mean_squared_error",
+            monitor="val_loss",
             save_best_only=True,
         ),
+        tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss',
+                                             factor=0.1,
+                                             patience=5,
+        )
         # LearningRateScheduler(lr_schedule),
     ]
 
     if use_tensorboard:
-        tblog_dir = f"{tb_dir}/{basename}_{run_time}"
+        tblog_dir = f"{tb_dir}/{run_time}-{basename}"
         callbacks.append(TensorBoard(log_dir=tblog_dir))
+
+# %%
+# %tensorboard --logdir {tb_dir}
 
 # %% [markdown]
 # Train the isensee model
@@ -380,10 +391,10 @@ with strategy.scope():
     isensee_model = isensee2017_model(
         input_img,
         depth=5,
-        n_segmentation_levels=3,
-        dropout_rate=0.3,
+        n_segmentation_levels=4,
+        # dropout_rate=0.3,
         loss_function=tf.keras.losses.mse,
-        initial_learning_rate=1e-3,
+        initial_learning_rate=1e-1,
         name=f"isensee-{basename}",
     )
     
@@ -459,12 +470,12 @@ with strategy.scope():
     input_img = Input((nside, nside, 1), name="img")
     bs_model = make_bs_model(
         input_img,
-        depth=6,
+        depth=4,
         dropout_rate=0.3,
         loss_function=tf.keras.losses.mse,
-        initial_learning_rate=1e-3,
-        preprocess=True,
-        name=f"{model_name}-{basename}",
+        initial_learning_rate=0.01,
+        preprocess=False,
+        name=f"bs-{basename}",
     )
     
     if debug:

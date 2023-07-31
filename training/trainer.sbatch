@@ -3,8 +3,8 @@
 #SBATCH --partition=batch
 #SBATCH --ntasks=1
 #SBATCH --mem=500G  # per node
-#SBATCH --cpus-per-task=32
-#SBATCH --gpus-per-task=4
+#SBATCH --cpus-per-task=16
+#SBATCH --gpus-per-task=1
 #SBATCH --output=logs/%x_%j.log
 #SBATCH --error=logs/%x_%j.log
 
@@ -15,4 +15,4 @@ eval "$(conda shell.bash hook)"
 
 conda activate trainer
 
-time srun python trainer.py
+time srun python training/trainer.py
