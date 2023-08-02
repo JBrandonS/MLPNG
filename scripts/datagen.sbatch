@@ -4,8 +4,8 @@
 #SBATCH --ntasks=1
 #SBATCH --mem=200G
 #SBATCH --cpus-per-task=32
-#SBATCH --output=logs/%x_%j.log
-#SBATCH --error=logs/%x_%j.log
+#SBATCH --output=logs/%x_%A.log
+#SBATCH --error=logs/%x_%A.log
 #SBATCH --array=1-1000
 
 module purge
@@ -16,7 +16,7 @@ conda activate mlpng
 
 if [ -n "$1" ]
 then
-    time srun python datagen/datagen.py $1
+    time srun python scripts/datagen.py $1
 else
-    time srun python datagen/datagen.py
+    time srun python scripts/datagen.py
 fi

@@ -6,6 +6,7 @@ data
 .lprof/
 logs
 .old
+wandb/
 
 # Files
 *.prof

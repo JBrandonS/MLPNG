@@ -18,7 +18,7 @@ conda activate mlpng
 # time mpirun -n $SLURM_NTASKS python estimator.py
 if [ -n "$1" ]
 then
-    time srun -v python datagen/estimator.py $1
+    time srun python scripts/estimator.py $1
 else
-    time srun python datagen/estimator.py
+    time srun python scripts/estimator.py
 fi

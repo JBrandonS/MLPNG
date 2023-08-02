@@ -37,7 +37,7 @@ def combine_data(directory, base_name, ext, remove_files=True, finalize=False):
                         hf_dest[key].resize((hf_dest[key].shape[0] + hf_source[key].shape[0],) + hf_source[key].shape[1:])
                         hf_dest[key][-hf_source[key].shape[0]:] = hf_source[key]
                     else:
-                        hf_dest.create_dataset(key, data=hf_source[key], maxshape=(None,) + hf_source[key].shape[1:], compression="gzip")
+                        hf_dest.create_dataset(key, data=hf_source[key], maxshape=(None,) + hf_source[key].shape[1:])
                 else:  # Scalar dataset
                     if key in hf_dest:
                         # Concatenate scalar values into a 1D dataset
@@ -45,7 +45,7 @@ def combine_data(directory, base_name, ext, remove_files=True, finalize=False):
                         hf_dest[key][-1:] = hf_source[key][()]
                     else:
                         # Create a new 1D dataset for scalar values
-                        hf_dest.create_dataset(key, data=[hf_source[key][()]], maxshape=(None,), compression="gzip")
+                        hf_dest.create_dataset(key, data=[hf_source[key][()]], maxshape=(None,))
 
     # Create a new h5py file to hold all the combined data
     with h5py.File(os.path.join(directory, base_name + ext + '.nc'), 'w') as hf_combined:

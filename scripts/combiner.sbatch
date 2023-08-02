@@ -15,7 +15,7 @@ conda activate mlpng
 
 if [ -n "$1" ]
 then
-    time srun python datagen/combiner.py $1
+    time srun python scripts/combiner.py $1
 else
-    time srun python datagen/combiner.py
+    time srun python scripts/combiner.py
 fi

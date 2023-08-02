@@ -1,7 +1,7 @@
 #!/bin/bash
 # run with `nohup bash datagenerator.sh &`
 
-JOB1="training/trainer.sbatch"
+JOB1="scripts/trainer.sbatch"
 
 # Submit the first job and capture the job ID
 JOB1_ID=$(sbatch $JOB1 | awk '{print $4}')

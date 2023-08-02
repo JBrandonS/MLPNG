@@ -5,9 +5,9 @@ set -e
 
 SETTINGSFILE="settings/cmb-s4.json"
 
-JOB1="datagen/datagen.sbatch"
-JOB2="datagen/combiner.sbatch"
-JOB3="datagen/estimator.sbatch"
+JOB1="scripts/datagen.sbatch"
+JOB2="scripts/combiner.sbatch"
+JOB3="scripts/estimator.sbatch"
 
 # Submit the first job and capture the job ID
 JOB1_ID=$(sbatch $JOB1 $SETTINGSFILE | awk '{print $4}')

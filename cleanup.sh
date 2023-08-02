@@ -4,27 +4,25 @@ cd "data"
 
 echo "Currently in directory: $(pwd)"
 
-rm -v alm_cache/*.nc
 rm -rvf plots/*
+rm -rvf models/*
+rm -rvf tensorboard/*
 
-directories=('lensed' 'unlensed')
+directories=('alm_cache' 'lensed' 'unlensed')
 
 for dir in "${directories[@]}"; do
     cd "$dir" 2>/dev/null || continue
     echo "Currently in directory: $(pwd)"
 
     rm -rvf *.nc
-    rm -rvf models/*
-    rm -rvf tensorboard/*
 
     cd ..
 done
 
-rm -rvf tmp/*
-
 cd ..
-rm -rvf logs/*
+echo "Currently in directory: $(pwd)"
 
-rm nohup.out
+rm -rvf logs/*
+rm -vf nohup.out
 
 echo "Cleanup completed successfully."
