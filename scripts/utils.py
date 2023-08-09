@@ -15,59 +15,6 @@ import time
 import os
 import json
 
-class MemoryMonitor(Thread):
-    """Monitor the memory usage in MB in a separate thread.
-
-    Note that this class is good enough to highlight the memory profile of
-    Parallel in this example, but is not a general purpose profiler fit for
-    all cases.
-    """
-    def __init__(self):
-        super().__init__()
-        self.stop = False
-        self.memory_buffer = []
-        self.start()
-
-    def get_memory(self):
-        "Get memory of a process and its children."
-        p = Process()
-        memory = p.memory_info().rss
-        for c in p.children():
-            memory += c.memory_info().rss
-        return memory
-
-    def run(self):
-        memory_start = self.get_memory()
-        while not self.stop:
-            self.memory_buffer.append(self.get_memory() - memory_start)
-            time.sleep(0.2)
-
-    def join(self):
-        self.stop = True
-        super().join()
-
-    def join_and_plot(self, plot_dir, save_name):
-        self.join()
-
-        peak = max(self.memory_buffer) / 1e9
-        print(f"Peak memory usage: {peak:.2f}GB")
-
-        plt.figure()
-        plt.title(f"Peak memory usage: {peak:.2f}GB")
-
-        plt.semilogy(
-            np.maximum.accumulate(self.memory_buffer),
-        )
-        plt.xlabel("Time")
-        plt.xticks([], [])
-        plt.ylabel("Memory usage")
-        plt.yticks([1e9, 1e10, 1e11, 1e12], 
-                   ['1GB', '10GB', '100GB', '1TB'])
-        plt.show()
-
-        if save_name is not None:
-            file = f'{plot_dir}/{save_name}.png'
-            plt.savefig(file)
 
 def safe_makedirs(dir, verbose=False):
     "Create a directory if it does not exist. Handles a race condition"
