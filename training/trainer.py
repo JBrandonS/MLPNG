@@ -370,7 +370,7 @@ def isensee2017_model(
     model.compile(
         optimizer=optimizer(learning_rate=initial_learning_rate),
         loss=loss_function,
-        metrics=tf.keras.metrics.RootMeanSquaredError(),
+        metrics=[tf.keras.metrics.RootMeanSquaredError()],
     )
     return model
 
@@ -450,7 +450,7 @@ def make_bs_model(
     model.compile(
         optimizer=optimizer(learning_rate=initial_learning_rate),
         loss=loss_function,
-        metrics=tf.keras.metrics.RootMeanSquaredError(),
+        metrics=[tf.keras.metrics.RootMeanSquaredError()],
     )
     return model
 

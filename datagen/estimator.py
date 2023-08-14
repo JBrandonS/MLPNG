@@ -1,6 +1,7 @@
 import os
 import sys
 import numpy as np
+import random
 
 import healpy as hp
 import camb
@@ -15,96 +16,115 @@ from config import SimConfig
 # This will still crash on mainframe if MPI fails to start correctly....
 # but try except doesn't work for some reason, and makes completion error
 from mpi4py import MPI
+
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-# Needs ~100 sim to reach ~1% accuracy,
-
-config_file = sys.argv[1] if len(sys.argv) > 1 else 'settings/settings.json'
-s = SimConfig(config_file, print_settings= rank == 0)
-
-if s.debug:
-    monitor = MemoryMonitor()
-
-def vp(*args, **kwargs):
-    if s.verbose:
-        print(f'{rank} | {datetime.datetime.now()} =>', *args, **kwargs)
-
-radii, drs = get_radii(s.settings['r_min'], s.settings['r_max'])
-loc_shape = Shape.prim_local(ns=s.cosmo_params['ns'], pivot=s.cosmo_params['pivot_scalar'])
-
-vp('Running camb', flush=True)
-camb_params_obj = camb.set_params(**s.cosmo_params)
-cosmo = Cosmology(camb_params_obj)
-cosmo.compute_transfer(s.cosmo_params['max_l'], verbose=s.verbose)
-cosmo.compute_c_ell()
-cosmo.add_prim_reduced_bispectrum(loc_shape, radii)
-vp('done', flush=True)
-
-# TODO check
-noise_ell, beam_ell = s.get_noise_beam()
-data = Data(s.lmax, noise_ell, beam_ell, s.polarizations, cosmo)
-icov = data.icov_diag_lensed if s.lensing else data.icov_diag_nonlensed
-
-# TODO: double check this is correct
-if s.disable_noise:
-    beam = lambda alm: alm #hp.sphtfunc.smoothalm(alm, fwhm=0, pol=False) 
-else:
-    beam_width = s.settings['beam_width'] * u.arcmin
-    beam_width_rad = beam_width.to_value(u.radian)
-    beam = lambda alm: hp.sphtfunc.smoothalm(alm, fwhm=beam_width_rad)
-
-vp('Starting KSW', flush=True)
-ksw = KSW(cosmo.red_bispectra, 
-          icov, 
-          beam, 
-          s.lmax, 
-          s.polarizations,
-          precision='double' if s.double_precision else 'single')
-vp('done', flush=True)
 
 def alm_loader(str_idx):
-    vp('loading alms')
     idx = int(str_idx)
-    alm = load_single_data(s.alm_file_complete, 'alm', idx, verbose=s.verbose)
-    almng = load_single_data(s.alm_file_complete, 'almng', idx, verbose=s.verbose)
-    fnl = load_single_data(s.data_file_nc, 'fnls', idx, verbose=s.verbose)
-    vp('Done')
+    alm = load_single_data(s.alm_file_complete, "alm", idx, verbose=s.verbose)
+    almng = load_single_data(s.alm_file_complete, "almng", idx, verbose=s.verbose)
+    fnl = load_single_data(s.data_file_nc, "fnls", idx, verbose=s.verbose)
     return alm + fnl * almng
 
-alm_strs = np.arange(s.total_sims).astype(str)
 
-theta_batch = 250 #nelem // 10000
+if __name__ == "__main__":
+    # Loads in our settings file, defaulting to settings/settings.json if no argument was provided
+    config_file = sys.argv[1] if len(sys.argv) > 1 else "settings/settings.json"
+    s = SimConfig(config_file, print_settings=rank == 0)
 
-# maybe put all in 1 file?
-ksw_mc_file = os.path.join(s.data_dir, 'kswmc_'+s.data_str)
-if os.path.exists(ksw_mc_file):
-    vp('Loading from file:', ksw_mc_file, flush=True)
-    ksw.start_from_read_state(ksw_mc_file, comm)
-else:
-    vp('starting setp_batch', flush=True)
-    ksw.step_batch(alm_loader, alm_strs, comm, verbose=s.verbose, theta_batch=theta_batch)
-    vp('finished setp_batch', flush=True)
+    def vp(*args, **kwargs):
+        """
+        Printer helper, adds rank and time to the log and only prints if verbose is enabled.
+        Use like print()
+        """
+        if s.verbose:
+            print(f"{rank} | {datetime.datetime.now()} =>", *args, **kwargs)
+
+    # init camb and setup the reduced bispecturm to local
+    vp("Running camb", flush=True)
+    camb_params_obj = camb.set_params(**s.cosmo_params)
+    cosmo = Cosmology(camb_params_obj)
+    cosmo.compute_transfer(s.cosmo_params["max_l"], verbose=s.verbose)
+    cosmo.compute_c_ell()
+
+    radii, drs = get_radii(s.settings["r_min"], s.settings["r_max"])
+    loc_shape = Shape.prim_local(
+        ns=s.cosmo_params["ns"], pivot=s.cosmo_params["pivot_scalar"]
+    )
+    cosmo.add_prim_reduced_bispectrum(loc_shape, radii)
+    vp("done", flush=True)
+
+    # TODO check
+    noise_ell, beam_ell = s.get_noise_beam()
+    data = Data(s.lmax, noise_ell, beam_ell, s.polarizations, cosmo)
+    icov = data.icov_diag_lensed if s.lensing else data.icov_diag_nonlensed
+
+    # TODO: double check this is correct
+    if s.disable_noise:
+        # hp.sphtfunc.smoothalm(alm, fwhm=0, pol=False)
+        def beam(alm):
+            return alm
+
+    else:
+        beam_width = s.settings["beam_width"] * u.arcmin
+        beam_width_rad = beam_width.to_value(u.radian)
+
+        def beam(alm):
+            return hp.sphtfunc.smoothalm(alm, fwhm=beam_width_rad)
+
+    vp("Starting KSW", flush=True)
+    ksw = KSW(
+        cosmo.red_bispectra,
+        icov,
+        beam,
+        s.lmax,
+        s.polarizations,
+        precision="double" if s.double_precision else "single",
+    )
+    vp("done", flush=True)
+
+    theta_batch = 25  # nelem // 10000
+    # ksw_mc_file = os.path.join(s.data_dir, 'kswmc_'+s.data_str)
+    # if os.path.exists(ksw_mc_file):
+    #     vp('Loading MC from file:', ksw_mc_file, flush=True)
+    #     ksw.start_from_read_state(ksw_mc_file, comm)
+    # else:
+
+    # 100 should be ~1%, so we take a random 100 for initializing the KSW estimator
+    alm_strs = np.arange(s.total_sims).astype(str)
+    if s.total_sims > 100:
+        alm_strs = np.random.choice(alm_strs, size=100, replace=False)
+
+    ksw.step_batch(alm_loader, alm_strs, comm, verbose=False, theta_batch=theta_batch)
+
+    # Disabling for now
+    # if rank == 0:
+    #     ksw.write_state(ksw_mc_file, comm)
+
+    vp("Computing estimates", flush=True)
+    fisher = ksw.compute_fisher()
+    alm_strs = np.arange(s.total_sims).astype(str)
+    estimates = ksw.compute_estimate_batch(
+        alm_loader,
+        alm_strs,
+        comm,
+        verbose=s.verbose,
+        fisher=fisher,
+        theta_batch=theta_batch,
+    )
+    vp("done", flush=True)
 
     if rank == 0:
-        ksw.write_state(ksw_mc_file, comm)
+        sdata = {}
+        sdata["fisher"] = np.atleast_1d(fisher)
+        sdata["estimates"] = estimates
 
-vp('Computing estimates', flush=True)
-fisher = ksw.compute_fisher()
-ests = ksw.compute_estimate_batch(alm_loader, alm_strs, comm, verbose=s.verbose, fisher=fisher, theta_batch=theta_batch)
-vp('done', flush=True)
+        fnls = load_data(s.data_file_nc, ["fnls"], verbose=s.verbose)
+        sdata["errors"] = (estimates - fnls) / fnls
 
-if s.debug:
-    monitor.join_and_plot(s.plot_dir, f'{s.name}-est_memory_{rank}')
+        save_data(s.data_file_nc, sdata, verbose=s.verbose)
+        os.replace(s.data_file_nc, s.data_file_complete)
 
-if rank == 0:
-    sdata = {}
-    sdata['fisher'] = np.atleast_1d(fisher)
-    sdata['estimates'] = ests
-    # # # sdata['errors'] = (ests - fnls) / fnls
-
-    save_data(s.data_file_nc, sdata, verbose=s.verbose)
-    os.replace(s.data_file_nc, s.data_file_complete)
-
-vp('Finished', rank, '!')
-    
+    vp("Finished", rank, "!")
