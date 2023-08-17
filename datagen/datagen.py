@@ -37,11 +37,13 @@ import lenspyx
 
 
 def vp(*args, **kwargs):
+    """prints arguments with a timestamp if verbose is set, use like print()"""
     if s.verbose:
         print(f"{datetime.datetime.now()}:", *args, **kwargs)
 
 
 def get_alm(alm, bl_div_cl, alpha_l, r, dr):
+    """This calculates the alms from the precalculated values"""
     Balm = hp.almxfl(alm, bl_div_cl, inplace=False)
     B = hp.alm2map(Balm, nside=s.nside, lmax=s.lmax, pol=False, inplace=True)
     inner = hp.map2alm(B**2, lmax=s.lmax, pol=False, use_pixel_weights=True)
@@ -50,6 +52,7 @@ def get_alm(alm, bl_div_cl, alpha_l, r, dr):
 
 
 def cutSqPatches_lenspyx(s, fs_shape, fs_wcs, pshapes, pwcs, cl_phi, alm, fnl, alm_ng):
+    """Uses lenspyx to generate and cut the lensed flat maps"""
     alms = alm + fnl * alm_ng
 
     lmax_unl = s.cosmo_params["max_l"]  # needs buffer???
@@ -74,9 +77,9 @@ def cutSqPatches_lenspyx(s, fs_shape, fs_wcs, pshapes, pwcs, cl_phi, alm, fnl, a
     )
     hp_map = reproject.healpix2map(lens_map, fs_shape, fs_wcs, s.lmax)
 
-    if s.debug and (s.job_array_index is None or s.job_array_index == 1):
-        # hp.mollview(lens_map)
-        plot_cl_map(hp_map, s, c_ells=c_ells, save_name=f"{s.name}-{fnl}-lfullsky")
+    # if s.debug and (s.job_array_index is None or s.job_array_index == 1):
+    #     # hp.mollview(lens_map)
+    #     plot_cl_map(hp_map, s, c_ells=c_ells, save_name=f"{s.name}-{fnl}-lpfs")
 
     patches = []
     for i in range(s.npatches):
@@ -87,15 +90,15 @@ def cutSqPatches_lenspyx(s, fs_shape, fs_wcs, pshapes, pwcs, cl_phi, alm, fnl, a
 
 
 def cutSqPatches_pixell(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, alm, fnl, alm_ng):
+    """Uses pixell to generate and cut the flat sky patches, unlensed"""
     alms = alm + fnl * alm_ng
 
     fs_map = enmap.empty(fs_shape, fs_wcs)
     car_map = curvedsky.alm2map(alms, fs_map)
 
-    if s.debug and (s.job_array_index is None or s.job_array_index == 1):
-        plot_cl_map(
-            car_map, fs_wcs, s, c_ells=c_ells, save_name=f"{s.name}-{fnl}-pfullsky"
-        )
+    # if s.debug and (s.job_array_index is None or s.job_array_index == 1):
+    #     This code seems to randomly crash within the curvedsky.map2alm call
+    #     plot_cl_map(car_map, fs_wcs, s, c_ells=c_ells, save_name=f"{s.name}-{fnl}-pfs")
 
     patches = []
     for i in range(s.npatches):
@@ -106,10 +109,12 @@ def cutSqPatches_pixell(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, alm, fnl, al
 
 
 def interpolate_ells(func, ells_sparse, ls, axis=1):
+    """Our interpolation function to go from space to dense ells."""
     return CubicSpline(ells_sparse, func, axis)(ls)
 
 
-def generate_alms():
+def generate_almngs():
+    """This code completely calculates, and saves, the alms and almngs."""
     delta_phi = (2 * np.pi) * s.cosmo_params["As"] * np.sqrt(3 / 5)
 
     f_k = np.ones((len(tr_k), 2), dtype=s.r_dtype)
@@ -148,7 +153,9 @@ def generate_alms():
 
     sdata = {}
     sdata["alm"] = alms
-    sdata["settings"] = s.settings
+    # only save 1 copy of the settings in the alms
+    if s.job_array_index is None or s.job_array_index == 1:
+        sdata["settings"] = s.settings
     save_data(s.alm_file_nc, sdata, verbose=s.verbose)
 
     if s.debug:
@@ -189,6 +196,7 @@ def generate_alms():
 
 
 def get_fs_patch_geo():
+    """Generates the patch geometry using pixell"""
     res = np.deg2rad(s.settings["patch_side_deg"] / s.nside)
     fs_shape, fs_wcs = enmap.fullsky_geometry(res, proj="car")
     fs_map = enmap.empty(fs_shape, fs_wcs)
@@ -215,7 +223,7 @@ if __name__ == "__main__":
     # %% [markdown]
     # # Data Generator
     #
-    # This code primarily generateS non-gaussian cmb maps. These get stored in a data file with the fnls, and patches.
+    # This code primarily generates non-gaussian cmb maps. These get stored in a data file with the fnls, and patches.
     #
     # The full-sky maps are generated using the method discussed in [CMB lensing and primordial non-gaussianity](https://arxiv.org/abs/0905.4732), where we find (eq. 6)
     # $$
@@ -255,6 +263,8 @@ if __name__ == "__main__":
     if s.debug and (s.job_array_index is None or s.job_array_index == 1):
         monitor = MemoryMonitor()
 
+    # here we setup camb since it is needed for the sims in both the alm generation
+    # and patch generation
     camb_params_obj = camb.set_params(**s.cosmo_params, verbose=s.verbose)
     cosmo = Cosmology(camb_params_obj, verbose=s.verbose)
     # Additional settings here, i.e.
@@ -264,9 +274,7 @@ if __name__ == "__main__":
 
     noise_ell, beam_ell = s.get_noise_beam()
     ksw_data = Data(s.lmax, noise_ell, beam_ell, s.polarizations, cosmo)
-
     c_ells = ksw_data.cosmology.c_ell["unlensed_scalar"]  # type: ignore
-
     tr_ell_k = ksw_data.cosmology.transfer["tr_ell_k"]
     tr_ells = ksw_data.cosmology.transfer["ells"]
     tr_k = ksw_data.cosmology.transfer["k"]
@@ -277,6 +285,8 @@ if __name__ == "__main__":
 
     radii, drs = get_radii(s.settings["r_min"], s.settings["r_max"])
 
+    # here we load in the alms either from a complete, combined, file or individual
+    # if neither are found we generate the alms
     if os.path.isfile(s.alm_file_complete) and not s.settings["force_alm_gen"]:
         vp("Found completed alms file, skipping alm generation")
         alm_file = s.alm_file_complete
@@ -290,7 +300,7 @@ if __name__ == "__main__":
             os.remove(s.alm_file_nc)
 
         vp("Generating new alms")
-        generate_alms()
+        generate_almngs()
 
     # Just load everything into memory right now, shouldn't be much of a problem until >10k sims
     ldata = load_data(alm_file, ["alm", "almng"], verbose=s.verbose)
@@ -316,7 +326,7 @@ if __name__ == "__main__":
     patches = np.empty((s.nsims, s.npol, s.npatches, s.nside, s.nside), dtype=s.r_dtype)
     for i in range(s.nsims):
         for pol in range(s.npol):
-            patches[:, pol] = np.array(
+            patches[i, pol] = np.array(
                 cutPatches(alms[i, pol], fnls[i], almngs[i, pol])
             )
     vp("Done!")
@@ -325,21 +335,20 @@ if __name__ == "__main__":
     sdata = {}
     sdata["fnls"] = np.atleast_1d(fnls)
     sdata["patches"] = np.array(patches)
-
     if s.job_array_index is None or s.job_array_index == 1:
         # we only want one copy of the settings
         sdata["settings"] = s.settings
-
     if os.path.isfile(s.data_file_nc):
         vp("Removing stale data file", s.data_file_nc)
         os.remove(s.data_file_nc)
-
     save_data(s.data_file_nc, sdata, verbose=s.verbose)
     os.replace(s.data_file_nc, s.data_file_complete)
 
     # %%
     vp("Done with Generation!")
 
+    # below just generates a nice graph, possibly duplicating the patches
+    # this only runs once per sim and only if debug = True
     if s.debug and (s.job_array_index is None or s.job_array_index == 1):
         monitor.join_and_plot(s.plot_dir, f"{s.name}-datagen")
 
@@ -379,11 +388,3 @@ if __name__ == "__main__":
         plt.title("Sample Patches")
         save_plt(s.plot_dir, f"{s.name}-sample_patches")
         plt.show()
-
-        sim, pol, patch = random_indices[0]
-        plot_cl_patch(
-            patches[sim, pol, patch],
-            s,
-            c_ells=c_ells,
-            save_name=f"{s.name}-patch-cl_{sim}-{pol}-{patch}",
-        )

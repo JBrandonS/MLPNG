@@ -104,6 +104,7 @@ class SimConfig:
             safe_makedirs(s)
 
     def get_noise_beam(self):
+        # TODO: Double check that these should be ones and not eyes
         beam_ell_pre = hp.gauss_beam(
             self.beam_width.to_value(u.radian), lmax=self.lmax, pol=True
         )

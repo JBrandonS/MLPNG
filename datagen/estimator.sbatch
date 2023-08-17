@@ -1,6 +1,6 @@
 #! /bin/bash
 #SBATCH --job-name=estimator
-#SBATCH --partition=highmem
+#SBATCH --partition=standard-s
 #SBATCH --ntasks=100
 #SBATCH --mem-per-cpu=40G
 #SBATCH --cpus-per-task=1

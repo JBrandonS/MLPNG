@@ -21,46 +21,51 @@ def extract_number(filename):
         return None
 
 
+def recursive_copy(hf_source, hf_dest):
+    for key in hf_source.keys():
+        if isinstance(hf_source[key], h5py.Group):
+            if key not in hf_dest:
+                hf_dest.create_group(key)
+            recursive_copy(hf_source[key], hf_dest[key])
+        else:
+            if len(hf_source[key].shape) > 0:  # Non-scalar dataset
+                if key in hf_dest:
+                    hf_dest[key].resize(
+                        (hf_dest[key].shape[0] + hf_source[key].shape[0],)
+                        + hf_source[key].shape[1:]
+                    )
+                    hf_dest[key][-hf_source[key].shape[0] :] = hf_source[key]
+                else:
+                    hf_dest.create_dataset(
+                        key,
+                        data=hf_source[key],
+                        maxshape=(None,) + hf_source[key].shape[1:],
+                        compression="gzip",
+                    )
+            else:  # Scalar dataset
+                if key in hf_dest:
+                    # Concatenate scalar values into a 1D dataset
+                    hf_dest[key].resize((hf_dest[key].shape[0] + 1,))
+                    hf_dest[key][-1:] = hf_source[key][()]
+                else:
+                    # Create a new 1D dataset for scalar values
+                    hf_dest.create_dataset(
+                        key,
+                        data=[hf_source[key][()]],
+                        maxshape=(None,),
+                        compression="gzip",
+                    )
+
+
 def combine_data(directory, base_name, ext, remove_files=True, finalize=False):
     # Get a list of all h5py files that match the pattern, i.e., end with a SLURM job array index
     file_pattern = os.path.join(directory, base_name + "_[0-9]*" + ext)
     files_to_combine = glob.glob(file_pattern)
     files_to_combine = sorted(files_to_combine, key=extract_number)
 
-    def recursive_copy(hf_source, hf_dest):
-        for key in hf_source.keys():
-            if isinstance(hf_source[key], h5py.Group):
-                if key not in hf_dest:
-                    hf_dest.create_group(key)
-                recursive_copy(hf_source[key], hf_dest[key])
-            else:
-                if len(hf_source[key].shape) > 0:  # Non-scalar dataset
-                    if key in hf_dest:
-                        hf_dest[key].resize(
-                            (hf_dest[key].shape[0] + hf_source[key].shape[0],)
-                            + hf_source[key].shape[1:]
-                        )
-                        hf_dest[key][-hf_source[key].shape[0] :] = hf_source[key]
-                    else:
-                        hf_dest.create_dataset(
-                            key,
-                            data=hf_source[key],
-                            maxshape=(None,) + hf_source[key].shape[1:],
-                            compression="gzip",
-                        )
-                else:  # Scalar dataset
-                    if key in hf_dest:
-                        # Concatenate scalar values into a 1D dataset
-                        hf_dest[key].resize((hf_dest[key].shape[0] + 1,))
-                        hf_dest[key][-1:] = hf_source[key][()]
-                    else:
-                        # Create a new 1D dataset for scalar values
-                        hf_dest.create_dataset(
-                            key,
-                            data=[hf_source[key][()]],
-                            maxshape=(None,),
-                            compression="gzip",
-                        )
+    if len(files_to_combine) != s.narray:
+        print(f"Expected {s.narray} files but found {len(files_to_combine)}. Exiting.")
+        exit(1)
 
     # Create a new h5py file to hold all the combined data
     with h5py.File(
@@ -77,7 +82,7 @@ def combine_data(directory, base_name, ext, remove_files=True, finalize=False):
         )
 
     if remove_files:
-        for file in tqdm(files_to_combine, desc="removing partial files"):
+        for file in files_to_combine:
             os.remove(file)
 
 
