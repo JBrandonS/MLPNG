@@ -4,8 +4,8 @@
 #SBATCH --ntasks=1
 #SBATCH --mem=200G
 #SBATCH --cpus-per-task=32
-#SBATCH --output=logs/%x_%A.log
-#SBATCH --error=logs/%x_%A.log
+#SBATCH --output=logs/datagen/%A/%x.log
+#SBATCH --error=logs/datagen/%A/%x.log
 #SBATCH --array=1-1000
 
 module purge

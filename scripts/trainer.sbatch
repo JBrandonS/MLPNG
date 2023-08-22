@@ -5,8 +5,8 @@
 #SBATCH --mem=500G  # per node
 #SBATCH --cpus-per-task=32
 #SBATCH --gpus-per-task=1
-#SBATCH --output=logs/%x_%j.log
-#SBATCH --error=logs/%x_%j.log
+#SBATCH --output=logs/training/%j.log
+#SBATCH --error=logs/training/%j.log
 
 module load dev spack conda
 module load cuda-11.4.4-gcc-10.3.0-ctldo35 cudnn-8.2.4.15-11.4-gcc-10.3.0-eluwegp
