@@ -11,8 +11,8 @@
         "tau": 0.0561,
         "TCMB": 2.7255,
 
-        "max_l": 5500,
-        "lmax": 5000,
+        "max_l": 1000,
+        "lmax": 500,
         "lens_potential_accuracy": 2,
 
         "DoLateRadTruncation": false,
@@ -21,22 +21,22 @@
         "lAccuracyBoost": 2.0
     },
 
-    "name" : "cmb-s4",
+    "name" : "small-test",
     "nsims" : 1,
-    "narray": 10000,                   
+    "narray": 1000,                   
     "npatches" : 10,
     "lensing" : false,
     "disable_noise" : true,
-    "double_precision" : false,
+    "double_precision": false,
 
     "fnl_range":[-1000, 1000],        
-    "nside":2048,
+    "nside":512,
     "patch_side_deg" : 10,
     "polarizations" : ["T"], 
 
     "debug" : true,
     "verbose" : true,
-    "force_alm_gen" : false, 
+    "force_alm_gen" : true, 
 
     "base_dir" : "data",
     "alm_cache_dir" : "data/alm_cache",

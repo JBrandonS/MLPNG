@@ -20,165 +20,128 @@ from ksw.radial_functional import radial_func
 from tqdm.auto import tqdm
 from pixell import enmap, lensing, curvedsky, reproject
 
-from utils import MemoryMonitor, load_data, save_data, save_plt, get_radii, plot_cl_map, plot_cl_alm
+from utils import (
+    MemoryMonitor,
+    load_data,
+    save_data,
+    save_plt,
+    get_radii,
+    plot_cl_map,
+    plot_cl_alm,
+    plot_cl_patch,
+)
 from config import SimConfig
 import lenspyx
 
 # %matplotlib inline
 
-# %% [markdown]
-# # Data Generator
-# 
-# This code primarily generateS non-gaussian cmb maps. These get stored in a data file with the fnls, and patches.
-# 
-# The full-sky maps are generated using the method discussed in [CMB lensing and primordial non-gaussianity](https://arxiv.org/abs/0905.4732), where we find (eq. 6) 
-# $$
-# a_{\ell m} = a_{\ell m}^{{G}} + f_{NL}^X a_{\ell m}^{NG}
-# $$
-# and generated the full sky map from the $a_{\ell m}$.
-# 
-# Most of this code is to calculate the term (eq. 27)
-# 
-# $$
-# a_{\ell m}^{NG,loc'} = \int dr r^2 \left[ \alpha_\ell(r)\left(\int d^2 \hat{n} Y_{\ell m}^\star (\hat{n}) B(r,\hat{n})^2 \right)\right]
-# $$
-# 
-# and
-# 
-# $$
-# \alpha_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^2 \Delta_\ell^T(k) j_\ell(k r)
-# $$
-# 
-# $$
-# \beta_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^{-1} \Delta_\phi \Delta_\ell^T(k) j_\ell(k r)
-# $$
-# 
-# $$
-# B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}
-# $$
-# 
-# where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
-# 
-# ---
-
-# %%
-
-config_file = sys.argv[1] if len(sys.argv) > 1 else 'settings/settings.json'
-s = SimConfig(config_file)
-
-if s.debug:
-    monitor = MemoryMonitor()
 
 def vp(*args, **kwargs):
+    """prints arguments with a timestamp if verbose is set, use like print()"""
     if s.verbose:
-        print(f'{datetime.datetime.now()}:', *args, **kwargs)
+        print(f"{datetime.datetime.now()}:", *args, **kwargs)
 
-# %% [markdown]
-# # $a_{\ell m}$ Calculation
 
-# %% [markdown]
-# For the radii we follow Table 2. of Smith and Zaldarriaga which gives a greater density of points near reionization and recombination. 
-# 
-# Spacing for all ranges but the last row are linear, with the last row having log spacing.
-# 
-# radii are in Mpc
+def get_alm(alm, bl_div_cl, alpha_l, r, dr):
+    """This calculates the alms from the precalculated values"""
+    Balm = hp.almxfl(alm, bl_div_cl, inplace=False)
+    B = hp.alm2map(Balm, nside=s.nside, lmax=s.lmax, pol=False, inplace=True)
+    inner = hp.map2alm(B**2, lmax=s.lmax, pol=False, use_pixel_weights=True)
+    kernel = hp.almxfl(inner, alpha_l, inplace=True)
+    return dr * r**2 * kernel
 
-# %%
-camb_params_obj = camb.set_params(**s.cosmo_params, verbose=s.verbose)
-cosmo = Cosmology(camb_params_obj, verbose=s.verbose)
 
-# Additional settings here, i.e.
-# cosmo._setattr_camb('ns', 0.9624, subclass='InitPower')
+def cutSqPatches_lenspyx(s, fs_shape, fs_wcs, pshapes, pwcs, cl_phi, alm, fnl, alm_ng):
+    """Uses lenspyx to generate and cut the lensed flat maps"""
+    alms = alm + fnl * alm_ng
 
-cosmo.compute_transfer(s.cosmo_params['max_l'], verbose=s.verbose)
-cosmo.compute_c_ell()
+    lmax_unl = s.cosmo_params["max_l"]  # needs buffer???
+    epsilon = 1e-6  # todo: option?
+    geom_info = ("healpix", {"nside": s.nside})
 
-noise_ell, beam_ell = s.get_noise_beam()
-ksw_data = Data(s.lmax, noise_ell, beam_ell, s.polarizations, cosmo)
+    # Create a full sky map with lenspyx
+    plm = lenspyx.utils_hp.synalm(cl_phi, lmax=lmax_unl, mmax=None)
+    fl = np.sqrt(np.arange(lmax_unl + 1) * np.arange(1, lmax_unl + 2), dtype=s.r_dtype)
+    dlm = lenspyx.utils_hp.almxfl(
+        plm, fl, mmax=None, inplace=False
+    )  # inplace breaks, for some reason
 
-c_ells = ksw_data.cosmology.c_ell['unlensed_scalar'] # type: ignore
+    lens_map = lenspyx.alm2lenmap(
+        alms,
+        dlm,
+        geometry=geom_info,
+        nthreads=s.settings["nthreads_sim"],
+        verbose=1,
+        epsilon=epsilon,
+        pol=False,
+    )
+    hp_map = reproject.healpix2map(lens_map, fs_shape, fs_wcs, s.lmax)
 
-tr_ell_k = ksw_data.cosmology.transfer['tr_ell_k']
-tr_ells = ksw_data.cosmology.transfer['ells']
-tr_k = ksw_data.cosmology.transfer['k']
+    # if s.debug and (s.job_array_index is None or s.job_array_index == 1):
+    #     # hp.mollview(lens_map)
+    #     plot_cl_map(hp_map, s, c_ells=c_ells, save_name=f"{s.name}-{fnl}-lpfs")
 
-mask = (tr_ells <= s.lmax)
-tr_ell_k = tr_ell_k[mask]
-tr_ells = tr_ells[mask]
+    patches = []
+    for i in range(s.npatches):
+        patch = hp_map.project(pshapes[i], pwcs[i])
+        patches.append(patch)
 
-radii, drs = get_radii(s.settings['r_min'], s.settings['r_max'])
+    return patches
 
-# TODO, check for the true final file too
-if os.path.isfile(s.alm_final_file) and not s.settings['force_alm_gen']:
-    vp('Found alms file, skipping alm generation')
-    gen_alms = False
-    if s.job_array_index is not None:
-        start_idx = (int(s.job_array_index)-s.job_array_min) * s.nsims
-        end_idx = start_idx + s.nsims
-    else:
-        start_idx = None
-        end_idx = None
 
-    alm_data = load_data(s.alm_final_file, ['alm', 'almng'], start_idx, end_idx, verbose=s.verbose)
-    alms = alm_data['alm']
-    almngs = alm_data['almng']
-else:
-    if os.path.isfile(s.alm_file):
-        vp('Removing stale alm file', s.alm_file)
-        os.remove(s.alm_file)
+def cutSqPatches_pixell(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, alm, fnl, alm_ng):
+    """Uses pixell to generate and cut the flat sky patches, unlensed"""
+    alms = alm + fnl * alm_ng
 
-    vp('Generating new alms')
-    alms = None
-    almngs = None
-    gen_alms = True
+    fs_map = enmap.empty(fs_shape, fs_wcs)
+    car_map = curvedsky.alm2map(alms, fs_map)
 
-# %% [markdown]
-# `radial_func` computes $f_\ell^X(r) = \frac{2}{\pi} \int k^2 dk f(k) \Delta^{TX}_\ell(k) j_\ell(k r)$, we will use this to find 
-# $
-# \alpha_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^2 \Delta_\ell^T(k) j_\ell(k r)
-# $,
-# and
-# $
-# \beta_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^{-1} \Delta_\phi \Delta_\ell^T(k) j_\ell(k r)
-# $. 
-# 
-# $\Delta_\ell^T(k)$, the transfer functions, are calculated sparsely (in l) by CAMB; We thus need to interpolate over the missing values to get `alpha_l`, `beta_l` which are suitable for the calculations. 
-# We do this with `CubicSpline`, but this could be changed if needed. 
-# 
-# We also go ahead and calculate `bl_div_cl`=$\beta_\ell / C_\ell$, which is used to calculate $B(r,\hat{n})$.
+    # if s.debug and (s.job_array_index is None or s.job_array_index == 1):
+    #     This code seems to randomly crash within the curvedsky.map2alm call
+    #     plot_cl_map(car_map, fs_wcs, s, c_ells=c_ells, save_name=f"{s.name}-{fnl}-pfs")
 
-# %%
-if gen_alms:
-    def interpolate_ells(func, ells_sparse, ls, axis=1):
-        return CubicSpline(ells_sparse, func, axis)(ls)
+    patches = []
+    for i in range(s.npatches):
+        patch = car_map.project(pshapes[i], pwcs[i])  # type: ignore
+        patches.append(patch)
 
-    vp('Calculating alpha_l and beta_l')
+    return patches
 
-    delta_phi = (2 * np.pi) * s.cosmo_params['As'] * np.sqrt(3 / 5)
+
+def interpolate_ells(func, ells_sparse, ls, axis=1):
+    """Our interpolation function to go from space to dense ells."""
+    return CubicSpline(ells_sparse, func, axis)(ls)
+
+
+def generate_almngs():
+    """This code completely calculates, and saves, the alms and almngs."""
+    delta_phi = (2 * np.pi) * s.cosmo_params["As"] * np.sqrt(3 / 5)
 
     f_k = np.ones((len(tr_k), 2), dtype=s.r_dtype)
     # f_k[:, 0] = 1                           # f_k for alpha
-    f_k[:, 1] = tr_k**-3 * delta_phi          # f_k for beta
+    f_k[:, 1] = tr_k**-3 * delta_phi  # f_k for beta
 
     rad = radial_func(f_k, tr_ell_k, tr_k, radii, tr_ells)
 
-    alpha_ell = rad[:,:,:,0]
+    alpha_ell = rad[:, :, :, 0]
     alpha_l = np.concatenate(np.array([interpolate_ells(alpha_ell, tr_ells, s.ells)]))
     alpha_l = np.ascontiguousarray(alpha_l)
 
-    beta_ell = rad[:,:,:,1]
-    c_ells_new = c_ells['c_ell'][tr_ells, :s.npol]
+    beta_ell = rad[:, :, :, 1]
+    c_ells_new = c_ells["c_ell"][tr_ells, : s.npol]
     div = beta_ell / c_ells_new[np.newaxis, :, :]
 
     bl_div_cl = np.concatenate(np.array([interpolate_ells(div, tr_ells, s.ells)]))
     bl_div_cl = np.ascontiguousarray(bl_div_cl)
 
-    vp('Done!')
-
     # Each alm takes ~30Mb at 1024. This is fast enough we don't need to parallelize even for very large datasets
-    alms = np.array([ksw_data.compute_alm_sim(False) 
-                     for _ in tqdm(range(s.nsims), desc='a_lm progress')
-                     ], dtype=s.c_dtype)
+    alms = np.array(
+        [
+            ksw_data.compute_alm_sim(False)
+            for _ in tqdm(range(s.nsims), desc="a_lm progress")
+        ],
+        dtype=s.c_dtype,
+    )
 
     # Make sure we dont get error from the beam_ell being a vector
     beam_ell_2d = np.atleast_2d(beam_ell)
@@ -186,241 +149,242 @@ if gen_alms:
     # KSW expects the alms to be coevolved with the beam
     for i in range(s.nsims):
         for j in range(s.npol):
-            alms[i, j] = hp.almxfl(alms[i, j], beam_ell_2d[j]**-1)
+            alms[i, j] = hp.almxfl(alms[i, j], beam_ell_2d[j] ** -1)
 
     sdata = {}
-    sdata['alm'] = alms
-    sdata['settings'] = s.settings
-    save_data(s.alm_file, sdata, verbose=s.verbose)
+    sdata["alm"] = alms
+    # only save 1 copy of the settings in the alms
+    if s.job_array_index is None or s.job_array_index == 1:
+        sdata["settings"] = s.settings
+    save_data(s.alm_file_nc, sdata, verbose=s.verbose)
 
     if s.debug:
         random_indices = [(randint(s.nsims), randint(s.npol)) for _ in range(1)]
         for sim, pol in random_indices:
-            plot_cl_alm(alms[sim, pol], s, c_ells=c_ells, save_name=f'{s.name}-alm_{sim}-{pol}')
+            plot_cl_alm(
+                alms[sim, pol], s, c_ells=c_ells, save_name=f"{s.name}-alm_{sim}-{pol}"
+            )
 
-    del sdata
-
-# %%
-def get_alm(alm, bl_div_cl, alpha_l, r, dr):
-    Balm = hp.almxfl(alm, bl_div_cl, inplace=False)
-    B = hp.alm2map(Balm, nside=s.nside, lmax=s.lmax, pol=False, inplace=True)
-    inner = hp.map2alm(B**2, lmax=s.lmax, pol=False, use_pixel_weights=True)
-    kernel = hp.almxfl(inner, alpha_l, inplace=True)
-    return dr * r**2 * kernel
-
-if gen_alms:
-    vp('Starting almng...')
+    vp("Starting almng...")
     for i in range(s.nsims):
         # todo batch support?
         sim_data = np.zeros((1, s.npol, s.nelem), dtype=s.c_dtype)
 
         for pol in range(s.npol):
-            alm_gen = Parallel(n_jobs=s.settings['nthreads_alm'], verbose=1, return_as="generator")(
+            alm_gen = Parallel(
+                n_jobs=s.settings["nthreads_alm"], verbose=1, return_as="generator"
+            )(
                 delayed(get_alm)(
-                        alms[i, pol], 
-                        bl_div_cl[ri, :, pol], 
-                        alpha_l[ri, :, pol], 
-                        radii[ri], 
-                        drs[ri]) 
-                    for ri in range(len(drs))
+                    alms[i, pol],
+                    bl_div_cl[ri, :, pol],
+                    alpha_l[ri, :, pol],
+                    radii[ri],
+                    drs[ri],
                 )
-            
+                for ri in range(len(drs))
+            )
+
             for alm in alm_gen:
                 sim_data[0, pol] += alm
-                
-        save_data(s.alm_file, {'almng': sim_data}, verbose=False)
+
+        save_data(s.alm_file_nc, {"almng": sim_data}, verbose=False)
 
         if s.debug:
-            plot_cl_alm(sim_data[0, 0], s, c_ells=c_ells, save_name=f'{s.name}-almng')
+            plot_cl_alm(sim_data[0, 0], s, c_ells=c_ells, save_name=f"{s.name}-almng")
 
-    os.replace(s.alm_file, s.alm_final_file)
+    os.replace(s.alm_file_nc, s.alm_file_partial)
 
-    del sim_data
-    del alm_gen
 
-    # if s.debug:
-    #     monitor.join_and_plot(s.plot_dir, f'{s.name}-almng_memory')
-
-# %% [markdown]
-# # Sims
-
-# %%
-# Just load everything into memory right now, shouldn't be much of a problem until >10k sims
-ldata = load_data(s.alm_final_file, ['alm', 'almng'], verbose=s.verbose)
-alms = ldata['alm']
-almngs = ldata['almng']
-
-print(alms.shape, almngs.shape)
-
-# %%
-# This generates the patch shapes and WCSs for later
-# We could probably get some memory improvements by changing from full-sky but its not a big deal
-
-vp('Generating patch shapes and WCSs')
-res = np.deg2rad(s.settings['patch_side_deg'] / s.nside) # TODO Look into better value for res
-fs_shape, fs_wcs = enmap.fullsky_geometry(res, proj="car")
-fs_map = enmap.empty(fs_shape, fs_wcs)
-vp('Done!')
-
-ps_rad = np.deg2rad(s.settings['patch_side_deg'])
-
-patch_shapes = []
-patch_wcss = []
-vp(f'Generating {s.npatches} patch geometry...')
-for counter in np.arange(s.npatches//2):
-    # [[dec_min,ra_min],[dec_max,ra_max]]
-    top = [[0, ps_rad * counter], [ps_rad, ps_rad * (counter + 1)]]
-    gs,w = enmap.geometry(pos=top, res=res, proj="car")
-    patch_shapes.append(gs)
-    patch_wcss.append(w)
-
-    bottom = [[-ps_rad, ps_rad * counter], [0, ps_rad * (counter + 1)]]
-    gs, w = enmap.geometry(pos=bottom, res=res, proj="car")
-    patch_shapes.append(gs)
-    patch_wcss.append(w)
-vp('Done!')
-
-# %%
-## Finally we can generate the patches
-
-def cutSqPatches_lenspyx(s, fs_shape, fs_wcs, pshapes, pwcs, cl_phi, alm, fnl, alm_ng):
-    alms = alm + fnl * alm_ng
-    
-    lmax_unl = s.cosmo_params['max_l'] # needs buffer???
-    epsilon = 1e-6 # todo: option?
-    geom_info = ("healpix",{"nside": s.nside})
-    
-    # Create a full sky map with lenspyx
-    plm = lenspyx.utils_hp.synalm(cl_phi, lmax=lmax_unl, mmax=None)
-    fl =  np.sqrt(np.arange(lmax_unl + 1) * np.arange(1, lmax_unl + 2), dtype=s.r_dtype)
-    dlm = lenspyx.utils_hp.almxfl(plm, fl, mmax=None, inplace=False)
-
-    lens_map = lenspyx.alm2lenmap(alms, dlm, geometry=geom_info, nthreads=0, verbose=1, epsilon=epsilon, pol=False)
-    hp_map = reproject.healpix2map(lens_map, fs_shape, fs_wcs, s.lmax)
-
-    # if s.debug:
-    #     # hp.mollview(lens_map)
-    #     plot_cl_map(lens_map, fs_wcs, s, c_ells=c_ells, save_name=f'{s.name}-{fnl}-lfullsky')
-    
-    patches = []
-    for i in range(s.npatches):
-        patch = hp_map.project(pshapes[i], pwcs[i])
-        patches.append(patch)
-        
-    return patches
-
-def cutSqPatches_pixell(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, alm, fnl, alm_ng):
-    alms = alm + fnl * alm_ng
-
+def get_fs_patch_geo():
+    """Generates the patch geometry using pixell"""
+    res = np.deg2rad(s.settings["patch_side_deg"] / s.nside)
+    fs_shape, fs_wcs = enmap.fullsky_geometry(res, proj="car")
     fs_map = enmap.empty(fs_shape, fs_wcs)
-    car_map = curvedsky.alm2map(alms, fs_map)
 
-    # if s.debug:
-    #     plot_cl_map(car_map, fs_wcs, s, c_ells=c_ells, save_name=f'{s.name}-{fnl}-pfullsky')
+    ps_rad = np.deg2rad(s.settings["patch_side_deg"])
 
-    patches = []
-    for i in range(s.npatches):
-        patch = car_map.project(pshapes[i], pwcs[i]) # type: ignore
-        patches.append(patch)
-        
-    return patches
+    patch_shapes = []
+    patch_wcss = []
+    for counter in np.arange(s.npatches // 2):
+        # [[dec_min,ra_min],[dec_max,ra_max]]
+        top = [[0, ps_rad * counter], [ps_rad, ps_rad * (counter + 1)]]
+        gs, w = enmap.geometry(pos=top, res=res, proj="car")
+        patch_shapes.append(gs)
+        patch_wcss.append(w)
 
-if s.lensing:
-    cl_phi = ksw_data.cosmology._camb_data.get_lens_potential_cls(s.cosmo_params['max_l'], CMB_unit='muK', raw_cl=True)[:, 0]
-    cutPatches = partial(cutSqPatches_lenspyx, s, fs_shape, fs_wcs, patch_shapes, patch_wcss, cl_phi)
-else:
-    cutPatches = partial(cutSqPatches_pixell, s, fs_shape, fs_wcs, fs_map, patch_shapes, patch_wcss)
+        bottom = [[-ps_rad, ps_rad * counter], [0, ps_rad * (counter + 1)]]
+        gs, w = enmap.geometry(pos=bottom, res=res, proj="car")
+        patch_shapes.append(gs)
+        patch_wcss.append(w)
+    return fs_shape, fs_wcs, fs_map, patch_shapes, patch_wcss
 
-vp('Generating patches')
-fnls = uniform(s.settings['fnl_range'][0], s.settings['fnl_range'][1], (s.nsims,))
-patches = np.empty((s.nsims, s.npol, s.npatches, s.nside, s.nside), dtype=s.r_dtype)
-for i in range(s.nsims):
-    for pol in range(s.npol):
-        patches[:, pol] = np.array(
-            cutPatches(
-                alms[i, pol], 
-                fnls[i], 
-                almngs[i, pol]) 
+
+if __name__ == "__main__":
+    # %% [markdown]
+    # # Data Generator
+    #
+    # This code primarily generates non-gaussian cmb maps. These get stored in a data file with the fnls, and patches.
+    #
+    # The full-sky maps are generated using the method discussed in [CMB lensing and primordial non-gaussianity](https://arxiv.org/abs/0905.4732), where we find (eq. 6)
+    # $$
+    # a_{\ell m} = a_{\ell m}^{{G}} + f_{NL}^X a_{\ell m}^{NG}
+    # $$
+    # and generated the full sky map from the $a_{\ell m}$.
+    #
+    # Most of this code is to calculate the term (eq. 27)
+    #
+    # $$
+    # a_{\ell m}^{NG,loc'} = \int dr r^2 \left[ \alpha_\ell(r)\left(\int d^2 \hat{n} Y_{\ell m}^\star (\hat{n}) B(r,\hat{n})^2 \right)\right]
+    # $$
+    #
+    # and
+    #
+    # $$
+    # \alpha_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^2 \Delta_\ell^T(k) j_\ell(k r)
+    # $$
+    #
+    # $$
+    # \beta_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^{-1} \Delta_\phi \Delta_\ell^T(k) j_\ell(k r)
+    # $$
+    #
+    # $$
+    # B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}
+    # $$
+    #
+    # where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
+    #
+    # ---
+
+    # %%
+
+    config_file = sys.argv[1] if len(sys.argv) > 1 else "settings/settings.json"
+    s = SimConfig(config_file)
+
+    if s.debug and (s.job_array_index is None or s.job_array_index == 1):
+        monitor = MemoryMonitor()
+
+    # here we setup camb since it is needed for the sims in both the alm generation
+    # and patch generation
+    camb_params_obj = camb.set_params(**s.cosmo_params, verbose=s.verbose)
+    cosmo = Cosmology(camb_params_obj, verbose=s.verbose)
+    # Additional settings here, i.e.
+    # cosmo._setattr_camb('ns', 0.9624, subclass='InitPower')
+    cosmo.compute_transfer(s.cosmo_params["max_l"], verbose=s.verbose)
+    cosmo.compute_c_ell()
+
+    noise_ell, beam_ell = s.get_noise_beam()
+    ksw_data = Data(s.lmax, noise_ell, beam_ell, s.polarizations, cosmo)
+    c_ells = ksw_data.cosmology.c_ell["unlensed_scalar"]  # type: ignore
+    tr_ell_k = ksw_data.cosmology.transfer["tr_ell_k"]
+    tr_ells = ksw_data.cosmology.transfer["ells"]
+    tr_k = ksw_data.cosmology.transfer["k"]
+
+    mask = tr_ells <= s.lmax
+    tr_ell_k = tr_ell_k[mask]
+    tr_ells = tr_ells[mask]
+
+    radii, drs = get_radii(s.settings["r_min"], s.settings["r_max"])
+
+    # here we load in the alms either from a complete, combined, file or individual
+    # if neither are found we generate the alms
+    if os.path.isfile(s.alm_file_complete) and not s.settings["force_alm_gen"]:
+        vp("Found completed alms file, skipping alm generation")
+        alm_file = s.alm_file_complete
+    elif os.path.isfile(s.alm_file_nc) and not s.settings["force_alm_gen"]:
+        vp(f"Found partial alms file {s.alm_file_partial}, skipping alm generation")
+        alm_file = s.alm_file_partial
+    else:
+        alm_file = s.alm_file_partial
+        if os.path.isfile(s.alm_file_nc):
+            vp("Removing stale alm file", s.alm_file_nc)
+            os.remove(s.alm_file_nc)
+
+        vp("Generating new alms")
+        generate_almngs()
+
+    # Just load everything into memory right now, shouldn't be much of a problem until >10k sims
+    ldata = load_data(alm_file, ["alm", "almng"], verbose=s.verbose)
+    alms = ldata["alm"]
+    almngs = ldata["almng"]
+
+    fs_shape, fs_wcs, fs_map, patch_shapes, patch_wcss = get_fs_patch_geo()
+
+    if s.lensing:
+        cl_phi = ksw_data.cosmology._camb_data.get_lens_potential_cls(
+            s.cosmo_params["max_l"], CMB_unit="muK", raw_cl=True
+        )[:, 0]
+        cutPatches = partial(
+            cutSqPatches_lenspyx, s, fs_shape, fs_wcs, patch_shapes, patch_wcss, cl_phi
         )
-vp('Done!')
+    else:
+        cutPatches = partial(
+            cutSqPatches_pixell, s, fs_shape, fs_wcs, fs_map, patch_shapes, patch_wcss
+        )
 
-# %% [markdown]
-# # Save data
+    vp("Generating patches")
+    fnls = uniform(s.settings["fnl_range"][0], s.settings["fnl_range"][1], (s.nsims,))
+    patches = np.empty((s.nsims, s.npol, s.npatches, s.nside, s.nside), dtype=s.r_dtype)
+    for i in range(s.nsims):
+        for pol in range(s.npol):
+            patches[i, pol] = np.array(
+                cutPatches(alms[i, pol], fnls[i], almngs[i, pol])
+            )
+    vp("Done!")
 
-# %%
+    # Save data
+    sdata = {}
+    sdata["fnls"] = np.atleast_1d(fnls)
+    sdata["patches"] = np.array(patches)
+    if s.job_array_index is None or s.job_array_index == 1:
+        # we only want one copy of the settings
+        sdata["settings"] = s.settings
+    if os.path.isfile(s.data_file_nc):
+        vp("Removing stale data file", s.data_file_nc)
+        os.remove(s.data_file_nc)
+    save_data(s.data_file_nc, sdata, verbose=s.verbose)
+    os.replace(s.data_file_nc, s.data_file_complete)
 
-sdata = {}
-sdata['fnls'] = np.atleast_1d(fnls)
-sdata['patches'] = np.array(patches)
+    # %%
+    vp("Done with Generation!")
 
-if s.job_array_index is None or s.job_array_index == 1:
-    # we only want one copy of the settings
-    sdata['settings'] = s.settings
+    # below just generates a nice graph, possibly duplicating the patches
+    # this only runs once per sim and only if debug = True
+    if s.debug and (s.job_array_index is None or s.job_array_index == 1):
+        monitor.join_and_plot(s.plot_dir, f"{s.name}-datagen")
 
-if os.path.isfile(s.data_file):
-    vp('Removing stale data file', s.data_file)
-    os.remove(s.data_file)
+        nplots = 10
+        random_indices = [
+            (randint(s.nsims), randint(s.npol), randint(s.npatches))
+            for _ in range(nplots)
+        ]
+        grid_size = math.isqrt(len(random_indices))
+        if grid_size**2 < len(random_indices):
+            grid_size += 1
 
-save_data(s.data_file, sdata, verbose=s.verbose)
-os.replace(s.data_file, s.data_final_file)
+        # Create the grid of subplots
+        fig, axs = plt.subplots(
+            grid_size, grid_size, sharex=True, sharey=True, figsize=(10, 10)
+        )
 
-# %%
-vp('Done with Generation!') 
+        # If there's only one plot, put it in a list within a list to emulate a 2D list
+        if grid_size == 1:
+            axs = [[axs]]
 
-if s.debug:
-    monitor.join_and_plot(s.plot_dir, f'{s.name}-datagen')
+        # Iterate over the random_indices
+        for idx, (i, p, n) in enumerate(random_indices):
+            # Compute the subplot coordinates
+            row = idx // grid_size
+            col = idx % grid_size
+            # Plot the image
+            axs[row][col].imshow(patches[i, p, n])
 
-# Just exit if we dont want the plots
-if not s.debug:
-    exit(0)        
+        # Hide the remaining unused subplots if any
+        if len(random_indices) < grid_size * grid_size:
+            for idx in range(len(random_indices), grid_size * grid_size):
+                row = idx // grid_size
+                col = idx % grid_size
+                axs[row][col].axis("off")
 
-# %% [markdown]
-# ---
-# 
-# # Plots
-
-# %%
-nplots = 10
-random_indices = [(randint(s.nsims), randint(s.npol), randint(s.npatches)) for _ in range(nplots)]
-# vp(random_indices)
-
-# %%
-# Compute the grid size
-grid_size = math.isqrt(len(random_indices))
-if grid_size ** 2 < len(random_indices):
-    grid_size += 1
-
-# Create the grid of subplots
-fig, axs = plt.subplots(grid_size, grid_size, sharex=True, sharey=True, figsize=(10, 10))
-
-# If there's only one plot, put it in a list within a list to emulate a 2D list
-if grid_size == 1:
-    axs = [[axs]]
-
-# Iterate over the random_indices
-for idx, (i, p, n) in enumerate(random_indices):
-    # Compute the subplot coordinates
-    row = idx // grid_size
-    col = idx % grid_size
-    # Plot the image
-    axs[row][col].imshow(patches[i, p, n])
-
-# Hide the remaining unused subplots if any
-if len(random_indices) < grid_size * grid_size:
-    for idx in range(len(random_indices), grid_size * grid_size):
-        row = idx // grid_size
-        col = idx % grid_size
-        axs[row][col].axis('off')
-
-plt.title('Sample Patches')
-save_plt(s.plot_dir, f'{s.name}-sample_patches')
-plt.show()
-
-# %%
-sim, pol, patch = random_indices[0]
-plot_cl_map(patches[sim, pol, patch], patch_wcss[patch], s, c_ells=c_ells, save_name=f'{s.name}-patch-cl_{sim}-{pol}-{patch}')
-
-# %% [markdown]
-# # Goodbye
-
-
+        plt.title("Sample Patches")
+        save_plt(s.plot_dir, f"{s.name}-sample_patches")
+        plt.show()
