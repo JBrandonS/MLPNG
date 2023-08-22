@@ -3,8 +3,8 @@
 
 set -e
 
-SETTINGS=("ul_nn_128.json")
-# SETTINGS=("ul_nn_256.json" "ul_nn_512.json" "ul_nn_1024.json" "ul_nn_2048.json")
+# SETTINGS=("ul_nn_128.json")
+SETTINGS=("ul_nn_256.json" "ul_nn_512.json" "ul_nn_1024.json" "ul_nn_2048.json")
 SETTINGS_DIR="settings/"
 
 JOB1="datagen/datagen.sbatch"
