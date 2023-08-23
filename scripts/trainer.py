@@ -1,9 +1,11 @@
-# %%
+import sys
 import os
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"  # 1
-os.environ["TF_XLA_FLAGS"]="--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit"
-os.environ["XLA_FLAGS"] = "--xla_gpu_cuda_data_dir=/hpc/mp/spack/opt/spack/linux-ubuntu20.04-zen2/gcc-10.3.0/cuda-11.4.4-ctldo35wmmwws3jbgwkgjjcjawddu3qz/"
+os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit"
+os.environ[
+    "XLA_FLAGS"
+] = "--xla_gpu_cuda_data_dir=/hpc/mp/spack/opt/spack/linux-ubuntu20.04-zen2/gcc-10.3.0/cuda-11.4.4-ctldo35wmmwws3jbgwkgjjcjawddu3qz/"
 
 import tensorflow as tf
 
@@ -11,6 +13,7 @@ keras = tf.keras  # fixes issues with vsCode
 from keras import backend as K
 import numpy as np
 import matplotlib.pyplot as plt
+
 plt.rcParams.update({"font.size": 13})
 
 from keras import Input, Model
@@ -28,62 +31,19 @@ from datetime import datetime
 from keras.callbacks import (
     TensorBoard,
     EarlyStopping,
+    ReduceLROnPlateau,
 )
+
+from wandb.keras import WandbMetricsLogger, WandbModelCheckpoint
 
 from dataloader import DataLoader
 
 from isensee import *
 import wandb
 
-# %%
-# tf.debugging.experimental.enable_dump_debug_info('data/tensorboard', tensor_debug_mode="FULL_HEALTH", circular_buffer_size=-1)
-# tf.debugging.experimental.disable_dump_debug_info()
+from config import SimConfig
 
-# %matplotlib inline
-print(f"tf version: {tf.__version__}")
 
-# tf.debugging.set_log_device_placement(True)
-gpus = tf.config.list_logical_devices("GPU")
-print(gpus)
-
-# %% [markdown]
-# We used MirroredStrategy to allow for multiGPU setups, can use onedevice if you need to debug things and don't want to change server settings.
-# 
-# You need to use `with strategy.scope():` anytime you call a tensorflow function with this code or you will get errors.
-
-# %%
-strategy = tf.distribute.MirroredStrategy(gpus)
-# strategy = tf.distribute.OneDeviceStrategy(device="/gpu:0") # for debugging
-
-# %%
-nside = 128
-no_noise = False
-pols = 'T'
-nsims = 1000
-lensed = False
-
-npatches = 10
-fnl_range = [-1000, 1000]
-
-batch_size = 128 # 2**n for GPU
-max_epochs = 100
-save_models=True
-debug = True
-use_tensorboard = True
-
-# holds base settings for wandb
-wandb_config = {
-    'nside': nside,
-    'nsims': nsims,
-    'pols': pols,
-    'lensed': lensed,
-    'no_noise': no_noise,
-    'fnl_range': fnl_range,
-    'batch_size': batch_size,
-    'max_epochs': max_epochs
-}
-
-# %%
 def mk_dir(dir):
     if not os.path.exists(dir):
         print(f"Creating dir: {dir}")
@@ -93,120 +53,50 @@ def mk_dir(dir):
             # race condition, can happen in job arrays
             pass
     else:
-        print(f'Using existing folder: {dir}')
+        print(f"Using existing folder: {dir}")
 
-npol = len(pols)
-
-# some base settings for files
-lensed_str = 'lensed' if lensed else 'unlensed'
-nn_str = '_nn' if no_noise else ''
-
-basename = f'{nside}{nn_str}_{pols}_{nsims}'
-data_filename = f'{basename}x{npatches}_fnl{fnl_range[0]}-{fnl_range[1]}'
-
-run_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-
-data_dir = f"data/{lensed_str}"
-model_dir = f"data/models"
-plot_dir = f"data/plots"
-tb_dir = f"data/tensorboard"
-
-print('Using data file', data_filename)
-
-# %%
-mk_dir(data_dir)
-mk_dir(model_dir)
-mk_dir(plot_dir)
-if use_tensorboard:
-    mk_dir(tb_dir)
-
-# %%
-n = npatches * nsims
-train_size = int(n * 0.8)
-val_size = int(n * 0.1)
-test_size = int(n * 0.1)
-print('data sizes', train_size, val_size, test_size)
-
-options = tf.data.Options()
-options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
-d = tf.data.Dataset.from_generator(
-    DataLoader(f'{data_dir}/{data_filename}.hdf5'),
-    output_signature=(tf.TensorSpec(shape=(nside, nside), dtype=tf.float32), tf.TensorSpec(shape=(), dtype=tf.float32)),
-)
-d = d.with_options(options)
 
 def get_data(start, step, name=None):
     ret = d.skip(start).take(step)
 
     # This just fixes the logging output not knowing the dataset size
     ret = ret.apply(tf.data.experimental.assert_cardinality(step))
-    
+
     ret = ret.cache()
     ret = ret.batch(batch_size, num_parallel_calls=tf.data.AUTOTUNE, name=name)
     ret = ret.prefetch(tf.data.AUTOTUNE)
     return ret
 
-train_dataset = get_data(0, train_size, 'train')
-val_dataset = get_data(train_size, val_size, 'val')
-test_dataset = get_data(train_size + val_size, test_size, 'test')
 
-# %% [markdown]
-# ## Train Model
-# ### Train the Isensee Model
+def plt_pred(dataset, name, save=False):
+    ipreds = isensee_model.predict(
+        dataset, batch_size=s.batch_size, verbose="auto", callbacks=callbacks
+    )[:, 0]
+    bpreds = bs_model.predict(
+        dataset, batch_size=s.batch_size, verbose="auto", callbacks=callbacks
+    )[:, 0]
 
-# %%
-with strategy.scope():
-    model_settings = {
-        'depth':4,
-        'n_segmentation_levels':4,
-        'dropout_rate':0.03,
-        'loss_function':tf.keras.losses.mse,
-        'initial_learning_rate':0.01,
-        'name':f"isensee-{basename}",
-    }
-    wandb.init(project="mlpng", 
-               notes="isensee", 
-               tags=["isensee", "dev"], 
-               reinit=True, 
-               tensorboard=True, 
-            #    sync_tensorboard=True, 
-               config= wandb_config | model_settings)
+    truth = dataset.map(lambda x, y: y).unbatch().as_numpy_iterator()
+    truth = np.array(list(truth))
 
-    input_img = Input((nside, nside, 1), name="img")
-    isensee_model = isensee2017_model(input_img, **model_settings)
-    
-    if debug:
-        isensee_model.summary()
+    irmse = np.sqrt(((ipreds - truth) ** 2).mean())
+    brmse = np.sqrt(((bpreds - truth) ** 2).mean())
 
-    callbacks = [
-        # EarlyStopping(monitor="val_root_mean_square_error", patience=10, verbose=1, restore_best_weights=True),
-        # ModelCheckpoint(
-        #     filepath=f"{model_dir}/checkpoint_{run_time}.keras",
-        #     monitor="val_loss",
-        #     save_best_only=True,
-        # ),
-        tf.keras.callbacks.ReduceLROnPlateau(monitor='val_root_mean_square_error',factor=0.1,patience=5),
-        wandb.keras.WandbMetricsLogger(),
-        wandb.keras.WandbModelCheckpoint(filepath=f"{model_dir}/wandb"),
-    ]
-    if use_tensorboard:
-        callbacks.append(TensorBoard(log_dir=tb_dir))
+    plt.plot(truth, ipreds, ".", label=f"isensee: {irmse:.2f}")
+    plt.plot(truth, bpreds, ".", label=f"bs: {brmse:.2f}")
+    plt.plot(truth, truth, ".", label="truth")
+    plt.title(f"{name} predictions")
+    plt.xlabel(f"truth")
+    plt.ylabel("prediction")
 
-    isensee_model.fit(
-        train_dataset,
-        validation_data=val_dataset,
-        epochs=max_epochs,
-        callbacks=callbacks,
-    )
+    plt.legend()
+    plt.grid()
+    plt.show()
 
-    isensee_model.predict(test_dataset, batch_size=batch_size, verbose="auto", callbacks=callbacks, use_multiprocessing=True)
+    if save:
+        plt.savefig(f"{s.plot_dir}/{s.base_name}_{name}.png")
 
-    wandb.finish(0)
 
-# %% [markdown]
-# ### Train the BS model
-
-# %%
 def make_bs_model(
     inputs,
     depth=5,
@@ -225,7 +115,7 @@ def make_bs_model(
     current_layer = inputs
     level_output_layers = []
     level_filters = []
-    n_level_filters = 16 
+    n_level_filters = 16
     for _ in range(depth):
         level_filters.append(n_level_filters)
 
@@ -250,94 +140,148 @@ def make_bs_model(
     model.compile(
         optimizer=optimizer(learning_rate=initial_learning_rate),
         loss=loss_function,
-        metrics=[tf.keras.metrics.RootMeanSquaredError(),
-                tf.keras.metrics.KLDivergence()],
+        metrics=[
+            tf.keras.metrics.RootMeanSquaredError(),
+            tf.keras.metrics.KLDivergence(),
+        ],
     )
     return model
 
-# %%
-with strategy.scope():
-    input_img = Input((nside, nside, 1), name="img")
-    model_settings = {
-        'depth':4,
-        'dropout_rate':0.3,
-        'loss_function':tf.keras.losses.mse,
-        'initial_learning_rate':0.01,
-        'preprocess':False,
-        'name':f"bs-{basename}",
-    }
-    wandb.init(project="mlpng", 
-               notes="bs", 
-               tags=["bs", "dev"], 
-               reinit=True, 
-               config=wandb_config | model_settings)
-    bs_model = make_bs_model(input_img, **model_settings)
-    
-    if debug:
-        bs_model.summary()
 
-    bs_model.fit(
-        train_dataset,
-        validation_data=val_dataset,
-        batch_size=batch_size,
-        epochs=max_epochs,
-        callbacks=callbacks,
+if __name__ == "__main__":
+    print(f"tf version: {tf.__version__}")
+
+    config_file = sys.argv[1] if len(sys.argv) > 1 else "settings/settings.json"
+    s = SimConfig(config_file)
+
+    batch_size = 32  # TODO auto find optimal batch_size based on nside
+    max_epochs = 100
+
+    gpus = tf.config.list_logical_devices("GPU")
+    strategy = tf.distribute.MirroredStrategy(gpus)
+    # strategy = tf.distribute.OneDeviceStrategy(device="/gpu:0") # for debugging
+
+    # holds base settings for wandb
+    wandb_config = s.settings
+
+    mk_dir(s.data_dir)
+    mk_dir(s.model_dir)
+    mk_dir(s.plot_dir)
+    mk_dir(s.tb_dir)
+
+    n = s.total_sims
+    train_size = int(n * 0.8)
+    val_size = int(n * 0.1)
+    test_size = int(n * 0.1)
+
+    # load data as a generator so we do not need to have it all in memory
+    d = tf.data.Dataset.from_generator(
+        DataLoader(s.data_file_complete),
+        output_signature=(
+            tf.TensorSpec(shape=(s.nside, s.nside), dtype=s.r_dtype),
+            tf.TensorSpec(shape=(), dtype=s.r_dtype),
+        ),
     )
 
-    if save_models:
-        modelfile = f"{model_dir}/bs_{run_time}"
-        bs_model.save(modelfile)
+    # fix a log warning
+    options = tf.data.Options()
+    options.experimental_distribute.auto_shard_policy = (
+        tf.data.experimental.AutoShardPolicy.DATA
+    )
+    d = d.with_options(options)
 
-    bs_model.predict(test_dataset, batch_size=batch_size, verbose="auto", callbacks=callbacks)
+    train_dataset = get_data(0, train_size, "train")
+    val_dataset = get_data(train_size, val_size, "val")
+    test_dataset = get_data(train_size + val_size, test_size, "test")
 
-# %%
-if not debug:
-    print('Done Training!')
-    # exit(0)
+    with strategy.scope():
+        model_settings = {
+            "depth": 4,
+            "n_segmentation_levels": 4,
+            "dropout_rate": 0.03,
+            "loss_function": tf.keras.losses.mse,
+            "initial_learning_rate": 0.01,
+            "name": f"isensee-{s.base_name}",
+        }
 
-# %% [markdown]
-# # Validation
-#
-# Simple validation checks on the three datasets. The model has seen train and val before, so those results are not as important as the test results which have not been seen by the model yet.
-# 
-# TODO: Once we have added FI, plot the FI for each dataset.
+        wandb.init(
+            project="mlpng",
+            notes="isensee",
+            tags=["isensee", "dev"],
+            reinit=True,
+            tensorboard=True,
+            #    sync_tensorboard=True,
+            config=wandb_config | model_settings,
+        )
 
-# %%
-def plt_pred(dataset, name, save=False):
-    ipreds = isensee_model.predict(dataset, batch_size=batch_size, verbose="auto", callbacks=callbacks)[:, 0]
-    bpreds = bs_model.predict(dataset, batch_size=batch_size, verbose="auto", callbacks=callbacks)[:, 0]
+        callbacks = [
+            EarlyStopping(
+                monitor="val_root_mean_square_error",
+                patience=40,
+                verbose=1,
+                restore_best_weights=True,
+            ),
+            ReduceLROnPlateau(
+                monitor="val_root_mean_squared_error", factor=0.1, patience=10
+            ),
+            WandbMetricsLogger(),
+            WandbModelCheckpoint(filepath=f"{s.model_dir}/wandb"),
+            TensorBoard(log_dir=s.tb_dir),
+        ]
 
-    truth = dataset.map(lambda x, y: y).unbatch().as_numpy_iterator()
-    truth = np.array(list(truth))
+        input_img = Input((s.nside, s.nside, 1), name="img")
 
+        isensee_model = isensee2017_model(input_img, **model_settings)
+        if s.debug and s.verbose:
+            isensee_model.summary()
 
-    irmse = np.sqrt(((ipreds - truth) ** 2).mean())
-    brmse = np.sqrt(((bpreds - truth) ** 2).mean())
+        isensee_model.fit(
+            train_dataset,
+            validation_data=val_dataset,
+            epochs=max_epochs,
+            callbacks=callbacks,
+        )
 
-    plt.plot(truth, ipreds, ".", label=f'isensee: {irmse:.2f}')
-    plt.plot(truth, bpreds, ".", label=f'bs: {brmse:.2f}')
-    plt.plot(truth, truth, ".", label="truth")
-    plt.title(f"{name} predictions")
-    plt.xlabel(f"truth")
-    plt.ylabel("prediction")
+        isensee_model.predict(
+            test_dataset,
+            batch_size=batch_size,
+            verbose="auto",
+            callbacks=callbacks,
+            use_multiprocessing=True,
+        )
 
-    plt.legend()
-    plt.grid()
-    plt.show()
+        wandb.finish(0)
 
-    if save:
-        plt.savefig(f"{plot_dir}/{basename}_{name}.png")
+    with strategy.scope():
+        model_settings = {
+            "depth": 4,
+            "dropout_rate": 0.3,
+            "loss_function": tf.keras.losses.mse,
+            "initial_learning_rate": 0.01,
+            "preprocess": False,
+            "name": f"bs-{s.base_name}",
+        }
 
-# %%
-plt_pred(train_dataset, 'training', True)
+        wandb.init(
+            project="mlpng",
+            notes="bs",
+            tags=["bs", "dev"],
+            reinit=True,
+            config=wandb_config | model_settings,
+        )
 
-# %%
-plt_pred(val_dataset, 'validation', True)
+        bs_model = make_bs_model(input_img, **model_settings)
+        if s.debug and s.verbose:
+            bs_model.summary()
 
-# %% [markdown]
-# Model has not seen the test data, so this is the best view of performance.
+        bs_model.fit(
+            train_dataset,
+            validation_data=val_dataset,
+            batch_size=batch_size,
+            epochs=max_epochs,
+            callbacks=callbacks,
+        )
 
-# %%
-plt_pred(test_dataset, 'test', True)
-
-
+        bs_model.predict(
+            test_dataset, batch_size=batch_size, verbose="auto", callbacks=callbacks
+        )

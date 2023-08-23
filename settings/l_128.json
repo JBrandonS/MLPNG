@@ -11,8 +11,8 @@
         "tau": 0.0561,
         "TCMB": 2.7255,
 
-        "max_l": 5500,
-        "lmax": 5000,
+        "max_l": 1000,
+        "lmax": 500,
         "lens_potential_accuracy": 2,
 
         "DoLateRadTruncation": false,
@@ -21,16 +21,16 @@
         "lAccuracyBoost": 2.0
     },
 
-    "name" : "cmb-s4",
+    "name" : "l128",
     "nsims" : 1,
-    "narray": 10000,                   
+    "narray": 1000,                   
     "npatches" : 10,
-    "lensing" : false,
-    "disable_noise" : true,
-    "double_precision" : false,
+    "lensing" : true,
+    "disable_noise" : false,
+    "double_precision": false,
 
     "fnl_range":[-1000, 1000],        
-    "nside":2048,
+    "nside":128,
     "patch_side_deg" : 10,
     "polarizations" : ["T"], 
 
@@ -41,6 +41,8 @@
     "base_dir" : "data",
     "alm_cache_dir" : "data/alm_cache",
     "plot_dir" : "data/plots",
+    "tb_dir" : "data/tensorboard",
+    "model_dir" : "data/models",
 
     "noise_scale_tt" : 1,
     "noise_scale_ee" : 1.41421,

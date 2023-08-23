@@ -15,4 +15,9 @@ eval "$(conda shell.bash hook)"
 
 conda activate trainer
 
-time srun python scripts/trainer.py
+if [ -n "$1" ]
+then
+    time srun python scripts/trainer.py $1
+else
+    time srun python scripts/trainer.py
+fi

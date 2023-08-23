@@ -21,7 +21,7 @@
         "lAccuracyBoost": 2.0
     },
 
-    "name" : "small-test",
+    "name" : "ulnn128",
     "nsims" : 1,
     "narray": 1000,                   
     "npatches" : 10,
@@ -41,6 +41,8 @@
     "base_dir" : "data",
     "alm_cache_dir" : "data/alm_cache",
     "plot_dir" : "data/plots",
+    "tb_dir" : "data/tensorboard",
+    "model_dir" : "data/models",
 
     "noise_scale_tt" : 1,
     "noise_scale_ee" : 1.41421,

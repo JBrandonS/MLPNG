@@ -35,6 +35,8 @@ class SimConfig:
         self.data_dir = os.path.join(
             self.base_dir, "lensed" if self.lensing else "unlensed"
         )
+        self.tb_dir = settings["tb_dir"]
+        self.model_dir = settings["model_dir"]
 
         self.nside = settings["nside"]
         self.nsims = settings["nsims"]
