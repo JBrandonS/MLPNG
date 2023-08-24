@@ -124,8 +124,8 @@ if __name__ == "__main__":
         sdata["fisher"] = np.atleast_1d(fisher)
         sdata["estimates"] = estimates
 
-        fnls = load_data(s.data_file_nc, ["fnls"], verbose=s.verbose)["fnls"]
-        sdata["errors"] = (estimates - fnls) / fnls
+        # fnls = load_data(s.data_file_nc, ["fnls"], verbose=s.verbose)["fnls"]
+        # sdata["errors"] = (estimates - fnls) / fnls
 
         save_data(s.data_file_nc, sdata, verbose=s.verbose)
         os.replace(s.data_file_nc, s.data_file_complete)

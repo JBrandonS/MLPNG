@@ -21,6 +21,7 @@ done
 
 cd ..
 
+rm -rvf logs/datagen/*
 rm -rvf logs/*/*.log
 rm -vf nohup.out
 

@@ -25,9 +25,7 @@ from utils import (
     save_data,
     save_plt,
     get_radii,
-    plot_cl_map,
     plot_cl_alm,
-    plot_cl_patch,
 )
 from config import SimConfig
 import lenspyx
