@@ -21,7 +21,6 @@ from tqdm.auto import tqdm
 from pixell import enmap, lensing, curvedsky, reproject
 
 from utils import (
-    MemoryMonitor,
     load_data,
     save_data,
     save_plt,
@@ -260,9 +259,6 @@ if __name__ == "__main__":
     config_file = sys.argv[1] if len(sys.argv) > 1 else "settings/settings.json"
     s = SimConfig(config_file)
 
-    if s.debug and (s.job_array_index is None or s.job_array_index == 1):
-        monitor = MemoryMonitor()
-
     # here we setup camb since it is needed for the sims in both the alm generation
     # and patch generation
     camb_params_obj = camb.set_params(**s.cosmo_params, verbose=s.verbose)
@@ -350,8 +346,6 @@ if __name__ == "__main__":
     # below just generates a nice graph, possibly duplicating the patches
     # this only runs once per sim and only if debug = True
     if s.debug and (s.job_array_index is None or s.job_array_index == 1):
-        monitor.join_and_plot(s.plot_dir, f"{s.name}-datagen")
-
         nplots = 10
         random_indices = [
             (randint(s.nsims), randint(s.npol), randint(s.npatches))
