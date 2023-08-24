@@ -1,7 +1,6 @@
 import numpy as np
 import h5py
 from itertools import product
-import tensorflow as tf
 
 class DataLoader:
     def __init__(self, file, shuffle=True, seed=0):

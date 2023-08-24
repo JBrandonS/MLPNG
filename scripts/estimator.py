@@ -1,7 +1,6 @@
 import os
 import sys
 import numpy as np
-import random
 
 import healpy as hp
 import camb
@@ -10,7 +9,7 @@ import datetime
 from ksw import Shape, KSW, Cosmology, Data
 from astropy import units as u
 
-from utils import MemoryMonitor, load_data, save_data, get_radii, load_single_data
+from utils import load_data, save_data, get_radii, load_single_data
 from config import SimConfig
 
 # This will still crash on mainframe if MPI fails to start correctly....

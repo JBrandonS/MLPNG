@@ -7,7 +7,6 @@ echo "Currently in directory: $(pwd)"
 rm -rvf plots/*
 rm -rvf models/*
 rm -rvf tensorboard/*
-rm -rvf logs/*
 
 directories=('alm_cache' 'lensed' 'unlensed')
 
@@ -21,6 +20,8 @@ for dir in "${directories[@]}"; do
 done
 
 cd ..
+
+rm -rvf logs/*/*.log
 rm -vf nohup.out
 
 echo "Cleanup completed successfully."

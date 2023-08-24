@@ -7,6 +7,7 @@
 #SBATCH --gpus-per-task=1
 #SBATCH --output=logs/training/%j.log
 #SBATCH --error=logs/training/%j.log
+#SBATCH --time=04:00:00
 
 module load dev spack conda
 module load cuda-11.4.4-gcc-10.3.0-ctldo35 cudnn-8.2.4.15-11.4-gcc-10.3.0-eluwegp

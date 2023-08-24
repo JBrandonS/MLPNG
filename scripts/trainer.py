@@ -9,14 +9,14 @@ os.environ[
 
 import tensorflow as tf
 
-keras = tf.keras  # fixes issues with vsCode
-from keras import backend as K
 import numpy as np
 import matplotlib.pyplot as plt
-
 plt.rcParams.update({"font.size": 13})
 
+keras = tf.keras  # fixes issues with vsCode
 from keras import Input, Model
+from keras.metrics import RootMeanSquaredError, KLDivergence
+from keras.optimizers import Adam
 from keras.layers import (
     Add,
     Flatten,
@@ -24,36 +24,29 @@ from keras.layers import (
     RandomRotation,
     RandomFlip,
 )
-from keras.optimizers import Adam
-
-from datetime import datetime
-
 from keras.callbacks import (
     TensorBoard,
     EarlyStopping,
     ReduceLROnPlateau,
 )
 
+import wandb
 from wandb.keras import WandbMetricsLogger, WandbModelCheckpoint
 
 from dataloader import DataLoader
-
 from isensee import *
-import wandb
-
 from config import SimConfig
 
 
-def mk_dir(dir):
+def safe_makedirs(dir, verbose=False):
+    "Create a directory if it does not exist. Handles a race condition"
     if not os.path.exists(dir):
-        print(f"Creating dir: {dir}")
         try:
             os.makedirs(dir)
+            if verbose:
+                print(f"Created directory {dir}")
         except FileExistsError:
-            # race condition, can happen in job arrays
             pass
-    else:
-        print(f"Using existing folder: {dir}")
 
 
 def get_data(start, step, name=None):
@@ -141,38 +134,35 @@ def make_bs_model(
         optimizer=optimizer(learning_rate=initial_learning_rate),
         loss=loss_function,
         metrics=[
-            tf.keras.metrics.RootMeanSquaredError(),
-            tf.keras.metrics.KLDivergence(),
+            RootMeanSquaredError(),
+            KLDivergence(),
         ],
     )
     return model
 
 
 if __name__ == "__main__":
-    print(f"tf version: {tf.__version__}")
-
     config_file = sys.argv[1] if len(sys.argv) > 1 else "settings/settings.json"
     s = SimConfig(config_file)
 
-    batch_size = 32  # TODO auto find optimal batch_size based on nside
+    if s.debug or s.verbose:
+        print(f"tf version: {tf.__version__}")
+
+    # Is this needed?
+    safe_makedirs(s.data_dir)
+    safe_makedirs(s.model_dir)
+    safe_makedirs(s.plot_dir)
+    safe_makedirs(s.tb_dir)
+
+    # some general settings
+    # TODO auto find optimal batch_size based on nside
+    batch_size = 32
     max_epochs = 100
 
+    # setup the gpus, using mirroed to parallelize the training
     gpus = tf.config.list_logical_devices("GPU")
     strategy = tf.distribute.MirroredStrategy(gpus)
     # strategy = tf.distribute.OneDeviceStrategy(device="/gpu:0") # for debugging
-
-    # holds base settings for wandb
-    wandb_config = s.settings
-
-    mk_dir(s.data_dir)
-    mk_dir(s.model_dir)
-    mk_dir(s.plot_dir)
-    mk_dir(s.tb_dir)
-
-    n = s.total_sims
-    train_size = int(n * 0.8)
-    val_size = int(n * 0.1)
-    test_size = int(n * 0.1)
 
     # load data as a generator so we do not need to have it all in memory
     d = tf.data.Dataset.from_generator(
@@ -190,6 +180,13 @@ if __name__ == "__main__":
     )
     d = d.with_options(options)
 
+    # Setup the data split as 80/10/10
+    n = s.total_sims
+    train_size = int(n * 0.8)
+    val_size = int(n * 0.1)
+    test_size = int(n * 0.1)
+
+    # loads in the datasets
     train_dataset = get_data(0, train_size, "train")
     val_dataset = get_data(train_size, val_size, "val")
     test_dataset = get_data(train_size + val_size, test_size, "test")
@@ -202,6 +199,7 @@ if __name__ == "__main__":
             "loss_function": tf.keras.losses.mse,
             "initial_learning_rate": 0.01,
             "name": f"isensee-{s.base_name}",
+            "monitor": "val_root_mean_square_error"
         }
 
         wandb.init(
@@ -211,18 +209,18 @@ if __name__ == "__main__":
             reinit=True,
             tensorboard=True,
             #    sync_tensorboard=True,
-            config=wandb_config | model_settings,
+            config=s.settings | model_settings,
         )
 
         callbacks = [
             EarlyStopping(
-                monitor="val_root_mean_square_error",
+                monitor=model_settings["monitor"],
                 patience=40,
                 verbose=1,
                 restore_best_weights=True,
             ),
             ReduceLROnPlateau(
-                monitor="val_root_mean_squared_error", factor=0.1, patience=10
+                monitor=model_settings["monitor"], factor=0.1, patience=10
             ),
             WandbMetricsLogger(),
             WandbModelCheckpoint(filepath=f"{s.model_dir}/wandb"),
@@ -230,9 +228,8 @@ if __name__ == "__main__":
         ]
 
         input_img = Input((s.nside, s.nside, 1), name="img")
-
         isensee_model = isensee2017_model(input_img, **model_settings)
-        if s.debug and s.verbose:
+        if s.debug or s.verbose:
             isensee_model.summary()
 
         isensee_model.fit(
@@ -250,9 +247,9 @@ if __name__ == "__main__":
             use_multiprocessing=True,
         )
 
+        # finish wandb so we get 2 models
         wandb.finish(0)
 
-    with strategy.scope():
         model_settings = {
             "depth": 4,
             "dropout_rate": 0.3,
@@ -260,6 +257,7 @@ if __name__ == "__main__":
             "initial_learning_rate": 0.01,
             "preprocess": False,
             "name": f"bs-{s.base_name}",
+            "monitor": "val_root_mean_square_error"
         }
 
         wandb.init(
@@ -267,11 +265,12 @@ if __name__ == "__main__":
             notes="bs",
             tags=["bs", "dev"],
             reinit=True,
-            config=wandb_config | model_settings,
+            config=s.settings | model_settings,
         )
 
+        input_img = Input((s.nside, s.nside, 1), name="img")
         bs_model = make_bs_model(input_img, **model_settings)
-        if s.debug and s.verbose:
+        if s.debug or s.verbose:
             bs_model.summary()
 
         bs_model.fit(
