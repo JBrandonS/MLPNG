@@ -6,6 +6,7 @@
 #SBATCH --cpus-per-task=10
 #SBATCH --output=logs/combiner/%j.log
 #SBATCH --error=logs/combiner/%j.log
+#SBATCH --time=12:00:00
 
 module purge
 module load spack conda gcc-11.2.0/intel-oneapi-mkl gcc-11.2.0/openmpi gcc-11.2.0/ucx
