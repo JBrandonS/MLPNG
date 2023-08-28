@@ -18,7 +18,7 @@ conda activate trainer
 
 if [ -n "$1" ]
 then
-    time srun python scripts/trainer.py $1
+    time srun python scripts/trainer.py "$1"
 else
     time srun python scripts/trainer.py
 fi
