@@ -38,7 +38,7 @@ def vp(*args, **kwargs):
         print("FIXME: cannot print here.")
         return
 
-    if s.verbose:
+    if s.verbose and rank == 1:
         print(f"{rank} | {datetime.datetime.now()} =>", *args, **kwargs, flush=True)
 
 
