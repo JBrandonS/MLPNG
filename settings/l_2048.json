@@ -11,8 +11,8 @@
         "tau": 0.0561,
         "TCMB": 2.7255,
 
-        "max_l": 1000,
-        "lmax": 500,
+        "max_l": 2500,
+        "lmax": 2000,
         "lens_potential_accuracy": 2,
 
         "DoLateRadTruncation": false,

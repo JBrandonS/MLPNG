@@ -12,7 +12,7 @@
         "TCMB": 2.7255,
 
         "max_l": 1000,
-        "lmax": 500,
+        "lmax": 750,
         "lens_potential_accuracy": 2,
 
         "DoLateRadTruncation": false,
