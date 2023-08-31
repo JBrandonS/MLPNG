@@ -4,6 +4,7 @@
 set -e
 
 # SETTINGS=("ul_nn_128.json")
+# SETTINGS=("ul_nn_128.json" "l_nn_128.json"  "l_128.json")
 SETTINGS=(
   "ul_nn_128.json"  "l_nn_128.json"  "l_128.json" 
   "ul_nn_256.json"  "l_nn_256.json"  "l_256.json"
@@ -36,4 +37,7 @@ do
   done
 
   JOB3_ID=$(sbatch $JOB3 $SETTINGSFILE | awk '{print $4}')
+  # while squeue -j $JOB3_ID | grep -q $JOB3_ID; do
+  #   sleep 1
+  # done
 done
