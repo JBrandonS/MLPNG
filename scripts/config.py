@@ -5,8 +5,15 @@ import healpy as hp
 import numpy as np
 from astropy import units as u
 
-from utils import safe_makedirs
-
+def safe_makedirs(dir, verbose=False):
+    "Create a directory if it does not exist. Handles a race condition"
+    if not os.path.exists(dir):
+        try:
+            os.makedirs(dir)
+            if verbose:
+                print(f"Created directory {dir}")
+        except FileExistsError:
+            pass
 
 class SimConfig:
     def __init__(self, settings_file, print_settings=True):

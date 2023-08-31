@@ -198,8 +198,7 @@ if __name__ == "__main__":
             "dropout_rate": 0.03,
             "loss_function": tf.keras.losses.mse,
             "initial_learning_rate": 0.01,
-            "name": f"isensee-{s.base_name}",
-            "monitor": "val_root_mean_square_error"
+            "name": f"isensee-{s.base_name}"
         }
 
         wandb.init(
@@ -214,13 +213,13 @@ if __name__ == "__main__":
 
         callbacks = [
             EarlyStopping(
-                monitor=model_settings["monitor"],
+                monitor="val_root_mean_squared_error",
                 patience=40,
                 verbose=1,
                 restore_best_weights=True,
             ),
             ReduceLROnPlateau(
-                monitor=model_settings["monitor"], factor=0.1, patience=10
+                monitor="val_root_mean_squared_error", factor=0.1, patience=10
             ),
             WandbMetricsLogger(),
             WandbModelCheckpoint(filepath=f"{s.model_dir}/wandb"),
@@ -257,7 +256,6 @@ if __name__ == "__main__":
             "initial_learning_rate": 0.01,
             "preprocess": False,
             "name": f"bs-{s.base_name}",
-            "monitor": "val_root_mean_square_error"
         }
 
         wandb.init(
