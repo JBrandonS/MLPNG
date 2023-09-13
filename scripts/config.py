@@ -28,34 +28,34 @@ class SimConfig:
             pp = pprint.PrettyPrinter(indent=2)
             pp.pprint(settings)
 
-        self.name = settings["name"]
-        self.cosmo_params = settings["cosmo_params"]
-        self.lmax = settings["cosmo_params"]["lmax"]
-        self.polarizations = settings["polarizations"]
-        self.debug = settings["debug"]
-        self.verbose = settings["verbose"]
-        self.lensing = settings["lensing"]
+        self.name = settings.get("name", "default")
+        self.cosmo_params = settings.get("cosmo_params")
+        self.lmax = self.cosmo_params["lmax"]
+        self.polarizations = settings.get("polarizations", "T")
+        self.debug = settings.get("debug", False)
+        self.verbose = settings.get("verbose", False)
+        self.lensing = settings.get("lensing", False)
 
-        self.base_dir = settings["base_dir"]
-        self.alm_cache_dir = settings["alm_cache_dir"]
-        self.plot_dir = settings["plot_dir"]
+        self.base_dir = settings.get("base_dir", "data")
+        self.alm_cache_dir = settings.get("alm_cache_dir", "data/alm_cache")
+        self.plot_dir = settings.get("plot_dir", "data/plots")
         self.data_dir = os.path.join(
             self.base_dir, "lensed" if self.lensing else "unlensed"
         )
-        self.tb_dir = settings["tb_dir"]
-        self.model_dir = settings["model_dir"]
+        self.tb_dir = settings.get("tb_dir", "data/tb")
+        self.model_dir = settings.get("model_dir", "data/models")
 
-        self.nside = settings["nside"]
-        self.nsims = settings["nsims"]
-        self.npatches = settings["npatches"]
-        self.narray = settings["narray"]
+        self.nside = settings.get("nside", 1024)
+        self.nsims = settings.get("nsims", 1)
+        self.npatches = settings.get("npatches", 10)
+        self.narray = settings.get("narray", 1)
         self.npol = len(self.polarizations)
-        self.disable_noise = settings["disable_noise"]
+        self.disable_noise = settings.get("disable_noise", True)
 
-        self.beam_width = settings["beam_width"] * u.arcmin
-        self.noise_scale_tt = settings["noise_scale_tt"] * u.arcmin
-        self.noise_scale_ee = settings["noise_scale_ee"] * u.arcmin
-        self.noise_scale_te = settings["noise_scale_te"] * u.arcmin
+        self.beam_width = settings.get("beam_width", 1) * u.arcmin
+        self.noise_scale_tt = settings.get("noise_scale_tt", 1) * u.arcmin
+        self.noise_scale_ee = settings.get("noise_scale_ee", 1) * u.arcmin
+        self.noise_scale_te = settings.get("noise_scale_te", 1) * u.arcmin
 
         # TODO: Find a better way to do this
         self.job_array_index = os.environ.get("SLURM_ARRAY_TASK_ID")
@@ -76,7 +76,7 @@ class SimConfig:
         self.ells = np.arange(self.nell)
         self.chars_of_polarizations = "".join(self.polarizations)
 
-        if self.settings["double_precision"]:
+        if self.settings.get("double_precision", False):
             self.double_precision = True
             self.r_dtype = np.float64
             self.c_dtype = np.complex128
@@ -94,7 +94,7 @@ class SimConfig:
             f"{self.nside}_{self.nn_str}{self.chars_of_polarizations}_{self.total_sims}"
         )
 
-        self.data_str = f'{self.base_name}x{settings["npatches"]}_fnl{settings["fnl_range"][0]}-{settings["fnl_range"][1]}{self.ja_str}'
+        self.data_str = f'{self.base_name}x{self.npatches}_fnl{settings.get("fnl_range")[0]}-{settings.get("fnl_range")[1]}{self.ja_str}'
         self.data_file_nc = os.path.join(self.data_dir, f"{self.data_str}.hdf5.nc")
         self.data_file_complete = os.path.join(self.data_dir, f"{self.data_str}.hdf5")
 
