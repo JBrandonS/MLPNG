@@ -11,9 +11,9 @@
         "tau": 0.0561,
         "TCMB": 2.7255,
 
-        "max_l": 1000,
-        "lmax": 500,
-        "lens_potential_accuracy": 2,
+        "max_l": 2500,
+        "lmax": 2000,
+        "lens_potential_accuracy": 8,
 
         "DoLateRadTruncation": false,
         "AccuracyBoost":2.0,
@@ -21,16 +21,17 @@
         "lAccuracyBoost": 2.0
     },
 
-    "name" : "lnn128",
-    "nsims" : 10,
-    "narray": 1000,                   
+    "name" : "5k",
+    "nsims" : 1,
+    "narray": 1,                   
     "npatches" : 10,
-    "lensing" : true,
+    "lensing" : false,
     "disable_noise" : true,
     "double_precision": false,
+    "save_fullsky": true,
 
-    "fnl_range":[-1000, 1000],        
-    "nside":128,
+    "fnl_range":[5000, 5000],        
+    "nside":2048,
     "patch_side_deg" : 10,
     "polarizations" : ["T"], 
 

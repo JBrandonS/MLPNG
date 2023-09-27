@@ -22,7 +22,7 @@
     },
 
     "name" : "l128",
-    "nsims" : 1,
+    "nsims" : 10,
     "narray": 1000,                   
     "npatches" : 10,
     "lensing" : true,
