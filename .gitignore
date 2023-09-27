@@ -7,6 +7,7 @@ data
 logs
 .old
 wandb/
+scraped/
 
 # Files
 *.prof
