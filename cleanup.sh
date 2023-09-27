@@ -1,6 +1,16 @@
 #!/bin/bash
 
-cd "data"
+FULL_CLEAN=0
+
+# Check for --full flag
+if [[ "$1" == "--full" ]]; then
+    echo "Running removing finalized data, are you sure?"
+    echo "Press ctrl+c to cancel..."
+    sleep 3
+    FULL_CLEAN=1
+fi
+
+cd "data" || ( echo "cannot find data folder" && exit )
 
 echo "Currently in directory: $(pwd)"
 
@@ -16,6 +26,11 @@ for dir in "${directories[@]}"; do
 
     rm -rvf *.nc
 
+    # If the --full flag is passed, remove all data files in the directory
+    if [[ "$FULL_CLEAN" -eq 1 ]]; then
+        rm -rvf ./*
+    fi
+
     cd ..
 done
 
@@ -26,3 +41,4 @@ rm -rvf logs/*/*.log
 rm -vf nohup.out
 
 echo "Cleanup completed successfully."
+
