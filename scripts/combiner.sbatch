@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=10
 #SBATCH --output=logs/combiner/%j.log
 #SBATCH --error=logs/combiner/%j.log
-#SBATCH --time=0:30:00
+#SBATCH --time=02:30:00
 
 module purge
 # We dont need all of these for this script, but makes sure everything is built on the same setup

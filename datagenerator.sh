@@ -3,16 +3,28 @@
 
 set -e
 
-# SETTINGS=("ul_nn_128.json")
-# SETTINGS=("ul_nn_128.json" "l_nn_128.json"  "l_128.json")
-SETTINGS=(
-  "ul_nn_128.json"  "l_nn_128.json"  "l_128.json" 
-  "ul_nn_256.json"  "l_nn_256.json"  "l_256.json"
-  "ul_nn_512.json"  "l_nn_512.json"  "l_512.json"
-  "ul_nn_1024.json" "l_nn_1024.json" "l_1024.json" 
-  "ul_nn_2048.json" "l_nn_2048.json" "l_2048.json"
-)
 SETTINGS_DIR="settings/"
+
+# SETTINGS=("ul_nn_128.json")
+SETTINGS=("ul_nn_128.json" "l_nn_128.json"  "l_128.json")
+# SETTINGS=(
+#   "ul_nn_128.json"  "l_nn_128.json"  "l_128.json" 
+#   "ul_nn_256.json"  "l_nn_256.json"  "l_256.json"
+#   "ul_nn_512.json"  "l_nn_512.json"  "l_512.json"
+#   "ul_nn_1024.json" "l_nn_1024.json" "l_1024.json" 
+#   "ul_nn_2048.json" "l_nn_2048.json" "l_2048.json"
+# )
+# SETTINGS=("l_2048_single_neg.json" "l_2048_single_zero.json" "l_2048_single_pos.json")
+# SETTINGS=("scraped.json")
+# SETTINGS=(
+#   "ul_nn_128.json"  "l_nn_128.json"  "l_128.json" 
+#   "ul_nn_256.json"  "l_nn_256.json"  "l_256.json"
+#   "ul_nn_512.json"  "l_nn_512.json"  "l_512.json"
+#   "ul_nn_1024.json" "l_nn_1024.json" "l_1024.json" 
+#   "ul_nn_2048.json" "l_nn_2048.json" "l_2048.json"
+#   "l_2048_single_neg.json" "l_2048_single_zero.json" "l_2048_single_pos.json"
+#   "scraped.json"
+#   )
 
 JOB1="scripts/datagen.sbatch"
 JOB2="scripts/combiner.sbatch"

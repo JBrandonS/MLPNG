@@ -119,7 +119,7 @@ if __name__ == "__main__":
     vp("done")
 
     # save data
-    if rank == 0:
+    if rank == 1:
         sdata = {}
         sdata["fisher"] = np.atleast_1d(fisher)
         sdata["estimates"] = estimates

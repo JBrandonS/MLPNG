@@ -26,6 +26,7 @@ from utils import (
     save_plt,
     get_radii,
     plot_cl_alm,
+    plot_cl_map,
 )
 from config import SimConfig
 import lenspyx
@@ -42,9 +43,9 @@ def vp(*args, **kwargs):
 def get_alm(alm, bl_div_cl, alpha_l, r, dr):
     """This calculates the alms from the precalculated values"""
     Balm = hp.almxfl(alm, bl_div_cl, inplace=False)
-    B = hp.alm2map(Balm, nside=s.nside, lmax=s.lmax, pol=False, inplace=True)
+    B = hp.alm2map(Balm, nside=s.nside, lmax=s.lmax, pol=False, inplace=False)
     inner = hp.map2alm(B**2, lmax=s.lmax, pol=False, use_pixel_weights=True)
-    kernel = hp.almxfl(inner, alpha_l, inplace=True)
+    kernel = hp.almxfl(inner, alpha_l, inplace=False)
     return dr * r**2 * kernel
 
 
@@ -52,7 +53,7 @@ def cutSqPatches_lenspyx(s, fs_shape, fs_wcs, pshapes, pwcs, cl_phi, alm, fnl, a
     """Uses lenspyx to generate and cut the lensed flat maps"""
     alms = alm + fnl * alm_ng
 
-    lmax_unl = s.cosmo_params["max_l"]  # needs buffer???
+    lmax_unl = s.cosmo_params["max_l"]
     epsilon = 1e-6  # todo: option?
     geom_info = ("healpix", {"nside": s.nside})
 
@@ -68,19 +69,19 @@ def cutSqPatches_lenspyx(s, fs_shape, fs_wcs, pshapes, pwcs, cl_phi, alm, fnl, a
         dlm,
         geometry=geom_info,
         nthreads=s.settings["nthreads_sim"],
-        verbose=1,
+        verbose=s.debug,
         epsilon=epsilon,
         pol=False,
     )
-    hp_map = reproject.healpix2map(lens_map, fs_shape, fs_wcs, s.lmax)
+    pixell_map = reproject.healpix2map(lens_map, fs_shape, fs_wcs, s.lmax)
 
-    # if s.debug and (s.job_array_index is None or s.job_array_index == 1):
-    #     # hp.mollview(lens_map)
-    #     plot_cl_map(hp_map, s, c_ells=c_ells, save_name=f"{s.name}-{fnl}-lpfs")
+    if s.settings.get("save_fullsky", False) and (s.job_array_index is None or s.job_array_index == 1):
+        hp.mollview(pixell_map.to_healpix(), min=-650., max=650, title=f"fnl = {fnl}")
+        plt.savefig(s.plot_dir + "/" + s.base_name + "_" + str(fnl) + "_fullsky.png")
 
     patches = []
     for i in range(s.npatches):
-        patch = hp_map.project(pshapes[i], pwcs[i])
+        patch = pixell_map.project(pshapes[i], pwcs[i])
         patches.append(patch)
 
     return patches
@@ -93,9 +94,12 @@ def cutSqPatches_pixell(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, alm, fnl, al
     fs_map = enmap.empty(fs_shape, fs_wcs)
     car_map = curvedsky.alm2map(alms, fs_map)
 
-    # if s.debug and (s.job_array_index is None or s.job_array_index == 1):
-    #     This code seems to randomly crash within the curvedsky.map2alm call
-    #     plot_cl_map(car_map, fs_wcs, s, c_ells=c_ells, save_name=f"{s.name}-{fnl}-pfs")
+    if s.settings.get("save_fullsky", False) and (s.job_array_index is None or s.job_array_index == 1):
+        hp.mollview(car_map.to_healpix(), min=-650., max=650, title=f"fnl = {fnl}")
+        plt.savefig(s.plot_dir + "/" + s.base_name + "_" + str(fnl) + "_fullsky.png")
+
+        #     This code seems to randomly crash within the curvedsky.map2alm call
+        plot_cl_map(car_map, fs_wcs, s, c_ells=c_ells, save_name=f"{s.name}-{fnl}-pfs")
 
     patches = []
     for i in range(s.npatches):
@@ -112,11 +116,12 @@ def interpolate_ells(func, ells_sparse, ls, axis=1):
 
 def generate_almngs():
     """This code completely calculates, and saves, the alms and almngs."""
-    delta_phi = (2 * np.pi) * s.cosmo_params["As"] * np.sqrt(3 / 5)
+    delta_phi = 2 * np.pi**2 * s.cosmo_params["As"] * (3/5)**2 #* np.sqrt(3 / 5)
+    # delta_phi = 2 * np.pi**2 * s.cosmo_params["As"] * tr_k**-3 * (tr_k / s.cosmo_params["pivot_scalar"])**(s.cosmo_params["ns"]-1)
 
-    f_k = np.ones((len(tr_k), 2), dtype=s.r_dtype)
+    f_k = np.ones((len(tr_k), 2), dtype=s.r_dtype) * 5/3
     # f_k[:, 0] = 1                           # f_k for alpha
-    f_k[:, 1] = tr_k**-3 * delta_phi  # f_k for beta
+    f_k[:, 1] = tr_k**(-2) * delta_phi  # f_k for beta
 
     rad = radial_func(f_k, tr_ell_k, tr_k, radii, tr_ells)
 
@@ -142,7 +147,6 @@ def generate_almngs():
 
     # Make sure we dont get error from the beam_ell being a vector
     beam_ell_2d = np.atleast_2d(beam_ell)
-
     # KSW expects the alms to be coevolved with the beam
     for i in range(s.nsims):
         for j in range(s.npol):
@@ -163,11 +167,13 @@ def generate_almngs():
             )
 
     vp("Starting almng...")
+    sim_data = np.zeros((s.nsims, s.npol, s.nelem), dtype=s.c_dtype)
     for i in range(s.nsims):
-        # todo batch support?
-        sim_data = np.zeros((1, s.npol, s.nelem), dtype=s.c_dtype)
-
         for pol in range(s.npol):
+
+            # base1 = "scraped/alm_l_0001_v3.fits"
+            # alms[i, pol] = hp.read_alm(base1, hdu=(1))
+            # create a generator 
             alm_gen = Parallel(
                 n_jobs=s.settings["nthreads_alm"], verbose=1, return_as="generator"
             )(
@@ -181,13 +187,17 @@ def generate_almngs():
                 for ri in range(len(drs))
             )
 
+            # consume
             for alm in alm_gen:
-                sim_data[0, pol] += alm
+                sim_data[i, pol] += alm
 
-        save_data(s.alm_file_nc, {"almng": sim_data}, verbose=False)
+            if s.debug:
+                plot_cl_alm(sim_data[i, pol].copy(), s, plt_camb=False, save_name=s.base_name + "_get_alm_plot_complete")
 
-        if s.debug:
-            plot_cl_alm(sim_data[0, 0], s, c_ells=c_ells, save_name=f"{s.name}-almng")
+    save_data(s.alm_file_nc, {"almng": sim_data}, verbose=False)
+
+    if s.debug:
+        plot_cl_alm(sim_data[0, 0], s, c_ells=c_ells, save_name=f"{s.name}-almng")
 
     os.replace(s.alm_file_nc, s.alm_file_partial)
 
@@ -316,6 +326,7 @@ if __name__ == "__main__":
         )
 
     vp("Generating patches")
+    vp(alms.shape, almngs.shape)
     fnls = uniform(s.settings["fnl_range"][0], s.settings["fnl_range"][1], (s.nsims,))
     patches = np.empty((s.nsims, s.npol, s.npatches, s.nside, s.nside), dtype=s.r_dtype)
     for i in range(s.nsims):
