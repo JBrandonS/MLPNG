@@ -116,12 +116,12 @@ def interpolate_ells(func, ells_sparse, ls, axis=1):
 
 def generate_almngs():
     """This code completely calculates, and saves, the alms and almngs."""
-    delta_phi = 2 * np.pi**2 * s.cosmo_params["As"] * (3/5)**2 #* np.sqrt(3 / 5)
-    # delta_phi = 2 * np.pi**2 * s.cosmo_params["As"] * tr_k**-3 * (tr_k / s.cosmo_params["pivot_scalar"])**(s.cosmo_params["ns"]-1)
+    delta_phi = 2 * np.pi**2 * s.cosmo_params["As"] / (tr_k ** 3) * 3/5 * np.sqrt(1/2)
+    delta_phi *= (tr_k / s.cosmo_params["pivot_scalar"])**((s.cosmo_params["ns"]-1))
 
     f_k = np.ones((len(tr_k), 2), dtype=s.r_dtype) * 5/3
     # f_k[:, 0] = 1                           # f_k for alpha
-    f_k[:, 1] = tr_k**(-2) * delta_phi  # f_k for beta
+    f_k[:, 1] *= delta_phi  # f_k for beta
 
     rad = radial_func(f_k, tr_ell_k, tr_k, radii, tr_ells)
 
@@ -159,20 +159,17 @@ def generate_almngs():
         sdata["settings"] = s.settings
     save_data(s.alm_file_nc, sdata, verbose=s.verbose)
 
-    if s.debug:
-        random_indices = [(randint(s.nsims), randint(s.npol)) for _ in range(1)]
-        for sim, pol in random_indices:
-            plot_cl_alm(
-                alms[sim, pol], s, c_ells=c_ells, save_name=f"{s.name}-alm_{sim}-{pol}"
-            )
+    # if s.debug:
+    #     random_indices = [(randint(s.nsims), randint(s.npol)) for _ in range(1)]
+    #     for sim, pol in random_indices:
+    #         plot_cl_alm(
+    #             alms[sim, pol], s, c_ells=c_ells, save_name=f"{s.name}-alm_{sim}-{pol}"
+    #         )
 
     vp("Starting almng...")
     sim_data = np.zeros((s.nsims, s.npol, s.nelem), dtype=s.c_dtype)
     for i in range(s.nsims):
         for pol in range(s.npol):
-
-            # base1 = "scraped/alm_l_0001_v3.fits"
-            # alms[i, pol] = hp.read_alm(base1, hdu=(1))
             # create a generator 
             alm_gen = Parallel(
                 n_jobs=s.settings["nthreads_alm"], verbose=1, return_as="generator"
@@ -191,13 +188,13 @@ def generate_almngs():
             for alm in alm_gen:
                 sim_data[i, pol] += alm
 
-            if s.debug:
-                plot_cl_alm(sim_data[i, pol].copy(), s, plt_camb=False, save_name=s.base_name + "_get_alm_plot_complete")
+            # if s.debug:
+                # plot_cl_alm(sim_data[i, pol].copy(), s, plt_camb=False, save_name=s.base_name + "_get_alm_plot_complete")
 
     save_data(s.alm_file_nc, {"almng": sim_data}, verbose=False)
 
-    if s.debug:
-        plot_cl_alm(sim_data[0, 0], s, c_ells=c_ells, save_name=f"{s.name}-almng")
+    # if s.debug:
+    #     plot_cl_alm(sim_data[0, 0], s, c_ells=c_ells, save_name=f"{s.name}-almng")
 
     os.replace(s.alm_file_nc, s.alm_file_partial)
 

@@ -29,7 +29,7 @@
     "disable_noise" : true,
     "double_precision": false,
 
-    "fnl_range":[-1000, 1000],        
+    "fnl_range":[-10, 10],        
     "nside":128,
     "patch_side_deg" : 10,
     "polarizations" : ["T"], 

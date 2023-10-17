@@ -38,7 +38,7 @@ def vp(*args, **kwargs):
         print("FIXME: cannot print here.")
         return
 
-    if s.verbose and rank == 1:
+    if s.verbose and rank == 0:
         print(f"{rank} | {datetime.datetime.now()} =>", *args, **kwargs, flush=True)
 
 
@@ -119,13 +119,13 @@ if __name__ == "__main__":
     vp("done")
 
     # save data
-    if rank == 1:
+    if rank == 0:
         sdata = {}
         sdata["fisher"] = np.atleast_1d(fisher)
         sdata["estimates"] = estimates
 
-        # fnls = load_data(s.data_file_nc, ["fnls"], verbose=s.verbose)["fnls"]
-        # sdata["errors"] = (estimates - fnls) / fnls
+        fnls = load_data(s.data_file_nc, ["fnls"], verbose=s.verbose)["fnls"]
+        sdata["errors"] = (estimates - fnls) / fnls
 
         save_data(s.data_file_nc, sdata, verbose=s.verbose)
         os.replace(s.data_file_nc, s.data_file_complete)

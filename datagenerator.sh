@@ -5,8 +5,8 @@ set -e
 
 SETTINGS_DIR="settings/"
 
-# SETTINGS=("ul_nn_128.json")
-SETTINGS=("ul_nn_128.json" "l_nn_128.json"  "l_128.json")
+SETTINGS=("ul_nn_128.json")
+# SETTINGS=("ul_nn_128.json" "l_nn_128.json"  "l_128.json")
 # SETTINGS=(
 #   "ul_nn_128.json"  "l_nn_128.json"  "l_128.json" 
 #   "ul_nn_256.json"  "l_nn_256.json"  "l_256.json"
@@ -16,15 +16,9 @@ SETTINGS=("ul_nn_128.json" "l_nn_128.json"  "l_128.json")
 # )
 # SETTINGS=("l_2048_single_neg.json" "l_2048_single_zero.json" "l_2048_single_pos.json")
 # SETTINGS=("scraped.json")
-# SETTINGS=(
-#   "ul_nn_128.json"  "l_nn_128.json"  "l_128.json" 
-#   "ul_nn_256.json"  "l_nn_256.json"  "l_256.json"
-#   "ul_nn_512.json"  "l_nn_512.json"  "l_512.json"
-#   "ul_nn_1024.json" "l_nn_1024.json" "l_1024.json" 
-#   "ul_nn_2048.json" "l_nn_2048.json" "l_2048.json"
-#   "l_2048_single_neg.json" "l_2048_single_zero.json" "l_2048_single_pos.json"
-#   "scraped.json"
-#   )
+
+# SETTINGS=("${SETTINGS_DIR}"*.json)
+
 
 JOB1="scripts/datagen.sbatch"
 JOB2="scripts/combiner.sbatch"
@@ -35,6 +29,7 @@ mkdir -p logs/datagen/ logs/combiner/ logs/estimator/
 for x in "${SETTINGS[@]}"
 do
   SETTINGSFILE="$SETTINGS_DIR$x"
+  # SETTINGSFILE="$x"
 
   # # Submit the first job and capture the job ID
   JOB1_ID=$(sbatch $JOB1 $SETTINGSFILE | awk '{print $4}')
