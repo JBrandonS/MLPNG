@@ -21,7 +21,7 @@
         "lAccuracyBoost": 2.0
     },
 
-    "name" : "scraped",
+    "name" : "scraped-noise",
     "nsims" : 1,
     "narray": 1,                   
     "npatches" : 10,
@@ -43,8 +43,8 @@
     "plot_dir" : "data/plots",
 
     "noise_scale_tt" : 43,
-    "noise_scale_ee" : 4.3,
-    "noise_scale_te" : 0.43, 
+    "noise_scale_ee" : 0,
+    "noise_scale_te" : 0, 
 
     "beam_width" : 7.1,
 

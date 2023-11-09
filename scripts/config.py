@@ -117,6 +117,7 @@ class SimConfig:
         beam_ell_pre = hp.gauss_beam(
             self.beam_width.to_value(u.radian), lmax=self.lmax, pol=True
         )
+        print("beam_ell_pre", beam_ell_pre.shape)
         beam_ell_pre = np.swapaxes(beam_ell_pre, 0, 1)
 
         noise_ell = []
@@ -150,5 +151,8 @@ class SimConfig:
         if self.disable_noise:
             noise_ell = noise_ell * 10**-12
             beam_ell = np.ones_like(beam_ell, dtype=self.r_dtype)
+
+        print("noise_ell", noise_ell)
+        print("beam_ell", beam_ell)
 
         return noise_ell, beam_ell

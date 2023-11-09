@@ -26,6 +26,9 @@ def alm_loader(str_idx):
     alm = load_single_data(s.alm_file_complete, "alm", idx, verbose=s.verbose)
     almng = load_single_data(s.alm_file_complete, "almng", idx, verbose=s.verbose)
     fnl = load_single_data(s.data_file_nc, "fnls", idx, verbose=s.verbose)
+
+    alm = remove_mono_dipole(alm)
+    almng = remove_mono_dipole(almng)
     return alm + fnl * almng
 
 
@@ -41,6 +44,15 @@ def vp(*args, **kwargs):
     if s.verbose and rank == 0:
         print(f"{rank} | {datetime.datetime.now()} =>", *args, **kwargs, flush=True)
 
+def remove_mono_dipole(alm):
+    """
+    Remove the monopole and dipole terms from the alms.
+    """
+    lmax = hp.Alm.getlmax(len(alm))
+    alm[hp.Alm.getidx(lmax, 0, 0)] = 0.0  # Remove monopole
+    alm[hp.Alm.getidx(lmax, 1, 0)] = 0.0  # Remove dipole
+    alm[hp.Alm.getidx(lmax, 1, 1)] = 0.0  # Remove dipole
+    return alm
 
 if __name__ == "__main__":
     # Loads in our settings file, defaulting to settings/settings.json if no argument was provided
@@ -99,7 +111,11 @@ if __name__ == "__main__":
     if s.total_sims > 100:
         alm_strs = np.random.choice(alm_strs, size=100, replace=False)
 
-    ksw.step_batch(alm_loader, alm_strs, comm, verbose=False, theta_batch=theta_batch)
+    def alm_step_loader(_):
+        # needs a gaussian realization of signal + noise
+        return data.compute_alm_sim(lens_power=s.lensing)
+    
+    ksw.step_batch(alm_step_loader, alm_strs, comm, verbose=False, theta_batch=theta_batch)
 
     # Disabling for now
     # if rank == 0:
@@ -125,7 +141,10 @@ if __name__ == "__main__":
         sdata["estimates"] = estimates
 
         fnls = load_data(s.data_file_nc, ["fnls"], verbose=s.verbose)["fnls"]
-        sdata["errors"] = (estimates - fnls) / fnls
+
+        snr = (estimates - fnls) * np.sqrt(fisher)
+        sdata["errors"] = snr
+        sdata["error_var"] = np.sum(snr ** 2) / (len(snr)-1)
 
         save_data(s.data_file_nc, sdata, verbose=s.verbose)
         os.replace(s.data_file_nc, s.data_file_complete)

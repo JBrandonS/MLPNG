@@ -116,12 +116,15 @@ def interpolate_ells(func, ells_sparse, ls, axis=1):
 
 def generate_almngs():
     """This code completely calculates, and saves, the alms and almngs."""
-    delta_phi = 2 * np.pi**2 * s.cosmo_params["As"] / (tr_k ** 3) * 3/5 * np.sqrt(1/2)
-    delta_phi *= (tr_k / s.cosmo_params["pivot_scalar"])**((s.cosmo_params["ns"]-1))
+    # delta_phi = 2 * np.pi**2 * s.cosmo_params["As"] / (tr_k ** 3) * 3/5 * np.sqrt(1/2)
+    # delta_phi *= (tr_k / s.cosmo_params["pivot_scalar"])**((s.cosmo_params["ns"]-1))
+
+    A = (3/5)**2 * 2 * np.pi**2 * s.cosmo_params["As"]
+    delta_phi = ( tr_k )**((s.cosmo_params["ns"]-1)) / (tr_k ** 3)
 
     f_k = np.ones((len(tr_k), 2), dtype=s.r_dtype) * 5/3
     # f_k[:, 0] = 1                           # f_k for alpha
-    f_k[:, 1] *= delta_phi  # f_k for beta
+    f_k[:, 1] *= A * delta_phi  # f_k for beta
 
     rad = radial_func(f_k, tr_ell_k, tr_k, radii, tr_ells)
 
@@ -139,7 +142,7 @@ def generate_almngs():
     # Each alm takes ~30Mb at 1024. This is fast enough we don't need to parallelize even for very large datasets
     alms = np.array(
         [
-            ksw_data.compute_alm_sim(False)
+            ksw_data.compute_alm_sim(s.lensing)
             for _ in tqdm(range(s.nsims), desc="a_lm progress")
         ],
         dtype=s.c_dtype,
