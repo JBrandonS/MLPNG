@@ -111,7 +111,7 @@ if __name__ == "__main__":
     if s.total_sims > 100:
         alm_strs = np.random.choice(alm_strs, size=100, replace=False)
 
-    def alm_step_loader(_):
+    def alm_step_loader(idx):
         # needs a gaussian realization of signal + noise
         return data.compute_alm_sim(lens_power=s.lensing)
     

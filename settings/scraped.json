@@ -5,9 +5,12 @@
         "As": 2.457e-09,
         "ns": 0.96,
         "pivot_scalar": 0.05,
+
+        "omnuh2": 0.00064,
+        "omk": 0,
+
         "ombh2": 0.02256,
         "omch2": 0.1143,
-        "mnu": 0.06,
         "tau": 0.084,
         "TCMB": 2.7255,
 
@@ -26,7 +29,7 @@
     "narray": 1,                   
     "npatches" : 10,
     "lensing" : false,
-    "disable_noise" : true,
+    "disable_noise" : false,
     "double_precision": false,
 
     "fnl_range":[0, 0],        
@@ -36,7 +39,7 @@
 
     "debug" : true,
     "verbose" : true,
-    "force_alm_gen" : true, 
+    "force_alm_gen" : false, 
 
     "base_dir" : "data",
     "alm_cache_dir" : "data/alm_cache",

@@ -30,7 +30,6 @@ mkdir -p logs/datagen/ logs/combiner/ logs/estimator/
 
 for x in "${SETTINGS[@]}"
 do
-  (
     SETTINGSFILE="$SETTINGS_DIR$x"
     # SETTINGSFILE="$x"
 
@@ -50,5 +49,4 @@ do
     # while squeue -j $JOB3_ID | grep -q $JOB3_ID; do
     #   sleep 1
     # done
-  ) &
 done

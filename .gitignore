@@ -12,3 +12,4 @@ scraped/
 # Files
 *.prof
 *.out
+*.hdf5

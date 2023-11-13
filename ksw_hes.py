@@ -63,7 +63,7 @@ loc_shape = Shape.prim_local(
 cosmo.add_prim_reduced_bispectrum(loc_shape, radii)
 
 noise_ell, beam_ell = s.get_noise_beam()
-data = Data(s.lmax, noise_ell, beam_ell, s.polarizations, cosmo, n_is_totcov=False)
+data = Data(s.lmax, noise_ell, beam_ell, s.polarizations, cosmo)
 icov = data.icov_diag_lensed if s.lensing else data.icov_diag_nonlensed
 
 if s.disable_noise:
@@ -94,7 +94,6 @@ alm_step_strs = np.arange(0, 1000).astype(str) #np.random.choice(alm_strs, size=
 def alm_step_loader(idx):
     return alm_l[int(idx)].copy()
 
-
 def alm_step_loader_2(idx):
     # needs a gaussian realization of signal + noise
     return data.compute_alm_sim(lens_power=s.lensing)
@@ -103,9 +102,19 @@ def alm_loader(idx):
     print('loading', idx, 'fnl', fnls[int(idx)])
     return alms[int(idx)]
 
+def compute_icov_ell(N, b):
+    S_ell = cosmo._camb_data.get_cmb_power_spectra(
+        cosmo.camb_params, lmax=s.lmax, raw_cl=True, CMB_unit="muK"
+    )["total"][:, 0]
+    b_inv = 1/b
+    return (1 / (S_ell + b_inv * N * b_inv))[None, :]
+
+icov_ell = compute_icov_ell(noise_ell, beam_ell)
+fiso = ksw.compute_fisher_isotropic(icov_ell, comm=comm)
+print('fisher iso', fiso)
 
 ksw.step_batch(
-    alm_step_loader_2, alm_step_strs, comm, verbose=True
+    alm_step_loader_2, alm_step_strs, comm, verbose=False
 )
 
 fisher = ksw.compute_fisher()
@@ -121,14 +130,16 @@ estimates = ksw.compute_estimate_batch(
 
 if rank == 0:
     sdata = {}
+    sdata["settings"] = s.settings
     sdata["fisher"] = np.atleast_1d(fisher)
+    sdata["fisher_iso"] = np.atleast_1d(fiso)
+    
     sdata["estimates"] = estimates
     sdata["fnls"] = np.atleast_1d(fnls)
 
-    snr = (estimates - fnls) * np.sqrt(fisher)
-    print('error var', np.sum(snr ** 2) / (len(snr)-1))
+    snr = (estimates - fnls) / np.sqrt(fisher)
     sdata["errors"] = snr
-    sdata["error_var"] = np.sum(snr ** 2) / (len(snr)-1)
+    print("error_val", np.sum(snr ** 2) / (len(snr)-1))
 
-    save_data("ksw_test_nn_large.hdf5", sdata, verbose=s.verbose)
+    save_data("ksw_test_ls2.hdf5", sdata, verbose=s.verbose)
     # os.replace(s.data_file_nc, s.data_file_complete)

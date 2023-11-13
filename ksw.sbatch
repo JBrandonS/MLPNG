@@ -5,8 +5,8 @@
 #SBATCH --ntasks=10
 #SBATCH --mem-per-cpu=40G
 #SBATCH --cpus-per-task=1
-#SBATCH --output=logs/estimator/%j.log
-#SBATCH --error=logs/estimator/%j.log
+#SBATCH --output=logs/ksw-%j.log
+#SBATCH --error=logs/ksw-%j.log
 #SBATCH --time=24:00:00
 
 module purge
