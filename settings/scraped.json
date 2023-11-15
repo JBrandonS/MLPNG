@@ -32,7 +32,7 @@
     "disable_noise" : false,
     "double_precision": false,
 
-    "fnl_range":[0, 0],        
+    "fnl_range":[-1000, 1000],        
     "nside":1024,
     "patch_side_deg" : 10,
     "polarizations" : ["T"], 
@@ -45,7 +45,7 @@
     "alm_cache_dir" : "data/alm_cache",
     "plot_dir" : "data/plots",
 
-    "noise_scale_tt" : 43,
+    "noise_scale_tt" : 1000,
     "noise_scale_ee" : 0,
     "noise_scale_te" : 0, 
 
