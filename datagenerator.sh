@@ -5,7 +5,7 @@ set -e
 
 SETTINGS_DIR="settings/"
 
-SETTINGS=("ul_nn_512.json")
+# SETTINGS=("l_128.json")
 # SETTINGS=("ul_nn_128.json" "l_nn_128.json"  "l_128.json")
 SETTINGS=(
   "ul_nn_128.json"  "l_nn_128.json"  "l_128.json" 

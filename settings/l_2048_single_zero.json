@@ -22,7 +22,7 @@
     },
 
     "name" : "5k",
-    "nsims" : 1,
+    "nsims" : 1000,
     "narray": 1,                   
     "npatches" : 10,
     "lensing" : false,

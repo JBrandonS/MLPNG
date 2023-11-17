@@ -27,8 +27,8 @@ def alm_loader(str_idx):
     almng = load_single_data(s.alm_file_complete, "almng", idx, verbose=s.verbose)
     fnl = load_single_data(s.data_file_nc, "fnls", idx, verbose=s.verbose)
 
-    alm = remove_mono_dipole(alm)
-    almng = remove_mono_dipole(almng)
+    # alm = remove_mono_dipole(alm)
+    # almng = remove_mono_dipole(almng)
     return alm + fnl * almng
 
 
@@ -48,6 +48,7 @@ def remove_mono_dipole(alm):
     """
     Remove the monopole and dipole terms from the alms.
     """
+    print('removing mono and dipole', alm.shape)
     lmax = hp.Alm.getlmax(len(alm))
     alm[hp.Alm.getidx(lmax, 0, 0)] = 0.0  # Remove monopole
     alm[hp.Alm.getidx(lmax, 1, 0)] = 0.0  # Remove dipole
@@ -115,36 +116,48 @@ if __name__ == "__main__":
         # needs a gaussian realization of signal + noise
         return data.compute_alm_sim(lens_power=s.lensing)
     
-    ksw.step_batch(alm_step_loader, alm_strs, comm, verbose=False, theta_batch=theta_batch)
+    # ksw.step_batch(alm_step_loader, alm_strs, comm, verbose=False, theta_batch=theta_batch)
 
     # Disabling for now
     # if rank == 0:
     #     ksw.write_state(ksw_mc_file, comm)
 
-    vp("Computing estimates")
-    fisher = ksw.compute_fisher()
-    alm_strs = np.arange(s.total_sims).astype(str)
-    estimates = ksw.compute_estimate_batch(
-        alm_loader,
-        alm_strs,
-        comm,
-        verbose=s.verbose,
-        fisher=fisher,
-        theta_batch=theta_batch,
-    )
-    vp("done")
+    # vp("Computing estimates")
+    # fisher = ksw.compute_fisher()
+    # alm_strs = np.arange(s.total_sims).astype(str)
+    # estimates = ksw.compute_estimate_batch(
+    #     alm_loader,
+    #     alm_strs,
+    #     comm,
+    #     verbose=s.verbose,
+    #     fisher=fisher,
+    #     theta_batch=theta_batch,
+    # )
+    # vp("done")
+
+    def compute_icov_ell(N, b):
+        S_ell = cosmo._camb_data.get_cmb_power_spectra(
+            cosmo.camb_params, lmax=s.lmax, raw_cl=True, CMB_unit="muK"
+        )["total"][:, 0]
+        b_inv = 1/b
+        return (1 / (S_ell + b_inv * N * b_inv))[None, :]
+
+    icov_ell = compute_icov_ell(noise_ell, beam_ell)
+    fisher_iso = ksw.compute_fisher_isotropic(icov_ell, comm=comm)
 
     # save data
     if rank == 0:
         sdata = {}
-        sdata["fisher"] = np.atleast_1d(fisher)
-        sdata["estimates"] = estimates
+        # sdata["fisher"] = np.atleast_1d(fisher)
+        # sdata["estimates"] = estimates
 
-        fnls = load_data(s.data_file_nc, ["fnls"], verbose=s.verbose)["fnls"]
+        # fnls = load_data(s.data_file_nc, ["fnls"], verbose=s.verbose)["fnls"]
 
-        snr = (estimates - fnls) * np.sqrt(fisher)
-        sdata["errors"] = snr
-        sdata["error_var"] = np.sum(snr ** 2) / (len(snr)-1)
+        # snr = (estimates - fnls) * np.sqrt(fisher)
+        # sdata["errors"] = snr
+        # sdata["error_var"] = np.sum(snr ** 2) / (len(snr)-1)
+
+        sdata["fisher_iso"] = np.atleast_1d(fisher_iso)
 
         save_data(s.data_file_nc, sdata, verbose=s.verbose)
         os.replace(s.data_file_nc, s.data_file_complete)

@@ -25,7 +25,7 @@
     },
 
     "name" : "scraped-noise",
-    "nsims" : 1,
+    "nsims" : 1000,
     "narray": 1,                   
     "npatches" : 10,
     "lensing" : false,
@@ -33,7 +33,7 @@
     "double_precision": false,
 
     "fnl_range":[-1000, 1000],        
-    "nside":1024,
+    "nside":512,
     "patch_side_deg" : 10,
     "polarizations" : ["T"], 
 
@@ -45,7 +45,7 @@
     "alm_cache_dir" : "data/alm_cache",
     "plot_dir" : "data/plots",
 
-    "noise_scale_tt" : 1000,
+    "noise_scale_tt" : 43,
     "noise_scale_ee" : 0,
     "noise_scale_te" : 0, 
 
