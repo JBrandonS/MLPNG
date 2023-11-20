@@ -10,11 +10,13 @@ from keras import Input, Model
 from keras.layers import (
     Layer,
     LeakyReLU,
+    PReLU,
     Add,
     UpSampling2D,
     Activation,
     SpatialDropout2D,
     Conv2D,
+    SeparableConv2D,
     BatchNormalization,
     Concatenate,
     Flatten,
