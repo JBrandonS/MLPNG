@@ -40,11 +40,13 @@ for i in np.arange(1, 11):
     alm_heidelberg_l = hp.read_alm(base1, hdu=lhdus)
     alm_heidelberg_nl = hp.read_alm(base2, hdu=lhdus)
 
+    # print('alm_heidelberg_l nside', hp.get_nside(alm_heidelberg_l))
+
     alm_h_l = remove_mono_dipole(alm_heidelberg_l)
     alm_h_nl = remove_mono_dipole(alm_heidelberg_nl)
 
     # rng = np.random.default_rng()
-    fnl = np.random.uniform(-1000, 1000)
+    fnl = np.random.uniform(-10, 10)
     fnls.append(fnl)
 
     alms.append((alm_h_l + fnl * alm_h_nl)*t_scale)
@@ -91,8 +93,8 @@ ksw = KSW(
 alm_strs = np.arange(0, 10).astype(str)
 alm_step_strs = np.arange(0, 1000).astype(str) #np.random.choice(alm_strs, size=100, replace=False)
 
-def alm_step_loader(idx):
-    return alm_l[int(idx)].copy()
+# def alm_step_loader(idx):
+#     return alm_l[int(idx)].copy()
 
 def alm_step_loader_2(idx):
     # needs a gaussian realization of signal + noise
@@ -114,8 +116,15 @@ fiso = ksw.compute_fisher_isotropic(icov_ell, comm=comm)
 print('fisher iso', fiso)
 
 ksw.step_batch(
-    alm_step_loader_2, alm_step_strs, comm, verbose=False
-)
+        alm_step_loader_2, alm_step_strs, comm, verbose=True
+    )
+
+# fisher = 1000
+# alm_step_strs = np.arange(0, 50).astype(str) # just controls the amount per loop, nums are not actually used
+# while fisher > 1e-6:
+#     ksw.step_batch(
+#         alm_step_loader_2, alm_step_strs, comm, verbose=False
+#     )
 
 fisher = ksw.compute_fisher()
 print('fisher', fisher)
@@ -133,13 +142,14 @@ if rank == 0:
     sdata["settings"] = s.settings
     sdata["fisher"] = np.atleast_1d(fisher)
     sdata["fisher_iso"] = np.atleast_1d(fiso)
-    
+
     sdata["estimates"] = estimates
     sdata["fnls"] = np.atleast_1d(fnls)
 
-    snr = (estimates - fnls) / np.sqrt(fisher)
+    snr = (estimates - fnls) * np.sqrt(fisher)
     sdata["errors"] = snr
-    print("error_val", np.sum(snr ** 2) / (len(snr)-1))
+    print("error_var", np.var(snr))
+    sdata["errors_var"] = np.atleast_1d(np.var(snr))
 
-    save_data("ksw_test_ls2.hdf5", sdata, verbose=s.verbose)
+    save_data("ksw_test_largenoise_smnallfnl.hdf5", sdata, verbose=s.verbose)
     # os.replace(s.data_file_nc, s.data_file_complete)

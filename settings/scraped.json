@@ -25,15 +25,15 @@
     },
 
     "name" : "scraped-noise",
-    "nsims" : 1,
+    "nsims" : 1000,
     "narray": 1,                   
     "npatches" : 10,
     "lensing" : false,
     "disable_noise" : false,
     "double_precision": false,
 
-    "fnl_range":[0, 0],        
-    "nside":1024,
+    "fnl_range":[-1000, 1000],        
+    "nside":512,
     "patch_side_deg" : 10,
     "polarizations" : ["T"], 
 

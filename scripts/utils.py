@@ -206,5 +206,5 @@ def get_radii(r_min, r_max):
         radii.extend(temp_radii)
 
     radii = np.array([r for r in radii if r_min <= r < r_max])
-    drs = np.diff(radii)
+    drs = np.diff(radii) / 2.
     return radii, drs

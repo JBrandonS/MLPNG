@@ -22,8 +22,8 @@
     },
 
     "name" : "l256",
-    "nsims" : 1,
-    "narray": 1000,                   
+    "nsims" : 1000,
+    "narray": 10,                   
     "npatches" : 10,
     "lensing" : true,
     "disable_noise" : false,
@@ -33,6 +33,7 @@
     "nside":256,
     "patch_side_deg" : 10,
     "polarizations" : ["T"], 
+    "duplicate_backgrounds": 10,
 
     "debug" : true,
     "verbose" : true,

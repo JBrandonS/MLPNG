@@ -36,6 +36,8 @@ class SimConfig:
         self.verbose = settings.get("verbose", False)
         self.lensing = settings.get("lensing", False)
 
+        self.ndup = settings.get("duplicate_backgrounds", 1)
+
         self.base_dir = settings.get("base_dir", "data")
         self.alm_cache_dir = settings.get("alm_cache_dir", "data/alm_cache")
         self.plot_dir = settings.get("plot_dir", "data/plots")
@@ -57,18 +59,21 @@ class SimConfig:
         self.noise_scale_ee = settings.get("noise_scale_ee", 1) * u.arcmin
         self.noise_scale_te = settings.get("noise_scale_te", 1) * u.arcmin
 
+        self.save_fullsky = settings.get("save_fullsky", False)
+
         # TODO: Find a better way to do this
         self.job_array_index = os.environ.get("SLURM_ARRAY_TASK_ID")
+        self.total_sims = self.nsims * self.ndup
         if self.job_array_index is not None:
             self.job_array_index = int(self.job_array_index)
             njobs = int(os.environ.get("SLURM_ARRAY_TASK_COUNT"))  # type: ignore
             self.job_array_min = int(os.environ.get("SLURM_ARRAY_TASK_MIN"))  # type: ignore
             self.job_array_max = int(os.environ.get("SLURM_ARRAY_TASK_MAX"))  # type: ignore
-            self.total_sims = njobs * self.nsims
+            self.total_sims *= njobs
 
             print("Running job array index", self.job_array_index)
         else:
-            self.total_sims = self.nsims * self.narray
+            self.total_sims *= self.narray
 
         self.nell = self.lmax + 1
         self.nelem = hp.Alm.getsize(self.lmax)
@@ -94,7 +99,7 @@ class SimConfig:
             f"{self.nside}_{self.nn_str}{self.chars_of_polarizations}_{self.total_sims}"
         )
 
-        self.data_str = f'{self.base_name}x{self.npatches}_fnl{settings.get("fnl_range")[0]}-{settings.get("fnl_range")[1]}{self.ja_str}'
+        self.data_str = f'{self.base_name}x{self.npatches}x{self.ndup}_fnl{settings.get("fnl_range")[0]}-{settings.get("fnl_range")[1]}{self.ja_str}'
         self.data_file_nc = os.path.join(self.data_dir, f"{self.data_str}.hdf5.nc")
         self.data_file_complete = os.path.join(self.data_dir, f"{self.data_str}.hdf5")
 
@@ -113,7 +118,6 @@ class SimConfig:
             safe_makedirs(s)
 
     def get_noise_beam(self):
-        # TODO: Double check that these should be ones and not eyes
         beam_ell_pre = hp.gauss_beam(
             self.beam_width.to_value(u.radian), lmax=self.lmax, pol=True
         )

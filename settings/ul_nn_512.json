@@ -22,13 +22,13 @@
     },
 
     "name" : "ulnn512",
-    "nsims" : 1,
-    "narray": 1000,                   
+    "nsims" : 1000,
+    "narray": 10,                   
     "npatches" : 10,
     "lensing" : false,
     "disable_noise" : true,
     "double_precision": false,
-
+    "duplicate_backgrounds": 10,
     "fnl_range":[-1000, 1000],        
     "nside":512,
     "patch_side_deg" : 10,
@@ -36,7 +36,7 @@
 
     "debug" : true,
     "verbose" : true,
-    "force_alm_gen" : false, 
+    "force_alm_gen" : true, 
 
     "base_dir" : "data",
     "alm_cache_dir" : "data/alm_cache",

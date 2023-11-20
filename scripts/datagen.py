@@ -75,8 +75,8 @@ def cutSqPatches_lenspyx(s, fs_shape, fs_wcs, pshapes, pwcs, cl_phi, alm, fnl, a
     )
     pixell_map = reproject.healpix2map(lens_map, fs_shape, fs_wcs, s.lmax)
 
-    if s.settings.get("save_fullsky", False) and (s.job_array_index is None or s.job_array_index == 1):
-        hp.mollview(pixell_map.to_healpix(), min=-650., max=650, title=f"fnl = {fnl}")
+    if s.save_fullsky and (s.job_array_index is None or s.job_array_index == 1):
+        hp.mollview(pixell_map.to_healpix(), min=-650.0, max=650, title=f"fnl = {fnl}")
         plt.savefig(s.plot_dir + "/" + s.base_name + "_" + str(fnl) + "_fullsky.png")
 
     patches = []
@@ -94,8 +94,8 @@ def cutSqPatches_pixell(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, alm, fnl, al
     fs_map = enmap.empty(fs_shape, fs_wcs)
     car_map = curvedsky.alm2map(alms, fs_map)
 
-    if s.settings.get("save_fullsky", False) and (s.job_array_index is None or s.job_array_index == 1):
-        hp.mollview(car_map.to_healpix(), min=-650., max=650, title=f"fnl = {fnl}")
+    if s.save_fullsky and (s.job_array_index is None or s.job_array_index == 1):
+        hp.mollview(car_map.to_healpix(), min=-650.0, max=650, title=f"fnl = {fnl}")
         plt.savefig(s.plot_dir + "/" + s.base_name + "_" + str(fnl) + "_fullsky.png")
 
         #     This code seems to randomly crash within the curvedsky.map2alm call
@@ -119,10 +119,10 @@ def generate_almngs():
     # delta_phi = 2 * np.pi**2 * s.cosmo_params["As"] / (tr_k ** 3) * 3/5 * np.sqrt(1/2)
     # delta_phi *= (tr_k / s.cosmo_params["pivot_scalar"])**((s.cosmo_params["ns"]-1))
 
-    A = (3/5)**2 * 2 * np.pi**2 * s.cosmo_params["As"]
-    delta_phi = ( tr_k )**((s.cosmo_params["ns"]-1)) / (tr_k ** 3)
+    A = (3 / 5) ** 2 * 2 * np.pi**2 * s.cosmo_params["As"]
+    delta_phi = (tr_k) ** ((s.cosmo_params["ns"] - 1)) / (tr_k**3)
 
-    f_k = np.ones((len(tr_k), 2), dtype=s.r_dtype) * 5/3
+    f_k = np.ones((len(tr_k), 2), dtype=s.r_dtype) * 5 / 3
     # f_k[:, 0] = 1                           # f_k for alpha
     f_k[:, 1] *= A * delta_phi  # f_k for beta
 
@@ -173,7 +173,7 @@ def generate_almngs():
     sim_data = np.zeros((s.nsims, s.npol, s.nelem), dtype=s.c_dtype)
     for i in range(s.nsims):
         for pol in range(s.npol):
-            # create a generator 
+            # create a generator
             alm_gen = Parallel(
                 n_jobs=s.settings["nthreads_alm"], verbose=1, return_as="generator"
             )(
@@ -191,10 +191,10 @@ def generate_almngs():
             for alm in alm_gen:
                 sim_data[i, pol] += alm
 
-            # if s.debug:
-                # plot_cl_alm(sim_data[i, pol].copy(), s, plt_camb=False, save_name=s.base_name + "_get_alm_plot_complete")
+        # if s.debug:
+        # plot_cl_alm(sim_data[i, pol].copy(), s, plt_camb=False, save_name=s.base_name + "_get_alm_plot_complete")
 
-    save_data(s.alm_file_nc, {"almng": sim_data}, verbose=False)
+    save_data(s.alm_file_nc, {"almng": sim_data}, verbose=s.verbose)
 
     # if s.debug:
     #     plot_cl_alm(sim_data[0, 0], s, c_ells=c_ells, save_name=f"{s.name}-almng")
@@ -294,17 +294,19 @@ if __name__ == "__main__":
     if os.path.isfile(s.alm_file_complete) and not s.settings["force_alm_gen"]:
         vp("Found completed alms file, skipping alm generation")
         alm_file = s.alm_file_complete
-    elif os.path.isfile(s.alm_file_nc) and not s.settings["force_alm_gen"]:
+    elif os.path.isfile(s.alm_file_partial) and not s.settings["force_alm_gen"]:
         vp(f"Found partial alms file {s.alm_file_partial}, skipping alm generation")
         alm_file = s.alm_file_partial
     else:
-        alm_file = s.alm_file_partial
+        alm_file = s.alm_file_nc
+
         if os.path.isfile(s.alm_file_nc):
             vp("Removing stale alm file", s.alm_file_nc)
             os.remove(s.alm_file_nc)
 
         vp("Generating new alms")
         generate_almngs()
+        alm_file = s.alm_file_partial
 
     # Just load everything into memory right now, shouldn't be much of a problem until >10k sims
     ldata = load_data(alm_file, ["alm", "almng"], verbose=s.verbose)
@@ -327,13 +329,18 @@ if __name__ == "__main__":
 
     vp("Generating patches")
     vp(alms.shape, almngs.shape)
-    fnls = uniform(s.settings["fnl_range"][0], s.settings["fnl_range"][1], (s.nsims,))
-    patches = np.empty((s.nsims, s.npol, s.npatches, s.nside, s.nside), dtype=s.r_dtype)
+    fnls = uniform(
+        s.settings["fnl_range"][0], s.settings["fnl_range"][1], (s.nsims, s.ndup)
+    )
+    patches = np.empty(
+        (s.nsims * s.ndup, s.npol, s.npatches, s.nside, s.nside), dtype=s.r_dtype
+    )
     for i in range(s.nsims):
-        for pol in range(s.npol):
-            patches[i, pol] = np.array(
-                cutPatches(alms[i, pol], fnls[i], almngs[i, pol])
-            )
+        for j in range(s.ndup):
+            for pol in range(s.npol):
+                patches[i * s.ndup + j, pol] = np.array(
+                    cutPatches(alms[i, pol], fnls[i, j], almngs[i, pol])
+                )
     vp("Done!")
 
     # Save data
@@ -346,6 +353,7 @@ if __name__ == "__main__":
     if os.path.isfile(s.data_file_nc):
         vp("Removing stale data file", s.data_file_nc)
         os.remove(s.data_file_nc)
+
     save_data(s.data_file_nc, sdata, verbose=s.verbose)
     os.replace(s.data_file_nc, s.data_file_complete)
 
