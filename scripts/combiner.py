@@ -21,7 +21,7 @@ def extract_number(filename):
 
 def combine_data(directory, base_name, ext, remove_files=True, finalize=False):
     # Get a list of all h5py files that match the pattern, i.e., end with a SLURM job array index
-    file_pattern = os.path.join(directory, base_name+"_[0-9]*"+ext)
+    file_pattern = os.path.join(directory, base_name+"_[0-9]*"+ext+"*")
     files_to_combine = glob.glob(file_pattern)
     files_to_combine = sorted(files_to_combine, key=extract_number)
 
@@ -74,6 +74,6 @@ if __name__ == '__main__':
 
     # check that we are not using a already completed file!
     if not os.path.isfile(s.alm_file_complete):
-        combine_data(s.alm_cache_dir, s.base_name, '.alms.hdf5', finalize=True)
+        combine_data(s.alm_cache_dir, s.alm_str, '.alms.hdf5', finalize=True)
 
     combine_data(s.data_dir, s.data_str, '.hdf5')

@@ -22,7 +22,7 @@
     },
 
     "name" : "ulnn512",
-    "nsims" : 1000,
+    "nsims" : 100,
     "narray": 10,                   
     "npatches" : 10,
     "lensing" : false,

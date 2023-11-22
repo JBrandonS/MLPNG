@@ -40,8 +40,6 @@ for i in np.arange(1, 11):
     alm_heidelberg_l = hp.read_alm(base1, hdu=lhdus)
     alm_heidelberg_nl = hp.read_alm(base2, hdu=lhdus)
 
-    # print('alm_heidelberg_l nside', hp.get_nside(alm_heidelberg_l))
-
     alm_h_l = remove_mono_dipole(alm_heidelberg_l)
     alm_h_nl = remove_mono_dipole(alm_heidelberg_nl)
 
@@ -151,5 +149,5 @@ if rank == 0:
     print("error_var", np.var(snr))
     sdata["errors_var"] = np.atleast_1d(np.var(snr))
 
-    save_data("ksw_test_largenoise_smnallfnl.hdf5", sdata, verbose=s.verbose)
+    save_data("ksw_test.hdf5", sdata, verbose=s.verbose)
     # os.replace(s.data_file_nc, s.data_file_complete)
