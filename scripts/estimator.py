@@ -23,12 +23,19 @@ rank = comm.Get_rank()
 def alm_loader(str_idx):
     """Loads in a single alm given a int in string form. Used inside the KSW code."""
     idx = int(str_idx)
-    alm = load_single_data(s.alm_file_complete, "alm", idx, verbose=s.verbose)
-    almng = load_single_data(s.alm_file_complete, "almng", idx, verbose=s.verbose)
-    fnl = load_single_data(s.data_file_nc, "fnls", idx, verbose=s.verbose)
+    dup_idx = idx % s.ndup
+    idx = idx // s.ndup
+    pol = 0
 
-    # alm = remove_mono_dipole(alm)
-    # almng = remove_mono_dipole(almng)
+    # TODO support pol, not just 0.
+    alm = load_single_data(s.alm_file_complete, "alm", idx, verbose=s.verbose)[pol]
+    almng = load_single_data(s.alm_file_complete, "almng", idx, verbose=s.verbose)[pol]
+    fnl = load_single_data(s.data_file_nc, "fnls", idx, verbose=s.verbose)[dup_idx]
+
+    vp('idx:', idx, 'dup_idx:', dup_idx, 'fnl:', fnl)
+
+    alm = remove_mono_dipole(alm)
+    almng = remove_mono_dipole(almng)
     return alm + fnl * almng
 
 
@@ -48,7 +55,6 @@ def remove_mono_dipole(alm):
     """
     Remove the monopole and dipole terms from the alms.
     """
-    print('removing mono and dipole', alm.shape)
     lmax = hp.Alm.getlmax(len(alm))
     alm[hp.Alm.getidx(lmax, 0, 0)] = 0.0  # Remove monopole
     alm[hp.Alm.getidx(lmax, 1, 0)] = 0.0  # Remove dipole
@@ -64,7 +70,7 @@ if __name__ == "__main__":
     vp("Running camb")
     camb_params_obj = camb.set_params(**s.cosmo_params)
     cosmo = Cosmology(camb_params_obj)
-    cosmo.compute_transfer(s.cosmo_params["max_l"], verbose=s.verbose)
+    cosmo.compute_transfer(s.cosmo_params["max_l"], verbose=((rank == 0) and s.verbose))
     cosmo.compute_c_ell()
 
     radii, drs = get_radii(s.settings["r_min"], s.settings["r_max"])
@@ -109,31 +115,33 @@ if __name__ == "__main__":
 
     # 100 should be ~1%, so we take a random 100 for initializing the KSW estimator
     alm_strs = np.arange(s.total_sims).astype(str)
-    if s.total_sims > 100:
-        alm_strs = np.random.choice(alm_strs, size=100, replace=False)
+    if s.total_sims > 1000:
+        alm_strs = np.random.choice(alm_strs, size=1000, replace=False)
 
     def alm_step_loader(idx):
         # needs a gaussian realization of signal + noise
         return data.compute_alm_sim(lens_power=s.lensing)
     
-    # ksw.step_batch(alm_step_loader, alm_strs, comm, verbose=False, theta_batch=theta_batch)
+    vp("Running KSW step")
+    ksw.step_batch(alm_step_loader, alm_strs, comm, verbose=(rank == 0), theta_batch=theta_batch)
+    vp("done")
 
     # Disabling for now
     # if rank == 0:
     #     ksw.write_state(ksw_mc_file, comm)
 
-    # vp("Computing estimates")
-    # fisher = ksw.compute_fisher()
-    # alm_strs = np.arange(s.total_sims).astype(str)
-    # estimates = ksw.compute_estimate_batch(
-    #     alm_loader,
-    #     alm_strs,
-    #     comm,
-    #     verbose=s.verbose,
-    #     fisher=fisher,
-    #     theta_batch=theta_batch,
-    # )
-    # vp("done")
+    vp("Computing estimates")
+    fisher = ksw.compute_fisher()
+    alm_strs = np.arange(s.total_sims).astype(str)
+    estimates = ksw.compute_estimate_batch(
+        alm_loader,
+        alm_strs,
+        comm,
+        verbose=(rank == 0),
+        # fisher=fisher,
+        # theta_batch=theta_batch,
+    )
+    vp("done")
 
     def compute_icov_ell(N, b):
         S_ell = cosmo._camb_data.get_cmb_power_spectra(
@@ -148,16 +156,16 @@ if __name__ == "__main__":
     # save data
     if rank == 0:
         sdata = {}
-        # sdata["fisher"] = np.atleast_1d(fisher)
-        # sdata["estimates"] = estimates
 
-        # fnls = load_data(s.data_file_nc, ["fnls"], verbose=s.verbose)["fnls"]
+        fnls = load_data(s.data_file_nc, ["fnls"], verbose=s.verbose)["fnls"]
+        fnls = fnls.ravel()
+        snr = (estimates - fnls) * np.sqrt(fisher)
 
-        # snr = (estimates - fnls) * np.sqrt(fisher)
-        # sdata["errors"] = snr
-        # sdata["error_var"] = np.sum(snr ** 2) / (len(snr)-1)
-
+        sdata["fisher"] = np.atleast_1d(fisher)
         sdata["fisher_iso"] = np.atleast_1d(fisher_iso)
+        sdata["estimates"] = estimates
+        sdata["errors"] = snr
+        sdata["errors_var"] = np.atleast_1d(np.var(snr))
 
         save_data(s.data_file_nc, sdata, verbose=s.verbose)
         os.replace(s.data_file_nc, s.data_file_complete)

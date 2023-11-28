@@ -171,11 +171,11 @@ def generate_almngs():
 
     vp("Starting almng...")
     sim_data = np.zeros((s.nsims, s.npol, s.nelem), dtype=s.c_dtype)
-    for i in range(s.nsims):
+    for i in tqdm(range(s.nsims), desc="almng progress"):
         for pol in range(s.npol):
             # create a generator
             alm_gen = Parallel(
-                n_jobs=s.settings["nthreads_alm"], verbose=1, return_as="generator"
+                n_jobs=s.settings["nthreads_alm"], verbose=0, return_as="generator"
             )(
                 delayed(get_alm)(
                     alms[i, pol],
@@ -193,12 +193,9 @@ def generate_almngs():
 
         # if s.debug:
         # plot_cl_alm(sim_data[i, pol].copy(), s, plt_camb=False, save_name=s.base_name + "_get_alm_plot_complete")
+    vp("Done!")
 
     save_data(s.alm_file_nc, {"almng": sim_data}, verbose=s.verbose)
-
-    # if s.debug:
-    #     plot_cl_alm(sim_data[0, 0], s, c_ells=c_ells, save_name=f"{s.name}-almng")
-
     os.replace(s.alm_file_nc, s.alm_file_partial)
 
 
@@ -309,7 +306,10 @@ if __name__ == "__main__":
         alm_file = s.alm_file_partial
 
     # Just load everything into memory right now, shouldn't be much of a problem until >10k sims
+    vp("Loading alms")
     ldata = load_data(alm_file, ["alm", "almng"], verbose=s.verbose)
+    vp("Done!")
+
     alms = ldata["alm"]
     almngs = ldata["almng"]
 
@@ -327,75 +327,73 @@ if __name__ == "__main__":
             cutSqPatches_pixell, s, fs_shape, fs_wcs, fs_map, patch_shapes, patch_wcss
         )
 
-    vp("Generating patches")
-    vp(alms.shape, almngs.shape)
     fnls = uniform(
         s.settings["fnl_range"][0], s.settings["fnl_range"][1], (s.nsims, s.ndup)
     )
     patches = np.empty(
-        (s.nsims * s.ndup, s.npol, s.npatches, s.nside, s.nside), dtype=s.r_dtype
+        (s.nsims, s.ndup, s.npol, s.npatches, s.nside, s.nside), dtype=s.r_dtype
     )
-    for i in range(s.nsims):
+    for i in tqdm(range(s.nsims), desc="patch progress"):
         for j in range(s.ndup):
             for pol in range(s.npol):
-                patches[i * s.ndup + j, pol] = np.array(
+                patches[i, j, pol] = np.array(
                     cutPatches(alms[i, pol], fnls[i, j], almngs[i, pol])
                 )
-    vp("Done!")
 
     # Save data
     sdata = {}
-    sdata["fnls"] = np.atleast_1d(fnls)
+    sdata["fnls"] = fnls
     sdata["patches"] = np.array(patches)
+
     if s.job_array_index is None or s.job_array_index == 1:
-        # we only want one copy of the settings
         sdata["settings"] = s.settings
+
     if os.path.isfile(s.data_file_nc):
         vp("Removing stale data file", s.data_file_nc)
         os.remove(s.data_file_nc)
 
     save_data(s.data_file_nc, sdata, verbose=s.verbose)
-    os.replace(s.data_file_nc, s.data_file_complete)
+    # os.replace(s.data_file_nc, s.data_file_complete)
 
     # %%
     vp("Done with Generation!")
 
     # below just generates a nice graph, possibly duplicating the patches
     # this only runs once per sim and only if debug = True
-    if s.debug and (s.job_array_index is None or s.job_array_index == 1):
-        nplots = 10
-        random_indices = [
-            (randint(s.nsims), randint(s.npol), randint(s.npatches))
-            for _ in range(nplots)
-        ]
-        grid_size = math.isqrt(len(random_indices))
-        if grid_size**2 < len(random_indices):
-            grid_size += 1
+    # if s.debug and (s.job_array_index is None or s.job_array_index == 1):
+    #     nplots = 10
+    #     random_indices = [
+    #         (randint(s.nsims), randint(s.npol), randint(s.npatches))
+    #         for _ in range(nplots)
+    #     ]
+    #     grid_size = math.isqrt(len(random_indices))
+    #     if grid_size**2 < len(random_indices):
+    #         grid_size += 1
 
-        # Create the grid of subplots
-        fig, axs = plt.subplots(
-            grid_size, grid_size, sharex=True, sharey=True, figsize=(10, 10)
-        )
+    #     # Create the grid of subplots
+    #     fig, axs = plt.subplots(
+    #         grid_size, grid_size, sharex=True, sharey=True, figsize=(10, 10)
+    #     )
 
-        # If there's only one plot, put it in a list within a list to emulate a 2D list
-        if grid_size == 1:
-            axs = [[axs]]
+    #     # If there's only one plot, put it in a list within a list to emulate a 2D list
+    #     if grid_size == 1:
+    #         axs = [[axs]]
 
-        # Iterate over the random_indices
-        for idx, (i, p, n) in enumerate(random_indices):
-            # Compute the subplot coordinates
-            row = idx // grid_size
-            col = idx % grid_size
-            # Plot the image
-            axs[row][col].imshow(patches[i, p, n])
+    #     # Iterate over the random_indices
+    #     for idx, (i, p, n) in enumerate(random_indices):
+    #         # Compute the subplot coordinates
+    #         row = idx // grid_size
+    #         col = idx % grid_size
+    #         # Plot the image
+    #         axs[row][col].imshow(patches[i, p, n])
 
-        # Hide the remaining unused subplots if any
-        if len(random_indices) < grid_size * grid_size:
-            for idx in range(len(random_indices), grid_size * grid_size):
-                row = idx // grid_size
-                col = idx % grid_size
-                axs[row][col].axis("off")
+    #     # Hide the remaining unused subplots if any
+    #     if len(random_indices) < grid_size * grid_size:
+    #         for idx in range(len(random_indices), grid_size * grid_size):
+    #             row = idx // grid_size
+    #             col = idx % grid_size
+    #             axs[row][col].axis("off")
 
-        plt.title("Sample Patches")
-        save_plt(s.plot_dir, f"{s.name}-sample_patches")
-        plt.show()
+    #     plt.title("Sample Patches")
+    #     save_plt(s.plot_dir, f"{s.name}-sample_patches")
+    #     plt.show()

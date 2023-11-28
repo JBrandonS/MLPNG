@@ -40,8 +40,6 @@ for i in np.arange(1, 11):
     alm_heidelberg_l = hp.read_alm(base1, hdu=lhdus)
     alm_heidelberg_nl = hp.read_alm(base2, hdu=lhdus)
 
-    # print('alm_heidelberg_l nside', hp.get_nside(alm_heidelberg_l))
-
     alm_h_l = remove_mono_dipole(alm_heidelberg_l)
     alm_h_nl = remove_mono_dipole(alm_heidelberg_nl)
 

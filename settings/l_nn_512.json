@@ -22,7 +22,7 @@
     },
 
     "name" : "lnn512",
-    "nsims" : 1000,
+    "nsims" : 100,
     "narray": 10,                   
     "npatches" : 10,
     "lensing" : true,
@@ -36,7 +36,7 @@
 
     "debug" : true,
     "verbose" : true,
-    "force_alm_gen" : true, 
+    "force_alm_gen" : false, 
 
     "base_dir" : "data",
     "alm_cache_dir" : "data/alm_cache",

@@ -55,16 +55,12 @@ def load_data(data_file, keys, start_index=None, end_index=None, verbose=False):
 
     with h5py.File(data_file, "r", swmr=True, locking=False) as hdf:
         for key in keys:
-            if verbose:
-                print("Loading data", key, "from", data_file)
 
             kv = hdf.get(key, None)
             if kv is None:
                 raise ValueError(f"Key {key} not found in {data_file}")
 
             if start_index is not None and end_index is not None:
-                if verbose:
-                    print(" => Loading data from", start_index, "to", end_index)
                 data[key] = np.array(kv[start_index:end_index])  # type: ignore
             else:
                 data[key] = np.array(kv[()])  # type: ignore
@@ -73,9 +69,6 @@ def load_data(data_file, keys, start_index=None, end_index=None, verbose=False):
 
 
 def load_single_data(data_file, key, index, verbose=False):
-    if verbose:
-        print("Loading data", key, "from", data_file, "index", index)
-
     with h5py.File(data_file, "r", swmr=True, locking=False) as hdf:
         kv = hdf.get(key, None)
         if kv is None:
