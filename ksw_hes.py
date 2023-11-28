@@ -151,5 +151,5 @@ if rank == 0:
     print("error_var", np.var(snr))
     sdata["errors_var"] = np.atleast_1d(np.var(snr))
 
-    save_data("ksw_test_largenoise_smnallfnl.hdf5", sdata, verbose=s.verbose)
+    save_data("ksw_test.hdf5", sdata, verbose=s.verbose)
     # os.replace(s.data_file_nc, s.data_file_complete)

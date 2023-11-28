@@ -14,12 +14,15 @@ class DataLoader:
             fnls = f['fnls']
             patches = f['patches']
 
-            nsims, npol, npatches, nside, _ = patches.shape
+            tsims, npol, npatches, nside, _ = patches.shape
+            nsims, ndup = fnls.shape
+            
 
-            patch_vec = product(range(nsims), range(npol), range(npatches))
+            patch_vec = product(range(nsims), range(npol), range(npatches), range(ndup))
             if self.shuffle:
                 np.random.seed(self.seed)
                 patch_vec = np.random.permutation(list(patch_vec))
                  
-            for (i,j,k) in patch_vec:
-                yield patches[i, j, k], fnls[i]
+            for (i,j,k,l) in patch_vec:
+                sim_idx = i * ndup + l
+                yield patches[sim_idx, j, k], fnls[i, l]
