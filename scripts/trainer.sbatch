@@ -7,10 +7,10 @@
 #SBATCH --gpus-per-task=1
 #SBATCH --output=logs/training/%j.log
 #SBATCH --error=logs/training/%j.log
-#SBATCH --time=04:00:00
+#SBATCH --time=2-00:00:00
 
-module load dev spack conda
-module load cuda-11.4.4-gcc-10.3.0-ctldo35 cudnn-8.2.4.15-11.4-gcc-10.3.0-eluwegp
+module load conda gcc/11.2.0
+module load cuda/11.8.0-vbvgppx cudnn/8.7.0.84-11.8-fhn3dpf
 
 eval "$(conda shell.bash hook)"
 

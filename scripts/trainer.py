@@ -61,7 +61,7 @@ def get_data(start, step, name=None):
     return ret
 
 
-def plt_pred(dataset, name, save=False):
+def plt_pred(dataset, name, save=True):
     ipreds = isensee_model.predict(
         dataset, batch_size=s.batch_size, verbose="auto", callbacks=callbacks
     )[:, 0]
@@ -156,10 +156,10 @@ if __name__ == "__main__":
 
     # some general settings
     # TODO auto find optimal batch_size based on nside
-    batch_size = 32
-    max_epochs = 100
+    batch_size = 64
+    max_epochs = 500
 
-    # setup the gpus, using mirroed to parallelize the training
+    # setup the gpus, using mirrored to parallelize the training
     gpus = tf.config.list_logical_devices("GPU")
     strategy = tf.distribute.MirroredStrategy(gpus)
     # strategy = tf.distribute.OneDeviceStrategy(device="/gpu:0") # for debugging
@@ -195,7 +195,7 @@ if __name__ == "__main__":
         model_settings = {
             "depth": 4,
             "n_segmentation_levels": 4,
-            "dropout_rate": 0.03,
+            "dropout_rate": 0.3,
             "loss_function": tf.keras.losses.mse,
             "initial_learning_rate": 0.01,
             "name": f"isensee-{s.base_name}"
@@ -212,14 +212,14 @@ if __name__ == "__main__":
         )
 
         callbacks = [
-            EarlyStopping(
-                monitor="val_root_mean_squared_error",
-                patience=40,
-                verbose=1,
-                restore_best_weights=True,
-            ),
+            # EarlyStopping(
+            #     monitor="val_root_mean_squared_error",
+            #     patience=40,
+            #     verbose=1,
+            #     restore_best_weights=True,
+            # ),
             ReduceLROnPlateau(
-                monitor="val_root_mean_squared_error", factor=0.1, patience=10
+                monitor="val_root_mean_squared_error", factor=0.5, patience=20
             ),
             WandbMetricsLogger(),
             WandbModelCheckpoint(filepath=f"{s.model_dir}/wandb"),
@@ -251,9 +251,9 @@ if __name__ == "__main__":
 
         model_settings = {
             "depth": 4,
-            "dropout_rate": 0.3,
+            "dropout_rate": 0.2,
             "loss_function": tf.keras.losses.mse,
-            "initial_learning_rate": 0.01,
+            "initial_learning_rate": 0.001,
             "preprocess": False,
             "name": f"bs-{s.base_name}",
         }
@@ -282,3 +282,5 @@ if __name__ == "__main__":
         bs_model.predict(
             test_dataset, batch_size=batch_size, verbose="auto", callbacks=callbacks
         )
+        
+        plt_pred(test_dataset, "test", save=True)
