@@ -25,6 +25,7 @@ def remove_mono_dipole(alm):
     alm[hp.Alm.getidx(lmax, 0, 0)] = 0.0  # Remove monopole
     alm[hp.Alm.getidx(lmax, 1, 0)] = 0.0  # Remove dipole
     alm[hp.Alm.getidx(lmax, 1, 1)] = 0.0  # Remove dipole
+    alm[hp.Alm.getidx(lmax, 1, -1)] = 0.0  # Remove dipole
     return alm
 
 fnls = []
