@@ -12,29 +12,46 @@ from matplotlib import pyplot as plt
 from sklearn import metrics as mt
 from tensorflow import pad
 from tensorflow.keras import Sequential
-from tensorflow.keras.callbacks import (EarlyStopping, ReduceLROnPlateau,
-                                        TensorBoard)
-from tensorflow.keras.datasets import imdb
-from tensorflow.keras.layers import (Activation, Add, Attention,
-                                     BatchNormalization, Concatenate, Conv1D,
-                                     Conv2D, Dense, Dropout, Embedding,
-                                     Flatten, GlobalAveragePooling1D,
-                                     GlobalAveragePooling2D,
-                                     GroupNormalization, Input, Lambda, Layer,
-                                     LayerNormalization, LeakyReLU,
-                                     MaxPooling1D, MultiHeadAttention,
-                                     Multiply, PReLU, SeparableConv2D,
-                                     SpatialDropout2D, Subtract, UpSampling2D)
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, TensorBoard
+from tensorflow.keras.layers import (
+    Activation,
+    Add,
+    Attention,
+    BatchNormalization,
+    Concatenate,
+    Conv1D,
+    Conv2D,
+    Dense,
+    Dropout,
+    Embedding,
+    Flatten,
+    GlobalAveragePooling1D,
+    GlobalAveragePooling2D,
+    GroupNormalization,
+    Input,
+    Lambda,
+    Layer,
+    LayerNormalization,
+    LeakyReLU,
+    MaxPooling1D,
+    MultiHeadAttention,
+    Multiply,
+    PReLU,
+    SeparableConv2D,
+    SpatialDropout2D,
+    Subtract,
+    UpSampling2D,
+)
 from tensorflow.keras.models import Model
-from tensorflow.keras.optimizers.legacy import Adam
+from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.preprocessing import sequence
-from tensorflow.keras.utils import plot_model
 
 from config import SimConfig
 from dataloader import DataLoader
 
 # %matplotlib inline
+
 
 def dice_coefficient(y_true, y_pred, smooth=1.0):
     y_true_f = K.flatten(y_true)
@@ -78,8 +95,8 @@ def create_localization_module(input_layer, n_filters):
     return create_convolution_block(convolution1, n_filters, kernel=(1, 1))
 
 
-def create_up_sampling_module(input_layer, n_filters, size=(2, 2)):
-    up_sample = UpSampling2D(size=size, interpolation="bilinear")(input_layer)
+def create_up_sampling_module(input_layer, n_filters, size=(2, 2), interpolation="bilinear"):
+    up_sample = UpSampling2D(size=size, interpolation=interpolation)(input_layer)
     layer1 = ReflectionPadding2D()(up_sample)
     return create_convolution_block(layer1, n_filters)
 
@@ -117,7 +134,7 @@ def create_convolution_block(
     :return:
     """
     layer = Conv2D(
-        n_filters, kernel, padding=padding, strides=strides, activation=activation
+        n_filters, kernel, padding=padding, strides=strides, activation=activation, kernel_initializer='he_uniform'
     )(input_layer)
     if batch_normalization:
         layer = BatchNormalization()(layer)
@@ -132,12 +149,13 @@ def isensee_attn(
     depth=5,
     dropout_rate=0.3,
     n_segmentation_levels=3,
-    n_labels=1,
+    n_labels=8,
     optimizer=Adam,
     initial_learning_rate=5e-4,
     loss_function=dice_coefficient_loss,
-    activation_name="relu",
-    name=''
+    name="",
+    metrics=[],
+    interpolation="bilinear",
 ):
     """
     This function builds a model proposed by Isensee et al. for the BRATS 2017 competition:
@@ -160,8 +178,7 @@ def isensee_attn(
     current_layer = inputs
     level_output_layers = []
     level_filters = []
-    # n_level_filters = (2**level_number) * n_base_filters
-    n_level_filters = 16
+    n_level_filters = n_base_filters
     for _ in range(depth):
         level_filters.append(n_level_filters)
 
@@ -182,12 +199,11 @@ def isensee_attn(
 
     segmentation_layers = []
     for level_number in range(depth - 2, -1, -1):
-        # attention = tf.keras.layers.Attention()([current_layer, current_layer])
         up_sampling = create_up_sampling_module(
-            current_layer, level_filters[level_number]
+            current_layer, level_filters[level_number], interpolation=interpolation
         )
 
-        attention = Attention(use_scale=False, dropout=dropout_rate)(
+        attention = Attention(use_scale=True, dropout=dropout_rate)(
             [level_output_layers[level_number], up_sampling]
         )
 
@@ -199,7 +215,7 @@ def isensee_attn(
         )
         current_layer = localization_output
         if level_number < n_segmentation_levels:
-            segmentation_layers.insert(0, Conv2D(n_labels, (1, 1))(current_layer))
+            segmentation_layers.insert(0, Conv2D(n_labels, (1, 1), activation="relu", kernel_initializer='he_uniform')(current_layer))
 
     output_layer = None
     for level_number in reversed(range(n_segmentation_levels - 1)):
@@ -210,20 +226,24 @@ def isensee_attn(
             output_layer = Add()([output_layer, segmentation_layer])
 
         if level_number > 0:
-            output_layer = UpSampling2D(size=(2, 2), interpolation="bilinear")(
+            output_layer = UpSampling2D(size=(2, 2), interpolation=interpolation)(
                 output_layer
             )
 
     flat_layer = Flatten()(output_layer)
-    out_layer = Dense(1024)(flat_layer)
+    # out_layer = Dropout(dropout_rate)(flat_layer)
+    out_layer = Dense(1024, activation="relu", kernel_initializer='he_uniform')(flat_layer)
     out_layer = Dense(1)(out_layer)
 
     model = Model(inputs=inputs, outputs=out_layer, name=name)
+
+    # Allows for us to pass in a complete optimizer or incomplete with learning rate
+    if callable(optimizer):
+        optimizer = optimizer(learning_rate=initial_learning_rate)
+
     model.compile(
-        optimizer=optimizer(learning_rate=initial_learning_rate),
+        optimizer=optimizer,
         loss=loss_function,
-        metrics=[tf.keras.metrics.RootMeanSquaredError(),
-                tf.keras.metrics.MeanAbsolutePercentageError(),
-                tf.keras.metrics.MeanAbsoluteError()],
+        metrics=metrics,
     )
     return model

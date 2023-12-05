@@ -2,7 +2,7 @@
 #SBATCH --job-name=trainer
 #SBATCH --partition=batch
 #SBATCH --ntasks=1
-#SBATCH --mem=500G  # per node
+#SBATCH --mem=400G  # per node
 #SBATCH --cpus-per-task=32
 #SBATCH --gpus-per-task=1
 #SBATCH --output=logs/training/%j.log

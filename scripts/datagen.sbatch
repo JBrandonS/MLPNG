@@ -2,8 +2,8 @@
 #SBATCH --job-name=datagen
 #SBATCH --partition=standard-s
 #SBATCH --ntasks=1
-#SBATCH --mem=200G
-#SBATCH --cpus-per-task=32
+#SBATCH --mem=400G
+#SBATCH --cpus-per-task=64
 #SBATCH --output=logs/datagen/%A/%j.log
 #SBATCH --error=logs/datagen/%A/%j.log
 #SBATCH --array=1-10
