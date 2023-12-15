@@ -1,0 +1,59 @@
+{
+    "cosmo_params" : {
+        "H0": 67.5,
+        "r": 0,
+        "As": 2.13e-09,
+        "ns": 0.9624,
+        "pivot_scalar": 0.05,
+        "ombh2": 0.02233,
+        "omch2": 0.1198,
+        "mnu": 0.06,
+        "tau": 0.0561,
+        "TCMB": 2.7255,
+
+        "max_l": 1000,
+        "lmax": 750,
+        "lens_potential_accuracy": 2,
+
+        "DoLateRadTruncation": false,
+        "AccuracyBoost":2.0,
+        "lSampleBoost": 2.0,
+        "lAccuracyBoost": 2.0
+    },
+
+    "name" : "l256-large",
+    "nsims" : 100,
+    "narray": 1000,                   
+    "npatches" : 10,
+    "lensing" : true,
+    "disable_noise" : false,
+    "double_precision": false,
+
+    "fnl_range":[-1000, 1000],        
+    "nside":256,
+    "patch_side_deg" : 10,
+    "polarizations" : ["T"], 
+    "duplicate_backgrounds": 10,
+
+    "debug" : true,
+    "verbose" : true,
+    "force_alm_gen" : false, 
+
+    "base_dir" : "data",
+    "alm_cache_dir" : "data/alm_cache",
+    "plot_dir" : "data/plots",
+    "tb_dir" : "data/tensorboard",
+    "model_dir" : "data/models",
+
+    "noise_scale_tt" : 1,
+    "noise_scale_ee" : 1.41421,
+    "noise_scale_te" : 0, 
+
+    "beam_width" : 1.4,
+
+    "nthreads_alm" : 32,            
+    "nthreads_sim" : 32,
+
+    "r_min" : 1,                      
+    "r_max" : 50000               
+}

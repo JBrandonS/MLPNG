@@ -5,13 +5,16 @@ import healpy as hp
 import numpy as np
 from astropy import units as u
 
+import logging
+log = logging.getLogger(__name__)
+
 def safe_makedirs(dir, verbose=False):
     "Create a directory if it does not exist. Handles a race condition"
     if not os.path.exists(dir):
         try:
             os.makedirs(dir)
             if verbose:
-                print(f"Created directory {dir}")
+                log.info("Created directory %s", dir)
         except FileExistsError:
             pass
 
@@ -21,7 +24,7 @@ class SimConfig:
             self.settings = settings = json.load(f)
 
         if print_settings:
-            print("Loaded settings from file:", settings_file)
+            log.info("Loaded settings from file: %s", settings_file)
 
             import pprint
 
@@ -71,7 +74,7 @@ class SimConfig:
             self.job_array_max = int(os.environ.get("SLURM_ARRAY_TASK_MAX"))  # type: ignore
             self.total_sims *= njobs
 
-            print("Running job array index", self.job_array_index)
+            log.info("Running job array index %s", self.job_array_index)
         else:
             self.total_sims *= self.narray
 

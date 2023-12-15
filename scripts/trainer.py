@@ -46,6 +46,7 @@ from sklearn.metrics import r2_score
 
 import seaborn as sns
 
+import logging as log
 
 def load_data(data_file, keys, start_index=None, end_index=None, verbose=False):
     if isinstance(keys, str):
@@ -151,6 +152,13 @@ def plot_history(attn_history, name, metrics=["loss"]):
 
 
 if __name__ == "__main__":
+    log.basicConfig(
+        level=log.INFO, 
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
+        datefmt='%d-%b-%y %H:%M:%S',
+        handlers=[log.StreamHandler(sys.stdout)]
+    )
+    
     config_file = sys.argv[1] if len(sys.argv) > 1 else "settings/settings.json"
     s = SimConfig(config_file)
 

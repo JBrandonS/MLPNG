@@ -11,6 +11,8 @@ from tqdm.auto import tqdm
 
 from config import SimConfig
 
+import logging
+
 def extract_number(filename):
     # Extracts the number from a filename
     matches = re.findall(r"\d+", filename)
@@ -26,7 +28,7 @@ def combine_data(directory, base_name, ext, remove_files=True, finalize=False):
     files_to_combine = sorted(files_to_combine, key=extract_number)
 
     if len(files_to_combine) == 0:
-        print(f"did not find any files to combine with {file_pattern}")
+        log.error("did not find any files to combine with %s", file_pattern)
         return
 
     def recursive_copy(hf_source, hf_dest):
@@ -58,7 +60,7 @@ def combine_data(directory, base_name, ext, remove_files=True, finalize=False):
             with h5py.File(file, 'r') as hf:
                 recursive_copy(hf, hf_combined)
 
-        print(f"Final keys in file {base_name + ext} are {hf_combined.keys()}")
+        log.debug("Final keys in file %s are %s", base_name + ext, hf_combined.keys())
 
     if finalize:
         os.replace(os.path.join(directory, base_name + ext + '.nc'), 
@@ -69,6 +71,14 @@ def combine_data(directory, base_name, ext, remove_files=True, finalize=False):
             os.remove(file)
 
 if __name__ == '__main__':
+    logging.basicConfig(
+        level=logging.INFO, 
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
+        datefmt='%d-%b-%y %H:%M:%S',
+        handlers=[logging.StreamHandler(sys.stdout)]
+    )
+    log = logging.getLogger(__name__)
+    
     config_file = sys.argv[1] if len(sys.argv) > 1 else 'settings/settings.json'
     s = SimConfig(config_file)
 

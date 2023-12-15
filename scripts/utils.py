@@ -9,22 +9,24 @@ from pixell import enmap, curvedsky
 from astropy import units as u
 
 import h5py
+import logging
 
+import pandas as pd
+
+log = logging.getLogger(__name__)
 
 def safe_makedirs(dir, verbose=False):
     "Create a directory if it does not exist. Handles a race condition"
     if not os.path.exists(dir):
         try:
             os.makedirs(dir)
-            if verbose:
-                print(f"Created directory {dir}")
+            log.debug("Created directory %s", dir)
         except FileExistsError:
             pass
 
 
 def save_data(file_path, data_dict, verbose=False):
-    if verbose:
-        print("Saving data to", file_path, end="...")
+    log.debug("Saving data to %s", file_path)
 
     with h5py.File(file_path, "a") as hf:
         for key, value in data_dict.items():
@@ -43,8 +45,7 @@ def save_data(file_path, data_dict, verbose=False):
             else:
                 # Create a new dataset for this key
                 hf.create_dataset(key, data=value, maxshape=(None,) + value.shape[1:])
-    if verbose:
-        print("done")
+    log.debug("done")
 
 
 def load_data(data_file, keys, start_index=None, end_index=None, verbose=False):
@@ -52,10 +53,9 @@ def load_data(data_file, keys, start_index=None, end_index=None, verbose=False):
         keys = [keys]
 
     data = {}
-
     with h5py.File(data_file, "r", swmr=True, locking=False) as hdf:
         for key in keys:
-
+            log.debug("Loading key %s from %s", key, data_file)
             kv = hdf.get(key, None)
             if kv is None:
                 raise ValueError(f"Key {key} not found in {data_file}")
@@ -63,8 +63,8 @@ def load_data(data_file, keys, start_index=None, end_index=None, verbose=False):
             if start_index is not None and end_index is not None:
                 data[key] = np.array(kv[start_index:end_index])  # type: ignore
             else:
-                data[key] = np.array(kv[()])  # type: ignore
-
+                data[key] = np.array(kv[()]) # type: ignore
+    log.debug("Finished loading data from %s", data_file)
     return data
 
 
