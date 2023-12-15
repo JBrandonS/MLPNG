@@ -1,5 +1,6 @@
 import numpy as np
 import h5py
+import copy
 from itertools import product
 
 class DataLoader:
@@ -24,27 +25,26 @@ class DataLoader:
         else:
             self.seed = seed
 
+        self.file_reader = h5py.File(self.file, mode='r', swmr=True, locking=False)
+            # This should not load the data into memory
+        self.fnls = self.file_reader.get('fnls')[()]
+        self.patches = self.file_reader.get('patches')[()]
+
+        nsims, ndup, npol, npatches, nside, _ = self.patches.shape
+        
+        self.patch_vec = product(range(nsims), range(ndup), range(npol), range(npatches))
+        if self.shuffle:
+            np.random.seed(self.seed)
+            self.patch_vec = np.random.permutation(list(self.patch_vec))
+
     def __call__(self):
-        with h5py.File(self.file, mode='r', swmr=True, locking=False) as f:
-            # This does not load the data into memory
-            fnls = f['fnls']
-            patches = f['patches']
-
-            nsims, ndup, npol, npatches, nside, _ = patches.shape
+        for (i,j,k,l) in self.patch_vec:
+            # we also need to add the channel dimension as TF expects it
+            patch = copy.deepcopy(self.patches[i,j,k,l][:, :, None])
             
+            if self.normalize:
+                min_val = np.min(patch)
+                max_val = np.max(patch)
+                patch = (patch - min_val) / (max_val - min_val)
 
-            patch_vec = product(range(nsims), range(ndup), range(npol), range(npatches))
-            if self.shuffle:
-                np.random.seed(self.seed)
-                patch_vec = np.random.permutation(list(patch_vec))
-                 
-            for (i,j,k,l) in patch_vec:
-                # we also need to add the channel dimension as TF expects it
-                patch = patches[i,j,k,l][:, :, None]
-                
-                if self.normalize:
-                    min_val = np.min(patch)
-                    max_val = np.max(patch)
-                    patch = (patch - min_val) / (max_val - min_val)
-
-                yield patch, fnls[i, j]
+            yield patch, copy.deepcopy(self.fnls[i, j])

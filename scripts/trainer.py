@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import h5py
+import logging
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"  # 1
 os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit"
@@ -37,6 +38,7 @@ from keras.layers import Add, Dense, Flatten, RandomFlip, RandomRotation
 from keras.metrics import KLDivergence, RootMeanSquaredError
 from keras.optimizers import Adam
 from wandb.keras import WandbMetricsLogger, WandbModelCheckpoint
+from keras.regularizers import l2
 
 import wandb
 
@@ -80,11 +82,11 @@ def get_tfdata(start, step, batch_size, name=None):
     ret = d.skip(start).take(step)
 
     # This just fixes the logging output not knowing the dataset size
-    ret = ret.apply(tf.data.experimental.assert_cardinality(step))
+    # ret = ret.apply(tf.data.experimental.assert_cardinality(step))
 
     ret = ret.cache()
     ret = ret.batch(
-        batch_size, deterministic=False, num_parallel_calls=tf.data.AUTOTUNE, name=name
+        batch_size, num_parallel_calls=tf.data.AUTOTUNE, name=name
     )
     ret = ret.prefetch(tf.data.AUTOTUNE)
     return ret
@@ -154,18 +156,15 @@ if __name__ == "__main__":
 
     IMG_SHAPE = (s.nside, s.nside, 1)
 
-    fisher = load_data(s.data_file_complete, ["fisher"], verbose=s.verbose)["fisher"]
-    std_dev = np.sqrt(1 / fisher)
-
     if s.debug or s.verbose:
         print(f"tf version: {tf.__version__}")
 
-    batch_size = 16
+    batch_size = 1
     max_epochs = 500
 
     # load data as a generator so we do not need to have it all in memory
     d = tf.data.Dataset.from_generator(
-        DataLoader(s.data_file_complete, shuffle=True, seed=None, normalize=True),
+        DataLoader(s.data_file_complete, shuffle=False, seed=None, normalize=False),
         output_signature=(
             tf.TensorSpec(shape=IMG_SHAPE, dtype=s.r_dtype),
             tf.TensorSpec(shape=(), dtype=s.r_dtype),
@@ -190,52 +189,75 @@ if __name__ == "__main__":
     val_dataset = get_tfdata(train_size, val_size, batch_size, "val")
     test_dataset = get_tfdata(train_size + val_size, test_size, batch_size, "test")
 
-    input_img = Input(IMG_SHAPE, name="img")
-
     timestamp = int(time.time())
     model_settings = {
-        "depth": 7,
-        "n_segmentation_levels": 5,
-        "dropout_rate": 0.1,
+        "depth": 5,
+        "n_segmentation_levels": 3,
+        "dropout_rate": 0.3,
         "loss_function": tf.keras.losses.mse,
         "initial_learning_rate": 0.001,
         "name": f"isensee_attn_{s.base_name}-{timestamp}",
+        "n_base_filters": 8,
+        "n_labels": 1,
+        "interpolation": "nearest",
+        "kernel_regularizer": l2(1e-4)
+    }
+
+    # Just gather some more info for the wandb run, helps later
+    extra_info = {
+        "slurm_job_id": os.getenv("SLURM_JOB_ID") or 0,
+        "start_time": timestamp,
+        "batch_size": batch_size,
+        "max_epochs": max_epochs,
+        "comment": "kernelreg l2, multihead, dual attention added, no dense, unit norm, key dim 32 -> 16"
     }
 
     wandb.init(
         project="mlpng",
         notes="attention",
         tags=["isensee-attn", "dev"],
-        reinit=True,
-        config=s.settings | model_settings,
+        # reinit=True,
+        config=s.settings | model_settings | extra_info,
     )
 
     lr_schedule = ExponentialDecay(
         initial_learning_rate=model_settings["initial_learning_rate"],
         decay_steps=10000,
         decay_rate=0.95,
-        staircase=False,
+        staircase=True,
     )
 
     opt = Adam(
-        # learning_rate=lr_schedule,
-        learning_rate=model_settings["initial_learning_rate"],
+        learning_rate=lr_schedule,
+        # learning_rate=model_settings["initial_learning_rate"],
     )
 
     metrics = ["mean_absolute_error"]
     strategy = tf.distribute.MirroredStrategy()
     with strategy.scope():
+        input_img = Input(IMG_SHAPE, name="img")
+
+        opt = Adam(
+            learning_rate=lr_schedule,
+            # learning_rate=model_settings["initial_learning_rate"],
+        )
+
         attn_model = isensee_attn(
-            input_img, optimizer=opt, metrics=metrics, interpolation="bilinear", **model_settings
+            input_img,
+            optimizer=opt,
+            metrics=metrics,
+            **model_settings,
         )
 
     if s.debug or s.verbose:
         attn_model.summary()
+        print(f'Number of GPUs being used: {strategy.num_replicas_in_sync}')
+        print("Comment:", extra_info["comment"])
 
     callbacks = [
         EarlyStopping(
             monitor="val_loss",
-            patience=30,
+            patience=10,
             verbose=1,
             restore_best_weights=True,
             start_from_epoch=100,
@@ -260,8 +282,9 @@ if __name__ == "__main__":
     )
 
     y_pred = attn_model.predict(test_dataset, verbose="auto", callbacks=callbacks)
-    y_test = test_dataset.map(lambda _, y: y).unbatch()
+    y_test = test_dataset.map(lambda x, y: y.numpy()).unbatch()
 
+    fisher = load_data(s.data_file_complete, ["fisher"], verbose=s.verbose)["fisher"]
     plot_preds(y_test, y_pred, model_settings["name"], fisher)
     plot_history(
         attn_history,

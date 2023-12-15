@@ -1,12 +1,12 @@
 import os
 
 import h5py
-
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import tensorflow as tf
-
+from config import SimConfig
+from dataloader import DataLoader
 from keras import backend as K
 from matplotlib import pyplot as plt
 from sklearn import metrics as mt
@@ -41,14 +41,13 @@ from tensorflow.keras.layers import (
     SpatialDropout2D,
     Subtract,
     UpSampling2D,
+    UnitNormalization,
 )
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.preprocessing import sequence
-
-from config import SimConfig
-from dataloader import DataLoader
+from tensorflow.keras.regularizers import l2
 
 # %matplotlib inline
 
@@ -95,7 +94,9 @@ def create_localization_module(input_layer, n_filters):
     return create_convolution_block(convolution1, n_filters, kernel=(1, 1))
 
 
-def create_up_sampling_module(input_layer, n_filters, size=(2, 2), interpolation="bilinear"):
+def create_up_sampling_module(
+    input_layer, n_filters, size=(2, 2), interpolation="nearest"
+):
     up_sample = UpSampling2D(size=size, interpolation=interpolation)(input_layer)
     layer1 = ReflectionPadding2D()(up_sample)
     return create_convolution_block(layer1, n_filters)
@@ -118,10 +119,12 @@ def create_convolution_block(
     n_filters,
     batch_normalization=False,
     kernel=(3, 3),
-    activation="relu",  # maybe try PReLU
+    activation="relu",
+    kernel_initializer="he_uniform",
     padding="valid",
     strides=(1, 1),
     instance_normalization=True,
+    kernel_regularizer=None,
 ):
     """
     :param strides:
@@ -134,12 +137,18 @@ def create_convolution_block(
     :return:
     """
     layer = Conv2D(
-        n_filters, kernel, padding=padding, strides=strides, activation=activation, kernel_initializer='he_uniform'
+        n_filters,
+        kernel,
+        padding=padding,
+        strides=strides,
+        activation=activation,
+        kernel_initializer=kernel_initializer,
+        kernel_regularizer=kernel_regularizer,
     )(input_layer)
     if batch_normalization:
         layer = BatchNormalization()(layer)
     elif instance_normalization:
-        layer = GroupNormalization(groups=n_filters)(layer)
+        layer = UnitNormalization()(layer)
     return layer
 
 
@@ -156,6 +165,7 @@ def isensee_attn(
     name="",
     metrics=[],
     interpolation="bilinear",
+    kernel_regularizer=None,
 ):
     """
     This function builds a model proposed by Isensee et al. for the BRATS 2017 competition:
@@ -187,10 +197,19 @@ def isensee_attn(
             in_conv = create_convolution_block(layer, n_level_filters)
         else:
             layer = ReflectionPadding2D()(current_layer)
-            in_conv = create_convolution_block(layer, n_level_filters, strides=(2, 2))
+            in_conv = create_convolution_block(
+                layer,
+                n_level_filters,
+                strides=(2, 2),
+                kernel_regularizer=kernel_regularizer,
+            )
+
+        # Self-attention
+        attention = MultiHeadAttention(num_heads=1, key_dim=16)(in_conv, in_conv)
+        attention_output = Multiply()([in_conv, attention])
 
         context_output_layer = create_context_module(
-            in_conv, n_level_filters, dropout_rate=dropout_rate
+            attention_output, n_level_filters, dropout_rate=dropout_rate # in_cov -> attention
         )
 
         summation_layer = Add()([in_conv, context_output_layer])
@@ -203,19 +222,28 @@ def isensee_attn(
             current_layer, level_filters[level_number], interpolation=interpolation
         )
 
-        attention = Attention(use_scale=True, dropout=dropout_rate)(
-            [level_output_layers[level_number], up_sampling]
-        )
+        # Reg attention
+        attention = MultiHeadAttention(num_heads=1, key_dim=16)(up_sampling, level_output_layers[level_number])
+        comb_attention = LayerNormalization(epsilon=1e-6)(up_sampling + attention)
 
         concatenation_layer = Concatenate()(
-            [level_output_layers[level_number], up_sampling, attention]
+            [level_output_layers[level_number], comb_attention] # up_sampling -> comb_attention
         )
         localization_output = create_localization_module(
             concatenation_layer, level_filters[level_number]
         )
         current_layer = localization_output
         if level_number < n_segmentation_levels:
-            segmentation_layers.insert(0, Conv2D(n_labels, (1, 1), activation="relu", kernel_initializer='he_uniform')(current_layer))
+            segmentation_layers.insert(
+                0,
+                Conv2D(
+                    n_labels,
+                    (1, 1),
+                    kernel_regularizer=kernel_regularizer,
+                    activation="relu",
+                    kernel_initializer="he_uniform",
+                )(current_layer),
+            )
 
     output_layer = None
     for level_number in reversed(range(n_segmentation_levels - 1)):
@@ -231,8 +259,13 @@ def isensee_attn(
             )
 
     flat_layer = Flatten()(output_layer)
-    # out_layer = Dropout(dropout_rate)(flat_layer)
-    out_layer = Dense(1024, activation="relu", kernel_initializer='he_uniform')(flat_layer)
+    out_layer = Dropout(dropout_rate)(flat_layer)
+    # out_layer = Dense(
+    #     1024,
+    #     activation="sigmoid",
+    #     kernel_initializer="glorot_uniform",
+    #     kernel_regularizer=kernel_regularizer,
+    # )(out_layer)
     out_layer = Dense(1)(out_layer)
 
     model = Model(inputs=inputs, outputs=out_layer, name=name)

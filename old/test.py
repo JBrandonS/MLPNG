@@ -1,7 +1,7 @@
 # %%
 import os
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
-os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit"
+# os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit"
 os.environ[
     "XLA_FLAGS"
 ] = "--xla_gpu_cuda_data_dir=/hpc/mp/spack/opt/spack/linux-ubuntu20.04-zen2/gcc-10.3.0/cuda-11.4.4-ctldo35wmmwws3jbgwkgjjcjawddu3qz/"
@@ -29,7 +29,8 @@ from tensorflow.keras.layers import Layer
 
 from tensorflow.keras.layers import Multiply, Add, Lambda, GroupNormalization
 
-from tensorflow.keras.optimizers.legacy import Adam
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.optimizers.legacy import RMSprop
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
 
 from tensorflow.keras.layers import (
@@ -87,7 +88,7 @@ s = SimConfig("settings/ul_nn_256.json")
 
 # load data as a generator so we do not need to have it all in memory
 d = tf.data.Dataset.from_generator(
-    DataLoader(s.data_file_complete),
+    DataLoader(s.data_file_complete, shuffle=True, normalize=False),
     output_signature=(
         tf.TensorSpec(shape=(s.nside, s.nside, 1), dtype=s.r_dtype),
         tf.TensorSpec(shape=(), dtype=s.r_dtype),
@@ -211,7 +212,7 @@ def create_localization_module(input_layer, n_filters):
 
 
 def create_up_sampling_module(input_layer, n_filters, size=(2, 2)):
-    up_sample = UpSampling2D(size=size, interpolation='gaussian')(input_layer)
+    up_sample = UpSampling2D(size=size)(input_layer)
     layer1 = ReflectionPadding2D()(up_sample)
     return create_convolution_block(layer1, n_filters)
 
@@ -235,7 +236,7 @@ def create_convolution_block(
     n_filters,
     batch_normalization=False,
     kernel=(3, 3),
-    activation="relu", # maybe try PReLU
+    activation="sigmoid", # maybe try PReLU
     padding="valid",
     strides=(1, 1),
     instance_normalization=True,
@@ -250,19 +251,20 @@ def create_convolution_block(
     :param padding:
     :return:
     """
-    layer = Conv2D(n_filters, kernel, padding=padding, strides=strides, activation=activation)(input_layer)
+    layer = Conv2D(n_filters, kernel, padding=padding, strides=strides)(input_layer)
     if batch_normalization:
         layer = BatchNormalization()(layer)
     elif instance_normalization:
         layer = GroupNormalization(groups=n_filters)(layer)
-    #     layer = InstanceNormalization()(layer)
+        # layer = InstanceNormalization()(layer)
+    layer = Activation(activation)(layer)
     return layer
 
 def attn_model(
     inputs,
-    depth=5,
+    depth=8,
     dropout_rate=0.3,
-    n_segmentation_levels=3,
+    n_segmentation_levels=7,
     n_labels=8,
     optimizer=Adam,
     initial_learning_rate=5e-4,
@@ -292,7 +294,7 @@ def attn_model(
     level_output_layers = []
     level_filters = []
     # n_level_filters = (2**level_number) * n_base_filters
-    n_level_filters = 16
+    n_level_filters = 32
     for _ in range(depth):
         level_filters.append(n_level_filters)
 
@@ -313,22 +315,25 @@ def attn_model(
 
     segmentation_layers = []
     for level_number in range(depth - 2, -1, -1):
-        # attention = tf.keras.layers.Attention()([current_layer, current_layer])
+
         up_sampling = create_up_sampling_module(
             current_layer, level_filters[level_number]
         )
 
-        attention = Attention(use_scale=False, dropout=dropout_rate)([level_output_layers[level_number], up_sampling])
+        attention1 = Attention(use_scale=True, dropout=dropout_rate)([level_output_layers[level_number], up_sampling])
+
+        att_layer = Add()([attention1, up_sampling])
+        att_conv = create_convolution_block(att_layer, level_filters[level_number], padding='same')
 
         concatenation_layer = Concatenate()(
-            [level_output_layers[level_number], up_sampling, attention]
+            [level_output_layers[level_number], att_conv]
         )
         localization_output = create_localization_module(
             concatenation_layer, level_filters[level_number]
         )
         current_layer = localization_output
         if level_number < n_segmentation_levels:
-            segmentation_layers.insert(0, Conv2D(n_labels, (1, 1))(current_layer))
+            segmentation_layers.insert(0, Conv2D(16, (1, 1), activation="sigmoid")(current_layer))
 
     output_layer = None
     for level_number in reversed(range(n_segmentation_levels - 1)):
@@ -339,10 +344,12 @@ def attn_model(
             output_layer = Add()([output_layer, segmentation_layer])
 
         if level_number > 0:
-            output_layer = UpSampling2D(size=(2, 2), interpolation='bilinear')(output_layer)
+            output_layer = UpSampling2D(size=(2, 2))(output_layer)
 
-    flat_layer = Flatten()(output_layer)
-    out_layer = Dense(1024)(flat_layer)
+    out_layer = Flatten()(output_layer)
+    out_layer = Dropout(dropout_rate)(out_layer)
+    out_layer = Activation("sigmoid")(out_layer)
+    out_layer = Dense(1024)(out_layer)
     out_layer = Dense(1)(out_layer)
 
     model = Model(inputs=inputs, outputs=out_layer, name=name)
@@ -355,11 +362,14 @@ with strategy.scope():
 
     model.compile(optimizer=Adam(learning_rate=0.001), 
               loss='mean_squared_error', 
-              metrics=['mean_squared_error'])
+              metrics=['mean_absolute_error'])
     
 print(model.summary())
 
-early_stopping = EarlyStopping(monitor='val_loss', patience=10)
+from tensorflow.keras.utils import plot_model
+plot_model(model, to_file='test-model.png', show_shapes=True, show_layer_names=True, expand_nested=True, show_layer_activations=True, show_trainable=True)
+
+# early_stopping = EarlyStopping(monitor='val_loss', patience=30)
 
 lr_decay = 0.5
 lrd_patience = 10 #10, 3, 20 (originally 3)
@@ -372,10 +382,9 @@ NUM_EPOCHS = 300
 history = model.fit(X_train, 
                     y_train, 
                     epochs=NUM_EPOCHS,
-                    shuffle=True,
-                    # batch_size=1, 
+                    verbose = 2, 
                     validation_data=(X_test, y_test),
-                    callbacks=[tb],)
+                    callbacks=[reduce_lr, tb])
 
 # %%
 
@@ -401,7 +410,7 @@ y_pred = model.predict(X_val, verbose=1)
 df = pd.DataFrame({'True Labels': y_val.flatten(), 'Predicted Labels': y_pred.flatten()})
 mean = df['True Labels'].mean()
 
-fisher = load_data(s.data_file_complete, ["fisher"], verbose=s.verbose)[0]
+fisher = load_data(s.data_file_complete, ["fisher"], verbose=s.verbose)["fisher"]
 std_dev = np.sqrt(1/fisher)
 
 from sklearn.metrics import r2_score
@@ -411,9 +420,9 @@ r2 = r2_score(df['True Labels'], df['Predicted Labels'])
 plt.figure(figsize=(12, 6))
 sns.scatterplot(data=df, x='True Labels', y='Predicted Labels')
 
-plt.plot([min(y_val), max(y_val)], [mean, mean], color='green', linestyle='--')
-plt.plot([min(y_val), max(y_val)], [mean + std_dev, mean + std_dev], color='blue', linestyle='--')
-plt.plot([min(y_val), max(y_val)], [mean - std_dev, mean - std_dev], color='blue', linestyle='--')
+# plt.plot([min(y_val), max(y_val)], [mean, mean], color='green', linestyle='--')
+# plt.plot([min(y_val), max(y_val)], [mean + std_dev, mean + std_dev], color='blue', linestyle='--')
+# plt.plot([min(y_val), max(y_val)], [mean - std_dev, mean - std_dev], color='blue', linestyle='--')
 
 # Line for perfect fit
 plt.text(min(y_val), max(y_val), f'R^2 = {r2:.2f}', verticalalignment='top')
