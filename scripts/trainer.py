@@ -37,6 +37,8 @@ from dataloader import DataLoader
 from isensee import *
 from config import SimConfig
 
+import logging as log
+
 
 def safe_makedirs(dir, verbose=False):
     "Create a directory if it does not exist. Handles a race condition"
@@ -142,11 +144,17 @@ def make_bs_model(
 
 
 if __name__ == "__main__":
+    log.basicConfig(
+        level=log.INFO, 
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
+        datefmt='%d-%b-%y %H:%M:%S',
+        handlers=[log.StreamHandler(sys.stdout)]
+    )
+    
     config_file = sys.argv[1] if len(sys.argv) > 1 else "settings/settings.json"
     s = SimConfig(config_file)
 
-    if s.debug or s.verbose:
-        print(f"tf version: {tf.__version__}")
+    log.debug("tf version: %s", tf.__version__)
 
     # Is this needed?
     safe_makedirs(s.data_dir)

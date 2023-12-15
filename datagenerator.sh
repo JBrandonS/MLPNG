@@ -6,16 +6,21 @@ set -e
 SETTINGS_DIR="settings/"
 
 # SETTINGS=("l_128.json")
-SETTINGS=("ul_nn_128.json" "l_nn_128.json"  "l_128.json")
-SETTINGS=(
-  "ul_nn_128.json"  "l_nn_128.json"  "l_128.json" 
-  "ul_nn_256.json"  "l_nn_256.json"  "l_256.json"
-  "ul_nn_512.json"  "l_nn_512.json"  "l_512.json"
-  "ul_nn_1024.json" "l_nn_1024.json" "l_1024.json" 
-  "ul_nn_2048.json" "l_nn_2048.json" "l_2048.json"
-)
+# SETTINGS=("ul_nn_128.json" "l_nn_128.json"  "l_128.json")
+# SETTINGS=(
+#   "ul_nn_128.json"  "l_nn_128.json"  "l_128.json" 
+#   "ul_nn_256.json"  "l_nn_256.json"  "l_256.json"
+#   "ul_nn_512.json"  "l_nn_512.json"  "l_512.json"
+#   "ul_nn_1024.json" "l_nn_1024.json" "l_1024.json" 
+#   "ul_nn_2048.json" "l_nn_2048.json" "l_2048.json"
+# )
 # SETTINGS=("l_2048_single_neg.json" "l_2048_single_zero.json" "l_2048_single_pos.json")
-# SETTINGS=("scraped.json")
+# SETTINGS=("ul_nn_256_large.json")
+
+SETTINGS=(
+  "ul_nn_128_large.json" "ul_nn_512_large.json" "ul_nn_1024_large.json" "ul_nn_2048_large.json"
+  "l_128_large.json"  "l_256_large.json" "l_512_large.json"  "l_1024_large.json"  "l_2048_large.json"
+)
 
 # SETTINGS=("${SETTINGS_DIR}"*.json)
 
@@ -25,8 +30,6 @@ JOB2="scripts/combiner.sbatch"
 JOB3="scripts/estimator.sbatch"
 
 mkdir -p logs/datagen/ logs/combiner/ logs/estimator/
-
-
 
 for x in "${SETTINGS[@]}"
 do

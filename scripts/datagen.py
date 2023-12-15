@@ -8,6 +8,8 @@ from numpy.random import randint, uniform
 import matplotlib.pyplot as plt
 from scipy.interpolate import CubicSpline
 
+import logging
+
 from functools import partial
 from joblib import Parallel, delayed
 
@@ -31,14 +33,9 @@ from utils import (
 from config import SimConfig
 import lenspyx
 
-# %matplotlib inline
+from joblib import Parallel, delayed
 
-
-def vp(*args, **kwargs):
-    """prints arguments with a timestamp if verbose is set, use like print()"""
-    if s.verbose:
-        print(f"{datetime.datetime.now()}:", *args, **kwargs)
-
+log = logging.getLogger(__name__)
 
 def get_alm(alm, bl_div_cl, alpha_l, r, dr):
     """This calculates the alms from the precalculated values"""
@@ -68,7 +65,7 @@ def cutSqPatches_lenspyx(s, fs_shape, fs_wcs, pshapes, pwcs, cl_phi, alm, fnl, a
         alms,
         dlm,
         geometry=geom_info,
-        nthreads=s.settings["nthreads_sim"],
+        nthreads=4,
         verbose=s.debug,
         epsilon=epsilon,
         pol=False,
@@ -155,21 +152,7 @@ def generate_almngs():
         for j in range(s.npol):
             alms[i, j] = hp.almxfl(alms[i, j], beam_ell_2d[j] ** -1)
 
-    sdata = {}
-    sdata["alm"] = alms
-    # only save 1 copy of the settings in the alms
-    if s.job_array_index is None or s.job_array_index == 1:
-        sdata["settings"] = s.settings
-    save_data(s.alm_file_nc, sdata, verbose=s.verbose)
-
-    # if s.debug:
-    #     random_indices = [(randint(s.nsims), randint(s.npol)) for _ in range(1)]
-    #     for sim, pol in random_indices:
-    #         plot_cl_alm(
-    #             alms[sim, pol], s, c_ells=c_ells, save_name=f"{s.name}-alm_{sim}-{pol}"
-    #         )
-
-    vp("Starting almng...")
+    log.info("Starting almng generation")
     sim_data = np.zeros((s.nsims, s.npol, s.nelem), dtype=s.c_dtype)
     for i in tqdm(range(s.nsims), desc="almng progress"):
         for pol in range(s.npol):
@@ -193,10 +176,17 @@ def generate_almngs():
 
         # if s.debug:
         # plot_cl_alm(sim_data[i, pol].copy(), s, plt_camb=False, save_name=s.base_name + "_get_alm_plot_complete")
-    vp("Done!")
+    log.info("Done!")
 
-    save_data(s.alm_file_nc, {"almng": sim_data}, verbose=s.verbose)
+    sdata = {}
+    sdata["alm"] = alms
+    sdata["almng"] = sim_data
+    if s.job_array_index is None or s.job_array_index == 1:
+        sdata["settings"] = s.settings
+
+    save_data(s.alm_file_nc, sdata, verbose=s.verbose)
     os.replace(s.alm_file_nc, s.alm_file_partial)
+    return sdata
 
 
 def get_fs_patch_geo():
@@ -260,6 +250,12 @@ if __name__ == "__main__":
     # ---
 
     # %%
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%d-%b-%y %H:%M:%S",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
 
     config_file = sys.argv[1] if len(sys.argv) > 1 else "settings/settings.json"
     s = SimConfig(config_file)
@@ -289,32 +285,38 @@ if __name__ == "__main__":
     # here we load in the alms either from a complete, combined, file or individual
     # if neither are found we generate the alms
     if os.path.isfile(s.alm_file_complete) and not s.settings["force_alm_gen"]:
-        vp("Found completed alms file, skipping alm generation")
+        log.info("Found completed alms file, skipping alm generation")
         alm_file = s.alm_file_complete
+        log.info("Loading alms")
+        ldata = load_data(alm_file, ["alm", "almng"], verbose=s.verbose)
+        log.info("Done!")
     elif os.path.isfile(s.alm_file_partial) and not s.settings["force_alm_gen"]:
-        vp(f"Found partial alms file {s.alm_file_partial}, skipping alm generation")
+        log.info(
+            "Found partial alm file %s, skipping alm generation", s.alm_file_partial
+        )
         alm_file = s.alm_file_partial
+        log.info("Loading alms")
+        ldata = load_data(alm_file, ["alm", "almng"], verbose=s.verbose)
+        log.info("Done!")
     else:
         alm_file = s.alm_file_nc
 
         if os.path.isfile(s.alm_file_nc):
-            vp("Removing stale alm file", s.alm_file_nc)
+            log.debug("Removing stale alm file: %s", s.alm_file_nc)
             os.remove(s.alm_file_nc)
 
-        vp("Generating new alms")
-        generate_almngs()
+        log.debug("Generating new alms")
+        ldata = generate_almngs()
         alm_file = s.alm_file_partial
-
-    # Just load everything into memory right now, shouldn't be much of a problem until >10k sims
-    vp("Loading alms")
-    ldata = load_data(alm_file, ["alm", "almng"], verbose=s.verbose)
-    vp("Done!")
 
     alms = ldata["alm"]
     almngs = ldata["almng"]
 
+    # Here we get the geometry of our patches
+    # we also setup the cutPatches function to use either pixell or lenspyx
+    # depending on if we are doing lensing or not, and provide a lot of
+    # arguments that are needed and will stay constant
     fs_shape, fs_wcs, fs_map, patch_shapes, patch_wcss = get_fs_patch_geo()
-
     if s.lensing:
         cl_phi = ksw_data.cosmology._camb_data.get_lens_potential_cls(
             s.cosmo_params["max_l"], CMB_unit="muK", raw_cl=True
@@ -327,36 +329,55 @@ if __name__ == "__main__":
             cutSqPatches_pixell, s, fs_shape, fs_wcs, fs_map, patch_shapes, patch_wcss
         )
 
+    # Here we generate the fnls
     fnls = uniform(
         s.settings["fnl_range"][0], s.settings["fnl_range"][1], (s.nsims, s.ndup)
     )
+
+    # Start the patch generation, create the array to store the patches
     patches = np.empty(
         (s.nsims, s.ndup, s.npol, s.npatches, s.nside, s.nside), dtype=s.r_dtype
     )
-    for i in tqdm(range(s.nsims), desc="patch progress"):
-        for j in range(s.ndup):
-            for pol in range(s.npol):
-                patches[i, j, pol] = np.array(
-                    cutPatches(alms[i, pol], fnls[i, j], almngs[i, pol])
-                )
+
+    # helper function to process a single patch
+    def process_patch(i, j, pol):
+        return np.array(cutPatches(alms[i, pol], fnls[i, j], almngs[i, pol]))
+
+    # We setup an array with all our possible arguments to pass to the function
+    args = [
+        (i, j, pol)
+        for i in range(s.nsims)
+        for j in range(s.ndup)
+        for pol in range(s.npol)
+    ]
+    # lets get our generator setup using parallel, return as generator so we consume memory as we go
+    patch_generator = Parallel(
+        n_jobs=s.settings["nthreads_sim"] // 4, return_as="generator"
+    )(delayed(process_patch)(*arg) for arg in args)
+    # actually gets our data from the generator, only update every 100 runs
+    for idx, result in enumerate(tqdm(patch_generator, desc="patch progress", total=len(args), miniters=100)):
+        i, j, pol = args[idx]
+        patches[i, j, pol] = result
 
     # Save data
     sdata = {}
     sdata["fnls"] = fnls
     sdata["patches"] = np.array(patches)
 
+    # only save 1 copy of the settings
     if s.job_array_index is None or s.job_array_index == 1:
         sdata["settings"] = s.settings
 
+    # remove the partial file if it exists
     if os.path.isfile(s.data_file_nc):
-        vp("Removing stale data file", s.data_file_nc)
+        log.debug("Removing stale data file: %s", s.data_file_nc)
         os.remove(s.data_file_nc)
 
     save_data(s.data_file_nc, sdata, verbose=s.verbose)
     # os.replace(s.data_file_nc, s.data_file_complete)
 
     # %%
-    vp("Done with Generation!")
+    log.info("Done with Generation!")
 
     # below just generates a nice graph, possibly duplicating the patches
     # this only runs once per sim and only if debug = True

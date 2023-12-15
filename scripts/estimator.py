@@ -16,6 +16,8 @@ from config import SimConfig
 # but try except doesn't work for some reason, and makes completion error
 from mpi4py import MPI
 
+import logging
+
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
@@ -32,24 +34,11 @@ def alm_loader(str_idx):
     almng = load_single_data(s.alm_file_complete, "almng", idx, verbose=s.verbose)[pol]
     fnl = load_single_data(s.data_file_nc, "fnls", idx, verbose=s.verbose)[dup_idx]
 
-    vp('idx:', idx, 'dup_idx:', dup_idx, 'fnl:', fnl)
+    log.debug('idx: %s, dup_idx: %s, fnl: %s', idx, dup_idx, fnl)
 
     alm = remove_mono_dipole(alm)
     almng = remove_mono_dipole(almng)
     return alm + fnl * almng
-
-
-def vp(*args, **kwargs):
-    """
-    Printer helper, adds rank and time to the log and only prints if verbose is enabled.
-    Use like print()
-    """
-    if s is None or rank is None:
-        print("FIXME: cannot print here.")
-        return
-
-    if s.verbose and rank == 0:
-        print(f"{rank} | {datetime.datetime.now()} =>", *args, **kwargs, flush=True)
 
 def remove_mono_dipole(alm):
     """
@@ -59,15 +48,24 @@ def remove_mono_dipole(alm):
     alm[hp.Alm.getidx(lmax, 0, 0)] = 0.0  # Remove monopole
     alm[hp.Alm.getidx(lmax, 1, 0)] = 0.0  # Remove dipole
     alm[hp.Alm.getidx(lmax, 1, 1)] = 0.0  # Remove dipole
+    alm[hp.Alm.getidx(lmax, 1,-1)] = 0.0  # Remove dipole
     return alm
 
 if __name__ == "__main__":
     # Loads in our settings file, defaulting to settings/settings.json if no argument was provided
+    logging.basicConfig(
+        level=logging.INFO, 
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
+        datefmt='%d-%b-%y %H:%M:%S',
+        handlers=[logging.StreamHandler(sys.stdout)]
+    )
+    log = logging.getLogger(__name__)
+
     config_file = sys.argv[1] if len(sys.argv) > 1 else "settings/settings.json"
     s = SimConfig(config_file, print_settings=(rank == 0))
 
     # init camb and setup the reduced bispecturm to local
-    vp("Running camb")
+    log.info("Running camb")
     camb_params_obj = camb.set_params(**s.cosmo_params)
     cosmo = Cosmology(camb_params_obj)
     cosmo.compute_transfer(s.cosmo_params["max_l"], verbose=((rank == 0) and s.verbose))
@@ -78,7 +76,7 @@ if __name__ == "__main__":
         ns=s.cosmo_params["ns"], pivot=s.cosmo_params["pivot_scalar"]
     )
     cosmo.add_prim_reduced_bispectrum(loc_shape, radii)
-    vp("done")
+    log.info("done")
 
     noise_ell, beam_ell = s.get_noise_beam()
     data = Data(s.lmax, noise_ell, beam_ell, s.polarizations, cosmo)
@@ -115,33 +113,33 @@ if __name__ == "__main__":
 
     # 100 should be ~1%, so we take a random 100 for initializing the KSW estimator
     alm_strs = np.arange(s.total_sims).astype(str)
-    if s.total_sims > 1000:
-        alm_strs = np.random.choice(alm_strs, size=1000, replace=False)
+    if s.total_sims > 100:
+        alm_strs = np.arange(100) #np.random.choice(alm_strs, size=100, replace=False)
 
     def alm_step_loader(idx):
         # needs a gaussian realization of signal + noise
         return data.compute_alm_sim(lens_power=s.lensing)
     
-    vp("Running KSW step")
+    log.debug("Running KSW step")
     ksw.step_batch(alm_step_loader, alm_strs, comm, verbose=(rank == 0), theta_batch=theta_batch)
-    vp("done")
+    log.debug("done")
 
     # Disabling for now
     # if rank == 0:
     #     ksw.write_state(ksw_mc_file, comm)
 
-    vp("Computing estimates")
+    log.debug("Computing estimates")
     fisher = ksw.compute_fisher()
-    alm_strs = np.arange(s.total_sims).astype(str)
+    # alm_strs = np.arange(s.total_sims).astype(str)
     estimates = ksw.compute_estimate_batch(
         alm_loader,
         alm_strs,
         comm,
         verbose=(rank == 0),
-        # fisher=fisher,
+        fisher=fisher,
         # theta_batch=theta_batch,
     )
-    vp("done")
+    log.debug("done")
 
     def compute_icov_ell(N, b):
         S_ell = cosmo._camb_data.get_cmb_power_spectra(
@@ -159,15 +157,15 @@ if __name__ == "__main__":
 
         fnls = load_data(s.data_file_nc, ["fnls"], verbose=s.verbose)["fnls"]
         fnls = fnls.ravel()
-        snr = (estimates - fnls) * np.sqrt(fisher)
+        est_length = estimates.shape[0]
+        snr = (estimates - fnls[est_length]) * np.sqrt(fisher)
 
         sdata["fisher"] = np.atleast_1d(fisher)
         sdata["fisher_iso"] = np.atleast_1d(fisher_iso)
         sdata["estimates"] = estimates
         sdata["errors"] = snr
-        sdata["errors_var"] = np.atleast_1d(np.var(snr))
 
         save_data(s.data_file_nc, sdata, verbose=s.verbose)
         os.replace(s.data_file_nc, s.data_file_complete)
 
-    vp("Finished", rank, "!")
+    log.debug("Finished %s!", rank)
