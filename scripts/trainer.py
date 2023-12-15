@@ -1,10 +1,10 @@
 import os
 import sys
 import time
-import h5py
-import logging
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"  # 1
+import h5py
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"  # 1
 os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit"
 os.environ[
     "XLA_FLAGS"
@@ -12,41 +12,33 @@ os.environ[
 
 import matplotlib.pyplot as plt
 import numpy as np
-import tensorflow as tf
-
 import pandas as pd
+import tensorflow as tf
 
 plt.rcParams.update({"font.size": 13})
 
 keras = tf.keras  # fixes issues with vsCode
 
+import logging as log
+
+import seaborn as sns
 from config import SimConfig
 from dataloader import DataLoader
 from isensee import isensee2017_model
 from isensee_attn import isensee_attn
-
 from keras import Input, Model
-from keras.callbacks import (
-    EarlyStopping,
-    ModelCheckpoint,
-    ReduceLROnPlateau,
-    TensorBoard,
-)
-
-from tensorflow.keras.optimizers.schedules import ExponentialDecay
+from keras.callbacks import (EarlyStopping, ModelCheckpoint, ReduceLROnPlateau,
+                             TensorBoard)
 from keras.layers import Add, Dense, Flatten, RandomFlip, RandomRotation
 from keras.metrics import KLDivergence, RootMeanSquaredError
 from keras.optimizers import Adam
-from wandb.keras import WandbMetricsLogger, WandbModelCheckpoint
 from keras.regularizers import l2
+from sklearn.metrics import r2_score
+from tensorflow.keras.optimizers.schedules import ExponentialDecay
+from wandb.keras import WandbMetricsLogger, WandbModelCheckpoint
 
 import wandb
 
-from sklearn.metrics import r2_score
-
-import seaborn as sns
-
-import logging as log
 
 def load_data(data_file, keys, start_index=None, end_index=None, verbose=False):
     if isinstance(keys, str):
@@ -83,12 +75,12 @@ def get_tfdata(start, step, batch_size, name=None):
     ret = d.skip(start).take(step)
 
     # This just fixes the logging output not knowing the dataset size
-    # ret = ret.apply(tf.data.experimental.assert_cardinality(step))
+    ret = ret.apply(tf.data.experimental.assert_cardinality(step))
 
     ret = ret.cache()
-    ret = ret.batch(
-        batch_size, num_parallel_calls=tf.data.AUTOTUNE, name=name
-    )
+    # ret = ret.batch(
+    #     batch_size, num_parallel_calls=tf.data.AUTOTUNE, name=name
+    # )
     ret = ret.prefetch(tf.data.AUTOTUNE)
     return ret
 
@@ -167,36 +159,15 @@ if __name__ == "__main__":
     if s.debug or s.verbose:
         print(f"tf version: {tf.__version__}")
 
-    batch_size = 1
+    batch_size = 2
     max_epochs = 500
 
     # load data as a generator so we do not need to have it all in memory
-    d = tf.data.Dataset.from_generator(
-        DataLoader(s.data_file_complete, shuffle=False, seed=None, normalize=False),
-        output_signature=(
-            tf.TensorSpec(shape=IMG_SHAPE, dtype=s.r_dtype),
-            tf.TensorSpec(shape=(), dtype=s.r_dtype),
-        ),
-    )
+    data_loader = DataLoader(s.data_file_complete, shuffle=True, seed=None, normalize=True)
+    train_dataset, test_dataset, val_dataset = data_loader.get_split_tfdataset(0.06, 0.02, 0.02, batch_size=batch_size)
 
-    # fix a log warning
-    options = tf.data.Options()
-    options.experimental_distribute.auto_shard_policy = (
-        tf.data.experimental.AutoShardPolicy.DATA
-    )
-    d = d.with_options(options)
-
-    # Setup the data split as 80/10/10
-    n = s.total_sims
-    train_size = int(n * 0.8)
-    val_size = int(n * 0.1)
-    test_size = int(n * 0.1)
-
-    # loads in the datasets
-    train_dataset = get_tfdata(0, train_size, batch_size, "train")
-    val_dataset = get_tfdata(train_size, val_size, batch_size, "val")
-    test_dataset = get_tfdata(train_size + val_size, test_size, batch_size, "test")
-
+    # These get passed into the isensee_attn model, doing this here so we can save them into
+    # wandb for later analysis
     timestamp = int(time.time())
     model_settings = {
         "depth": 5,
@@ -205,10 +176,12 @@ if __name__ == "__main__":
         "loss_function": tf.keras.losses.mse,
         "initial_learning_rate": 0.001,
         "name": f"isensee_attn_{s.base_name}-{timestamp}",
-        "n_base_filters": 8,
+        "n_base_filters": 32,
         "n_labels": 1,
         "interpolation": "nearest",
-        "kernel_regularizer": l2(1e-4)
+        "kernel_regularizer": l2(1e-4),
+        "attn_heads": 1,
+        "attn_key_dim": 16,
     }
 
     # Just gather some more info for the wandb run, helps later
@@ -217,7 +190,7 @@ if __name__ == "__main__":
         "start_time": timestamp,
         "batch_size": batch_size,
         "max_epochs": max_epochs,
-        "comment": "kernelreg l2, multihead, dual attention added, no dense, unit norm, key dim 32 -> 16"
+        "comment": "kernelreg l2, multihead, attention moved to start, group norm"
     }
 
     wandb.init(
@@ -235,10 +208,24 @@ if __name__ == "__main__":
         staircase=True,
     )
 
-    opt = Adam(
-        learning_rate=lr_schedule,
-        # learning_rate=model_settings["initial_learning_rate"],
-    )
+    callbacks = [
+        EarlyStopping(
+            monitor="val_loss",
+            patience=10,
+            verbose=1,
+            restore_best_weights=True,
+            start_from_epoch=10,
+        ),
+        ModelCheckpoint(
+            f"data/models/isensee_attn-{s.base_name}" + "-{epoch:03d}.tf",
+            monitor="val_loss",
+            save_best_only=True,
+            mode="auto",
+        ),
+        WandbMetricsLogger(),
+        # WandbModelCheckpoint(filepath=f"{s.model_dir}/wandb"),
+        # TensorBoard(log_dir=s.tb_dir),
+    ]
 
     metrics = ["mean_absolute_error"]
     strategy = tf.distribute.MirroredStrategy()
@@ -259,38 +246,19 @@ if __name__ == "__main__":
 
     if s.debug or s.verbose:
         attn_model.summary()
-        print(f'Number of GPUs being used: {strategy.num_replicas_in_sync}')
-        print("Comment:", extra_info["comment"])
-
-    callbacks = [
-        EarlyStopping(
-            monitor="val_loss",
-            patience=10,
-            verbose=1,
-            restore_best_weights=True,
-            start_from_epoch=100,
-        ),
-        ModelCheckpoint(
-            f"data/models/isensee_attn-{s.base_name}" + "-{epoch:03d}.tf",
-            monitor="val_loss",
-            save_best_only=True,
-            mode="auto",
-        ),
-        WandbMetricsLogger(),
-        # WandbModelCheckpoint(filepath=f"{s.model_dir}/wandb"),
-        # TensorBoard(log_dir=s.tb_dir),
-    ]
+        log.info("Number of GPUs being used: %s", strategy.num_replicas_in_sync)
+        log.info("Comment: %s", extra_info["comment"])
 
     attn_history = attn_model.fit(
         train_dataset,
         validation_data=val_dataset,
         epochs=max_epochs,
         callbacks=callbacks,
-        verbose=2,
+        verbose=1,
     )
 
     y_pred = attn_model.predict(test_dataset, verbose="auto", callbacks=callbacks)
-    y_test = test_dataset.map(lambda x, y: y.numpy()).unbatch()
+    y_test = np.concatenate([y.numpy() for x, y in test_dataset])
 
     fisher = load_data(s.data_file_complete, ["fisher"], verbose=s.verbose)["fisher"]
     plot_preds(y_test, y_pred, model_settings["name"], fisher)
