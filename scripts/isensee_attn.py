@@ -1,30 +1,68 @@
-# %%
+import os
+
+import h5py
+
+import numpy as np
+import pandas as pd
+import seaborn as sns
 import tensorflow as tf
 
-keras = tf.keras  # fixes issues with vsCode
 from keras import backend as K
-import matplotlib.pyplot as plt
-plt.rcParams.update({"font.size": 13})
-
-from keras import Input, Model
-from keras.layers import (
-    Layer,
-    LeakyReLU,
-    Add,
-    UpSampling2D,
+from matplotlib import pyplot as plt
+from sklearn import metrics as mt
+from tensorflow import pad
+from tensorflow.keras import Sequential
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, TensorBoard
+from tensorflow.keras.layers import (
     Activation,
-    SpatialDropout2D,
-    Conv2D,
+    Add,
+    Attention,
     BatchNormalization,
     Concatenate,
-    Flatten,
+    Conv1D,
+    Conv2D,
     Dense,
+    Dropout,
+    Embedding,
+    Flatten,
+    GlobalAveragePooling1D,
+    GlobalAveragePooling2D,
     GroupNormalization,
+    Input,
+    Lambda,
+    Layer,
+    LayerNormalization,
+    LeakyReLU,
+    MaxPooling1D,
+    MultiHeadAttention,
+    Multiply,
+    PReLU,
+    SeparableConv2D,
+    SpatialDropout2D,
+    Subtract,
+    UpSampling2D,
 )
-from keras.optimizers import Adam
+from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.optimizers.schedules import ExponentialDecay
+from tensorflow.keras.preprocessing import sequence
 
-from tensorflow import pad
-# from tensorflow_addons.layers import InstanceNormalization
+from config import SimConfig
+from dataloader import DataLoader
+
+# %matplotlib inline
+
+
+def dice_coefficient(y_true, y_pred, smooth=1.0):
+    y_true_f = K.flatten(y_true)
+    y_pred_f = K.flatten(y_pred)
+    intersection = K.sum(y_true_f * y_pred_f)
+    return (2.0 * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
+
+
+def dice_coefficient_loss(y_true, y_pred):
+    return -dice_coefficient(y_true, y_pred)
+
 
 class ReflectionPadding2D(Layer):
     def __init__(self, padding=(1, 1), **kwargs):
@@ -39,13 +77,15 @@ class ReflectionPadding2D(Layer):
     def call(self, x, mask=None):
         w_pad, h_pad = self.padding
         return pad(x, [[0, 0], [h_pad, h_pad], [w_pad, w_pad], [0, 0]], "REFLECT")
-    
+
     def get_config(self):
         config = super().get_config()
-        config.update({
-            "padding": self.padding,
-            "input_spec": self.input_spec,
-        })
+        config.update(
+            {
+                "padding": self.padding,
+                "input_spec": self.input_spec,
+            }
+        )
         return config
 
 
@@ -55,8 +95,8 @@ def create_localization_module(input_layer, n_filters):
     return create_convolution_block(convolution1, n_filters, kernel=(1, 1))
 
 
-def create_up_sampling_module(input_layer, n_filters, size=(2, 2)):
-    up_sample = UpSampling2D(size=size)(input_layer)
+def create_up_sampling_module(input_layer, n_filters, size=(2, 2), interpolation="bilinear"):
+    up_sample = UpSampling2D(size=size, interpolation=interpolation)(input_layer)
     layer1 = ReflectionPadding2D()(up_sample)
     return create_convolution_block(layer1, n_filters)
 
@@ -70,9 +110,7 @@ def create_context_module(
     )
     dropout = SpatialDropout2D(rate=dropout_rate, data_format=data_format)(convolution1)
     layer2 = ReflectionPadding2D()(dropout)
-    return create_convolution_block(
-        input_layer=layer2, n_filters=n_level_filters
-    )
+    return create_convolution_block(input_layer=layer2, n_filters=n_level_filters)
 
 
 def create_convolution_block(
@@ -80,7 +118,7 @@ def create_convolution_block(
     n_filters,
     batch_normalization=False,
     kernel=(3, 3),
-    activation=LeakyReLU, # maybe try PReLU
+    activation="relu",  # maybe try PReLU
     padding="valid",
     strides=(1, 1),
     instance_normalization=True,
@@ -95,37 +133,29 @@ def create_convolution_block(
     :param padding:
     :return:
     """
-    layer = Conv2D(n_filters, kernel, padding=padding, strides=strides)(input_layer)
+    layer = Conv2D(
+        n_filters, kernel, padding=padding, strides=strides, activation=activation, kernel_initializer='he_uniform'
+    )(input_layer)
     if batch_normalization:
         layer = BatchNormalization()(layer)
     elif instance_normalization:
         layer = GroupNormalization(groups=n_filters)(layer)
-    #     layer = InstanceNormalization()(layer)
-    return Activation("relu")(layer) if activation is None else activation()(layer)
+    return layer
 
 
-def dice_coefficient(y_true, y_pred, smooth=1.0):
-    y_true_f = K.flatten(y_true)
-    y_pred_f = K.flatten(y_pred)
-    intersection = K.sum(y_true_f * y_pred_f)
-    return (2.0 * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
-
-
-def dice_coefficient_loss(y_true, y_pred):
-    return -dice_coefficient(y_true, y_pred)
-
-def isensee2017_model(
+def isensee_attn(
     inputs,
-    n_base_filters=8,
+    n_base_filters=16,
     depth=5,
     dropout_rate=0.3,
     n_segmentation_levels=3,
-    n_labels=1,
+    n_labels=8,
     optimizer=Adam,
     initial_learning_rate=5e-4,
     loss_function=dice_coefficient_loss,
-    activation_name="relu",
-    name=''
+    name="",
+    metrics=[],
+    interpolation="bilinear",
 ):
     """
     This function builds a model proposed by Isensee et al. for the BRATS 2017 competition:
@@ -148,8 +178,7 @@ def isensee2017_model(
     current_layer = inputs
     level_output_layers = []
     level_filters = []
-    # n_level_filters = (2**level_number) * n_base_filters
-    n_level_filters = 8
+    n_level_filters = n_base_filters
     for _ in range(depth):
         level_filters.append(n_level_filters)
 
@@ -171,17 +200,22 @@ def isensee2017_model(
     segmentation_layers = []
     for level_number in range(depth - 2, -1, -1):
         up_sampling = create_up_sampling_module(
-            current_layer, level_filters[level_number]
+            current_layer, level_filters[level_number], interpolation=interpolation
         )
-        concatenation_layer = Concatenate()(
+
+        attention = Attention(use_scale=True, dropout=dropout_rate)(
             [level_output_layers[level_number], up_sampling]
+        )
+
+        concatenation_layer = Concatenate()(
+            [level_output_layers[level_number], up_sampling, attention]
         )
         localization_output = create_localization_module(
             concatenation_layer, level_filters[level_number]
         )
         current_layer = localization_output
         if level_number < n_segmentation_levels:
-            segmentation_layers.insert(0, Conv2D(n_labels, (1, 1))(current_layer))
+            segmentation_layers.insert(0, Conv2D(n_labels, (1, 1), activation="relu", kernel_initializer='he_uniform')(current_layer))
 
     output_layer = None
     for level_number in reversed(range(n_segmentation_levels - 1)):
@@ -192,15 +226,24 @@ def isensee2017_model(
             output_layer = Add()([output_layer, segmentation_layer])
 
         if level_number > 0:
-            output_layer = UpSampling2D(size=(2, 2))(output_layer)
+            output_layer = UpSampling2D(size=(2, 2), interpolation=interpolation)(
+                output_layer
+            )
 
     flat_layer = Flatten()(output_layer)
-    out_layer = Dense(1, activation=None)(flat_layer)
+    # out_layer = Dropout(dropout_rate)(flat_layer)
+    out_layer = Dense(1024, activation="relu", kernel_initializer='he_uniform')(flat_layer)
+    out_layer = Dense(1)(out_layer)
 
     model = Model(inputs=inputs, outputs=out_layer, name=name)
+
+    # Allows for us to pass in a complete optimizer or incomplete with learning rate
+    if callable(optimizer):
+        optimizer = optimizer(learning_rate=initial_learning_rate)
+
     model.compile(
-        optimizer=optimizer(learning_rate=initial_learning_rate),
+        optimizer=optimizer,
         loss=loss_function,
-        metrics=[tf.keras.metrics.RootMeanSquaredError(), tf.keras.metrics.MeanAbsoluteError()],
+        metrics=metrics,
     )
     return model
