@@ -1,6 +1,7 @@
 #!/bin/bash
 
 FULL_CLEAN=0
+CLEAN_INCOMPLETE=0
 
 # Check for --full flag
 if [[ "$1" == "--full" ]]; then
@@ -10,6 +11,15 @@ if [[ "$1" == "--full" ]]; then
     FULL_CLEAN=1
 fi
 
+if [[ "$1" == "--clean-incomplete" ]]; then
+    echo "Removing incomplete data files..."
+    CLEAN_INCOMPLETE=1
+fi
+
+rm -rvf logs/datagen/*
+rm -rvf logs/*/*.log
+rm -vf nohup.out
+
 cd "data" || ( echo "cannot find data folder" && exit )
 
 echo "Currently in directory: $(pwd)"
@@ -18,27 +28,24 @@ rm -rvf plots/*
 rm -rvf models/*
 rm -rvf tensorboard/*
 
-directories=('alm_cache' 'lensed' 'unlensed')
+if [[ "$CLEAN_INCOMPLETE" -eq 1 ]] || [[ "$FULL_CLEAN" -eq 1 ]]; then
+    directories=('alm_cache' 'lensed' 'unlensed')
+    for dir in "${directories[@]}"; do
+        cd "$dir" 2>/dev/null || continue
+        echo "Currently in directory: $(pwd)"
 
-for dir in "${directories[@]}"; do
-    cd "$dir" 2>/dev/null || continue
-    echo "Currently in directory: $(pwd)"
+        if [[ "$CLEAN_INCOMPLETE" -eq 1 ]]; then
+            rm -rvf ./*.nc
+        fi
 
-    rm -rvf *.nc
+        # If the --full flag is passed, remove all data files in the directory
+        if [[ "$FULL_CLEAN" -eq 1 ]]; then
+            rm -rvf ./*
+        fi
 
-    # If the --full flag is passed, remove all data files in the directory
-    if [[ "$FULL_CLEAN" -eq 1 ]]; then
-        rm -rvf ./*
-    fi
-
-    cd ..
-done
-
-cd ..
-
-rm -rvf logs/datagen/*
-rm -rvf logs/*/*.log
-rm -vf nohup.out
+        cd ..
+    done
+fi
 
 echo "Cleanup completed successfully."
 

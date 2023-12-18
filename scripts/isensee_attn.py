@@ -5,8 +5,11 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import tensorflow as tf
+
 from config import SimConfig
 from dataloader import DataLoader
+from imagesavinglayer import ImageSavingLayer
+
 from keras import backend as K
 from matplotlib import pyplot as plt
 from sklearn import metrics as mt
@@ -49,19 +52,16 @@ from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.preprocessing import sequence
 from tensorflow.keras.regularizers import l2
 
-# %matplotlib inline
-
-
-def dice_coefficient(y_true, y_pred, smooth=1.0):
+@tf.function
+def dice_coefficient(y_true, y_pred, smooth=1.):
     y_true_f = K.flatten(y_true)
     y_pred_f = K.flatten(y_pred)
     intersection = K.sum(y_true_f * y_pred_f)
-    return (2.0 * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
+    return (2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
 
-
+@tf.function
 def dice_coefficient_loss(y_true, y_pred):
     return -dice_coefficient(y_true, y_pred)
-
 
 class ReflectionPadding2D(Layer):
     def __init__(self, padding=(1, 1), **kwargs):
@@ -87,24 +87,39 @@ class ReflectionPadding2D(Layer):
         )
         return config
 
-
 def create_localization_module(input_layer, n_filters):
+    """
+    This function creates a localization module, which is typically used in the
+    decoder part of a U-Net architecture. It first applies reflection padding to
+    the input, then applies two convolutional blocks. The second convolutional block
+    uses a 1x1 kernel, which is often used to map each
+    64-component feature vector to the desired number of classes.
+    """
     layer1 = ReflectionPadding2D()(input_layer)
     convolution1 = create_convolution_block(layer1, n_filters)
     return create_convolution_block(convolution1, n_filters, kernel=(1, 1))
 
-
 def create_up_sampling_module(
     input_layer, n_filters, size=(2, 2), interpolation="nearest"
 ):
+    """
+    This function creates an up-sampling module, which is used to increase the spatial
+    dimensions of the input. It first applies up-sampling to the input using nearest
+    neighbor interpolation, then applies reflection padding and a convolutional block.
+    """
     up_sample = UpSampling2D(size=size, interpolation=interpolation)(input_layer)
     layer1 = ReflectionPadding2D()(up_sample)
     return create_convolution_block(layer1, n_filters)
 
-
 def create_context_module(
     input_layer, n_level_filters, dropout_rate=0.1, data_format="channels_last"
 ):
+    """
+    This function creates a context module, which is typically used in the encoder part
+    of a U-Net architecture. It first applies reflection padding to the input, then applies
+    a convolutional block, a spatial dropout layer (which randomly sets entire feature maps
+    to zero), another reflection padding layer, and another convolutional block.
+    """
     layer1 = ReflectionPadding2D()(input_layer)
     convolution1 = create_convolution_block(
         input_layer=layer1, n_filters=n_level_filters
@@ -113,13 +128,12 @@ def create_context_module(
     layer2 = ReflectionPadding2D()(dropout)
     return create_convolution_block(input_layer=layer2, n_filters=n_level_filters)
 
-
 def create_convolution_block(
     input_layer,
     n_filters,
     batch_normalization=False,
     kernel=(3, 3),
-    activation="relu",
+    activation="LeakyReLU", # "relu"
     kernel_initializer="he_uniform",
     padding="valid",
     strides=(1, 1),
@@ -127,30 +141,26 @@ def create_convolution_block(
     kernel_regularizer=None,
 ):
     """
-    :param strides:
-    :param input_layer:
-    :param n_filters:
-    :param batch_normalization:
-    :param kernel:
-    :param activation: Keras activation layer to use. (default is 'relu')
-    :param padding:
-    :return:
+    This function creates a convolutional block, which is a fundamental building block of CNNs.
+    It applies a 2D convolution to the input, followed by either batch normalization or instance
+    normalization (if enabled). The number of filters, kernel size, activation function, padding,
+    strides, and kernel initializer for the convolution can be specified as parameters.
     """
     layer = Conv2D(
         n_filters,
         kernel,
         padding=padding,
         strides=strides,
-        activation=activation,
         kernel_initializer=kernel_initializer,
         kernel_regularizer=kernel_regularizer,
+        # activation=activation,
     )(input_layer)
     if batch_normalization:
         layer = BatchNormalization()(layer)
     elif instance_normalization:
-        layer = UnitNormalization()(layer)
+        layer = GroupNormalization(groups=n_filters)(layer)
+    layer = Activation(activation=activation)(layer)
     return layer
-
 
 def isensee_attn(
     inputs,
@@ -166,6 +176,8 @@ def isensee_attn(
     metrics=[],
     interpolation="bilinear",
     kernel_regularizer=None,
+    attn_heads=2,
+    attn_key_dim=64,
 ):
     """
     This function builds a model proposed by Isensee et al. for the BRATS 2017 competition:
@@ -205,11 +217,16 @@ def isensee_attn(
             )
 
         # Self-attention
-        attention = MultiHeadAttention(num_heads=1, key_dim=16)(in_conv, in_conv)
-        attention_output = Multiply()([in_conv, attention])
+        # attention = MultiHeadAttention(num_heads=attn_heads, key_dim=attn_key_dim)(
+        #     in_conv, in_conv
+        # )
+        # attention_output = Multiply()([in_conv, attention])
 
         context_output_layer = create_context_module(
-            attention_output, n_level_filters, dropout_rate=dropout_rate # in_cov -> attention
+            in_conv,
+            # attention_output,
+            n_level_filters,
+            dropout_rate=dropout_rate,  # in_cov -> attention
         )
 
         summation_layer = Add()([in_conv, context_output_layer])
@@ -223,11 +240,17 @@ def isensee_attn(
         )
 
         # Reg attention
-        attention = MultiHeadAttention(num_heads=1, key_dim=16)(up_sampling, level_output_layers[level_number])
+        attention = MultiHeadAttention(num_heads=attn_heads, key_dim=attn_key_dim)(
+            level_output_layers[level_number], up_sampling
+        )
         comb_attention = LayerNormalization(epsilon=1e-6)(up_sampling + attention)
 
         concatenation_layer = Concatenate()(
-            [level_output_layers[level_number], comb_attention] # up_sampling -> comb_attention
+            [
+                level_output_layers[level_number],
+                comb_attention,
+                # up_sampling,
+            ]  # up_sampling -> comb_attention
         )
         localization_output = create_localization_module(
             concatenation_layer, level_filters[level_number]
@@ -239,9 +262,6 @@ def isensee_attn(
                 Conv2D(
                     n_labels,
                     (1, 1),
-                    kernel_regularizer=kernel_regularizer,
-                    activation="relu",
-                    kernel_initializer="he_uniform",
                 )(current_layer),
             )
 
@@ -258,8 +278,8 @@ def isensee_attn(
                 output_layer
             )
 
-    flat_layer = Flatten()(output_layer)
-    out_layer = Dropout(dropout_rate)(flat_layer)
+    out_layer = Flatten()(output_layer)
+    # out_layer = Dropout(dropout_rate)(out_layer)
     # out_layer = Dense(
     #     1024,
     #     activation="sigmoid",

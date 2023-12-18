@@ -17,28 +17,31 @@ import tensorflow as tf
 
 plt.rcParams.update({"font.size": 13})
 
-keras = tf.keras  # fixes issues with vsCode
-
-import logging as log
+from tensorflow import keras
 
 import seaborn as sns
 from config import SimConfig
 from dataloader import DataLoader
 from isensee import isensee2017_model
 from isensee_attn import isensee_attn
+from isensee_joe import isensee2017_joe
 from keras import Input, Model
-from keras.callbacks import (EarlyStopping, ModelCheckpoint, ReduceLROnPlateau,
-                             TensorBoard)
+from keras.callbacks import (
+    EarlyStopping,
+    ModelCheckpoint,
+    ReduceLROnPlateau,
+    TensorBoard,
+)
 from keras.layers import Add, Dense, Flatten, RandomFlip, RandomRotation
 from keras.metrics import KLDivergence, RootMeanSquaredError
-from keras.optimizers import Adam
+from keras.optimizers.legacy import Adam
 from keras.regularizers import l2
 from sklearn.metrics import r2_score
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from wandb.keras import WandbMetricsLogger, WandbModelCheckpoint
 
 import wandb
-
+import logging
 
 def load_data(data_file, keys, start_index=None, end_index=None, verbose=False):
     if isinstance(keys, str):
@@ -71,21 +74,7 @@ def safe_makedirs(dir, verbose=False):
             pass
 
 
-def get_tfdata(start, step, batch_size, name=None):
-    ret = d.skip(start).take(step)
-
-    # This just fixes the logging output not knowing the dataset size
-    ret = ret.apply(tf.data.experimental.assert_cardinality(step))
-
-    ret = ret.cache()
-    # ret = ret.batch(
-    #     batch_size, num_parallel_calls=tf.data.AUTOTUNE, name=name
-    # )
-    ret = ret.prefetch(tf.data.AUTOTUNE)
-    return ret
-
-
-def plot_preds(y_val, y_pred, name, fisher=None):
+def plot_preds(y_val, y_pred, name, fisher=None, scaled_variance=None):
     df = pd.DataFrame(
         {"True Labels": y_val.flatten(), "Predicted Labels": y_pred.flatten()}
     )
@@ -104,11 +93,27 @@ def plot_preds(y_val, y_pred, name, fisher=None):
             [min(y_val) + std_dev, max(y_val) + std_dev],
             color="blue",
             linestyle="--",
+            label="Fisher"
         )
         plt.plot(
             [min(y_val), max(y_val)],
             [min(y_val) - std_dev, max(y_val) - std_dev],
             color="blue",
+            linestyle="--",
+        )
+
+    if scaled_variance is not None:
+        plt.plot(
+            [min(y_val), max(y_val)],
+            [min(y_val) + scaled_variance, max(y_val) + scaled_variance],
+            color="green",
+            linestyle="--",
+            label="Scaled Variance (1/$sqrt{f_{sky} f}$)})"
+        )
+        plt.plot(
+            [min(y_val), max(y_val)],
+            [min(y_val) - scaled_variance, max(y_val) - scaled_variance],
+            color="green",
             linestyle="--",
         )
 
@@ -144,14 +149,13 @@ def plot_history(attn_history, name, metrics=["loss"]):
 
 
 if __name__ == "__main__":
-    log.basicConfig(
-        level=log.INFO, 
+    logging.basicConfig(
+        level=logging.INFO, 
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
-        datefmt='%d-%b-%y %H:%M:%S',
-        handlers=[log.StreamHandler(sys.stdout)]
+        datefmt='%d-%b-%y %H:%M:%S'
     )
     
-    config_file = sys.argv[1] if len(sys.argv) > 1 else "settings/settings.json"
+    config_file = sys.argv[1]
     s = SimConfig(config_file)
 
     IMG_SHAPE = (s.nside, s.nside, 1)
@@ -159,12 +163,17 @@ if __name__ == "__main__":
     if s.debug or s.verbose:
         print(f"tf version: {tf.__version__}")
 
-    batch_size = 2
-    max_epochs = 500
+    batch_size = 1
+    max_epochs = 1
 
     # load data as a generator so we do not need to have it all in memory
-    data_loader = DataLoader(s.data_file_complete, shuffle=True, seed=None, normalize=True)
-    train_dataset, test_dataset, val_dataset = data_loader.get_split_tfdataset(0.06, 0.02, 0.02, batch_size=batch_size)
+    data_loader = DataLoader(
+        s.data_file_complete, shuffle=True, seed=None, normalize=True
+    )
+    train_dataset, test_dataset, val_dataset = data_loader.get_split_tfdataset(
+        0.8, 0.1, 0.1, batch_size=batch_size
+    )
+    print(data_loader)
 
     # These get passed into the isensee_attn model, doing this here so we can save them into
     # wandb for later analysis
@@ -176,12 +185,12 @@ if __name__ == "__main__":
         "loss_function": tf.keras.losses.mse,
         "initial_learning_rate": 0.001,
         "name": f"isensee_attn_{s.base_name}-{timestamp}",
-        "n_base_filters": 32,
+        "n_base_filters": 8,
         "n_labels": 1,
         "interpolation": "nearest",
-        "kernel_regularizer": l2(1e-4),
+        "kernel_regularizer": l2(1e-8),
         "attn_heads": 1,
-        "attn_key_dim": 16,
+        "attn_key_dim": 4,
     }
 
     # Just gather some more info for the wandb run, helps later
@@ -190,7 +199,7 @@ if __name__ == "__main__":
         "start_time": timestamp,
         "batch_size": batch_size,
         "max_epochs": max_epochs,
-        "comment": "kernelreg l2, multihead, attention moved to start, group norm"
+        "comment": "testing model",
     }
 
     wandb.init(
@@ -227,7 +236,7 @@ if __name__ == "__main__":
         # TensorBoard(log_dir=s.tb_dir),
     ]
 
-    metrics = ["mean_absolute_error"]
+    metrics = ["mean_squared_error", "mean_absolute_error"]
     strategy = tf.distribute.MirroredStrategy()
     with strategy.scope():
         input_img = Input(IMG_SHAPE, name="img")
@@ -236,6 +245,15 @@ if __name__ == "__main__":
             learning_rate=lr_schedule,
             # learning_rate=model_settings["initial_learning_rate"],
         )
+
+        # joe_model = isensee2017_joe(
+        #     input_img,
+        #     depth=5,
+        #     n_segmentation_levels=3,
+        #     dropout_rate=0.3,
+        #     loss_function=tf.keras.losses.mse,
+        #     initial_learning_rate=0.001,
+        # )
 
         attn_model = isensee_attn(
             input_img,
@@ -246,8 +264,17 @@ if __name__ == "__main__":
 
     if s.debug or s.verbose:
         attn_model.summary()
-        log.info("Number of GPUs being used: %s", strategy.num_replicas_in_sync)
-        log.info("Comment: %s", extra_info["comment"])
+
+        print("Number of GPUs being used:", strategy.num_replicas_in_sync)
+        print("Comment:", extra_info["comment"])
+
+    # joe_history = joe_model.fit(
+    #     train_dataset,
+    #     validation_data=val_dataset,
+    #     epochs=max_epochs,
+    #     callbacks=callbacks,
+    #     verbose=2,
+    # )
 
     attn_history = attn_model.fit(
         train_dataset,
@@ -257,11 +284,24 @@ if __name__ == "__main__":
         verbose=1,
     )
 
-    y_pred = attn_model.predict(test_dataset, verbose="auto", callbacks=callbacks)
-    y_test = np.concatenate([y.numpy() for x, y in test_dataset])
+    try:
+        print("Trying to plot activations")
+        import keract # pip install keract for this to work
+        activations = keract.get_activations(attn_model, test_dataset.take(1), auto_compile=True)
+        attn = activations.get("multi_head_attention_3")
+        keract.display_activations(activations, save=True, directory=s.plot_dir, data_format="channels_last")
+    except:
+        pass
 
+    y_pred = attn_model.predict(test_dataset, callbacks=callbacks, verbose=2,)
+    y_test = np.concatenate([y.numpy() for x, y in test_dataset])
     fisher = load_data(s.data_file_complete, ["fisher"], verbose=s.verbose)["fisher"]
-    plot_preds(y_test, y_pred, model_settings["name"], fisher)
+
+    full_sky_degree = (np.pi / 180)**2
+    f_sky = (s.settings["patch_side_deg"]) ** 2 / full_sky_degree
+    scaled_variance = np.sqrt(1 / (f_sky * fisher))
+
+    plot_preds(y_test, y_pred, model_settings["name"], fisher, scaled_variance)
     plot_history(
         attn_history,
         model_settings["name"],

@@ -116,7 +116,7 @@ def dice_coefficient_loss(y_true, y_pred):
 
 def isensee2017_model(
     inputs,
-    n_base_filters=8,
+    n_base_filters=16,
     depth=5,
     dropout_rate=0.3,
     n_segmentation_levels=3,
@@ -149,7 +149,7 @@ def isensee2017_model(
     level_output_layers = []
     level_filters = []
     # n_level_filters = (2**level_number) * n_base_filters
-    n_level_filters = 8
+    n_level_filters = 16
     for _ in range(depth):
         level_filters.append(n_level_filters)
 

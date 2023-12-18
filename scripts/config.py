@@ -99,7 +99,7 @@ class SimConfig:
         )
 
         self.base_name = (
-            f"{self.nside}_{self.nn_str}{self.chars_of_polarizations}_{self.nsims}"
+            f"{self.nside}_{self.nn_str}{self.chars_of_polarizations}_{self.total_sims}"
         )
 
         self.data_str = f'{self.base_name}x{self.npatches}x{self.ndup}_fnl{settings.get("fnl_range")[0]}-{settings.get("fnl_range")[1]}{self.ja_str}'

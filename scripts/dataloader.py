@@ -42,12 +42,18 @@ class DataLoader(Sequence):
             _,
         ) = self.file["patches"].shape
 
+        print(self.file["patches"].shape)
+
         self.length = self._nsims * self._ndup * self._npol * self._npatches
         self.idxs = np.arange(self.length)
         if self.shuffle:
             np.random.shuffle(self.idxs)
 
-        self.logger.info("DataLoader initialized with: \n file: %s \n Seed: %s \n Shuffle: %s \n Normalize: %s \n Length: %s", self.file_name, self.seed, self.shuffle, self.normalize, self.length)
+    def __str__(self):
+        return (
+            "DataLoader(file: %s, Seed: %s, Shuffle: %s, Normalize: %s, Length: %s)"
+            % (self.file_name, self.seed, self.shuffle, self.normalize, self.length)
+        )
 
     def __getitem__(self, index):
         # Convert the flat index to a multidimensional index
@@ -84,7 +90,6 @@ class DataLoader(Sequence):
     #         fnl = self.file["fnls"][i, j]
     #         yield tf.convert_to_tensor(patch), tf.convert_to_tensor(fnl)
 
-
     def _setup_tfds(self, ds, start, step, batch_size=1):
         ret = ds.skip(start).take(step)
         ret = ret.apply(tf.data.experimental.assert_cardinality(step))
@@ -92,8 +97,9 @@ class DataLoader(Sequence):
         ret = ret.batch(batch_size, num_parallel_calls=tf.data.AUTOTUNE)
         return ret.prefetch(tf.data.AUTOTUNE)
 
-
-    def get_split_tfdataset(self, train_frac=0.8, test_frac=0.1, val_frac=0.1, batch_size=1):
+    def get_split_tfdataset(
+        self, train_frac=0.8, test_frac=0.1, val_frac=0.1, batch_size=1
+    ):
         n = self.length
         train_size = int(n * train_frac)
         val_size = int(n * val_frac)
