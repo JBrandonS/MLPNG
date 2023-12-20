@@ -5,7 +5,7 @@ import time
 import h5py
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"  # 1
-os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit"
+# os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit"
 os.environ[
     "XLA_FLAGS"
 ] = "--xla_gpu_cuda_data_dir=/hpc/mp/spack/opt/spack/linux-ubuntu20.04-zen2/gcc-10.3.0/cuda-11.4.4-ctldo35wmmwws3jbgwkgjjcjawddu3qz/"
@@ -182,7 +182,7 @@ if __name__ == "__main__":
         tfds_filepath, shuffle=True, seed=None, normalize=True
     )
     train_dataset, test_dataset, val_dataset = data_loader.get_split_tfdataset(
-        0.8, 0.1, 0.1, batch_size=batch_size
+        0.008, 0.001, 0.001, batch_size=batch_size
     )
 
     # These get passed into the isensee_attn model, doing this here so we can save them into
@@ -295,12 +295,22 @@ if __name__ == "__main__":
     )
 
     try:
-        print("Trying to plot activations")
         import keract # pip install keract for this to work
-        activations = keract.get_activations(attn_model, test_dataset.take(1), auto_compile=True)
-        attn = activations.get("multi_head_attention_3")
-        keract.display_activations(activations, save=True, directory=s.plot_dir, data_format="channels_last")
-    except:
+
+        first_batch = next(iter(test_dataset.take(1)))
+        images, labels = first_batch
+        activations = keract.get_activations(attn_model, images, auto_compile=True)
+
+        # attn = activations.get("multi_head_attention_3")
+
+        keract.display_activations(activations, 
+                                   save=True, 
+                                   directory=os.path.join(s.plot_dir, "activations", s.base_name), 
+                                   data_format="channels_last")
+    except Exception as e:
+        import traceback
+        print(f"Could not plot activations: {e}")
+        traceback.print_exc()
         pass
 
     y_pred = attn_model.predict(test_dataset, callbacks=callbacks, verbose=2,)
