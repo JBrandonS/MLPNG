@@ -28,7 +28,7 @@ def convert_hdf5_to_tfdata(hdf5_filepath, save_filepath):
 # Usage:
 dirs = ("data/unlensed", "data/lensed")
 for d in dirs:
-    hdf5_files = glob.glob('*.hdf5', recursive=True)
+    hdf5_files = glob.glob(f'{d}/*.hdf5', recursive=True)
     for hdf5_file in hdf5_files:
         # Replace .hdf5 with .tfds in the file path
         tfds_dir = hdf5_file.replace('.hdf5', '.tfds')
