@@ -4,7 +4,7 @@ import time
 
 import h5py
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"  # 1
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"  # 1
 # os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit"
 os.environ[
     "XLA_FLAGS"
@@ -20,12 +20,15 @@ plt.rcParams.update({"font.size": 13})
 from tensorflow import keras
 
 import seaborn as sns
+
 from config import SimConfig
 from dataloader import DataLoader
 from tfdsdataloader import TFDSDataLoader
+
 from isensee import isensee2017_model
 from isensee_attn import isensee_attn
 from isensee_joe import isensee2017_joe
+
 from keras import Input, Model
 from keras.callbacks import (
     EarlyStopping,
@@ -42,7 +45,6 @@ from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from wandb.keras import WandbMetricsLogger, WandbModelCheckpoint
 
 import wandb
-import logging
 
 def load_data(data_file, keys, start_index=None, end_index=None, verbose=False):
     if isinstance(keys, str):
@@ -149,13 +151,7 @@ def plot_history(attn_history, name, metrics=["loss"]):
     plt.savefig(f"{s.plot_dir}/{name}-metrics.png")
 
 
-if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO, 
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
-        datefmt='%d-%b-%y %H:%M:%S'
-    )
-    
+if __name__ == "__main__":   
     config_file = sys.argv[1]
     s = SimConfig(config_file)
 
@@ -165,9 +161,9 @@ if __name__ == "__main__":
         print(f"tf version: {tf.__version__}")
 
     batch_size = 1
-    max_epochs = 1
+    max_epochs = 10
 
-    # load data as a generator so we do not need to have it all in memory
+    #### load data as a generator, directly from hdf5
     # data_loader = DataLoader(
     #     s.data_file_complete, shuffle=True, seed=None, normalize=True
     # )
@@ -176,13 +172,13 @@ if __name__ == "__main__":
     # )
     # print(data_loader)
 
-    # lets try tfds, must be converted first
+    # load data from tfds
     tfds_filepath = s.data_file_complete.replace(".hdf5", ".tfds")
     data_loader = TFDSDataLoader(
         tfds_filepath, shuffle=True, seed=None, normalize=True
     )
     train_dataset, test_dataset, val_dataset = data_loader.get_split_tfdataset(
-        0.008, 0.001, 0.001, batch_size=batch_size
+        0.8, 0.1, 0.1, batch_size=batch_size
     )
 
     # These get passed into the isensee_attn model, doing this here so we can save them into
@@ -195,12 +191,12 @@ if __name__ == "__main__":
         "loss_function": tf.keras.losses.mse,
         "initial_learning_rate": 0.001,
         "name": f"isensee_attn_{s.base_name}-{timestamp}",
-        "n_base_filters": 8,
+        "n_base_filters": 16,
         "n_labels": 1,
         "interpolation": "nearest",
         "kernel_regularizer": l2(1e-8),
         "attn_heads": 1,
-        "attn_key_dim": 4,
+        "attn_key_dim": 32,
     }
 
     # Just gather some more info for the wandb run, helps later
@@ -227,6 +223,7 @@ if __name__ == "__main__":
         staircase=True,
     )
 
+    # lets setup our callbacks
     callbacks = [
         EarlyStopping(
             monitor="val_loss",
@@ -235,12 +232,12 @@ if __name__ == "__main__":
             restore_best_weights=True,
             start_from_epoch=10,
         ),
-        ModelCheckpoint(
-            f"data/models/isensee_attn-{s.base_name}" + "-{epoch:03d}.tf",
-            monitor="val_loss",
-            save_best_only=True,
-            mode="auto",
-        ),
+        # ModelCheckpoint(
+        #     f"{s.model_dir}/isensee_attn-{s.base_name}" + "-{epoch:03d}.tf",
+        #     monitor="val_loss",
+        #     save_best_only=True,
+        #     mode="auto",
+        # ),
         WandbMetricsLogger(),
         # WandbModelCheckpoint(filepath=f"{s.model_dir}/wandb"),
         # TensorBoard(log_dir=s.tb_dir),
@@ -294,6 +291,7 @@ if __name__ == "__main__":
         verbose=1,
     )
 
+    # Plot the activations
     try:
         import keract # pip install keract for this to work
 
@@ -305,7 +303,7 @@ if __name__ == "__main__":
 
         keract.display_activations(activations, 
                                    save=True, 
-                                   directory=os.path.join(s.plot_dir, "activations", s.base_name), 
+                                   directory=os.path.join(s.plot_dir, "activations", model_settings["name"]), 
                                    data_format="channels_last")
     except Exception as e:
         import traceback
@@ -313,6 +311,7 @@ if __name__ == "__main__":
         traceback.print_exc()
         pass
 
+    # Plot the predictions
     y_pred = attn_model.predict(test_dataset, callbacks=callbacks, verbose=2,)
     y_test = np.concatenate([y.numpy() for x, y in test_dataset])
     fisher = load_data(s.data_file_complete, ["fisher"], verbose=s.verbose)["fisher"]

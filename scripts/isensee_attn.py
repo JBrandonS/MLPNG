@@ -132,7 +132,7 @@ def create_convolution_block(
     n_filters,
     batch_normalization=False,
     kernel=(3, 3),
-    activation="LeakyReLU", # "relu"
+    activation="relu", # "relu"
     kernel_initializer="he_uniform",
     padding="valid",
     strides=(1, 1),
@@ -199,8 +199,8 @@ def isensee_attn(
     current_layer = inputs
     level_output_layers = []
     level_filters = []
-    n_level_filters = n_base_filters
-    for _ in range(depth):
+    for level in range(depth):
+        n_level_filters = n_base_filters // (2 ** level) or 2
         level_filters.append(n_level_filters)
 
         if current_layer is inputs:
@@ -242,12 +242,13 @@ def isensee_attn(
         attention = MultiHeadAttention(num_heads=attn_heads, key_dim=attn_key_dim)(
             level_output_layers[level_number], up_sampling
         )
-        comb_attention = LayerNormalization(epsilon=1e-6)(up_sampling + attention)
+        attention = Multiply()([up_sampling, attention])
+        attention = LayerNormalization(epsilon=1e-6)(attention)
 
         concatenation_layer = Concatenate()(
             [
                 level_output_layers[level_number],
-                comb_attention,
+                attention,
                 # up_sampling,
             ]  # up_sampling -> comb_attention
         )

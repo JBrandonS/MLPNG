@@ -56,7 +56,7 @@ class SimConfig:
         self.data_dir = os.path.join(
             self.base_dir, "lensed" if self.lensing else "unlensed"
         )
-        self.tb_dir = settings.get("tb_dir", "data/tb")
+        self.tb_dir = settings.get("tb_dir", "data/tensorboard")
         self.model_dir = settings.get("model_dir", "data/models")
 
         # find out the number of sims
