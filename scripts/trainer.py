@@ -22,6 +22,7 @@ from tensorflow import keras
 import seaborn as sns
 from config import SimConfig
 from dataloader import DataLoader
+from tfdsdataloader import TFDSDataLoader
 from isensee import isensee2017_model
 from isensee_attn import isensee_attn
 from isensee_joe import isensee2017_joe
@@ -167,13 +168,22 @@ if __name__ == "__main__":
     max_epochs = 1
 
     # load data as a generator so we do not need to have it all in memory
-    data_loader = DataLoader(
-        s.data_file_complete, shuffle=True, seed=None, normalize=True
+    # data_loader = DataLoader(
+    #     s.data_file_complete, shuffle=True, seed=None, normalize=True
+    # )
+    # train_dataset, test_dataset, val_dataset = data_loader.get_split_tfdataset(
+    #     0.8, 0.1, 0.1, batch_size=batch_size
+    # )
+    # print(data_loader)
+
+    # lets try tfds, must be converted first
+    tfds_filepath = s.data_file_complete.replace(".hdf5", ".tfds")
+    data_loader = TFDSDataLoader(
+        tfds_filepath, shuffle=True, seed=None, normalize=True
     )
     train_dataset, test_dataset, val_dataset = data_loader.get_split_tfdataset(
         0.8, 0.1, 0.1, batch_size=batch_size
     )
-    print(data_loader)
 
     # These get passed into the isensee_attn model, doing this here so we can save them into
     # wandb for later analysis
@@ -199,7 +209,7 @@ if __name__ == "__main__":
         "start_time": timestamp,
         "batch_size": batch_size,
         "max_epochs": max_epochs,
-        "comment": "testing model",
+        "comment": "testing tfds",
     }
 
     wandb.init(

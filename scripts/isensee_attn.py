@@ -8,7 +8,6 @@ import tensorflow as tf
 
 from config import SimConfig
 from dataloader import DataLoader
-from imagesavinglayer import ImageSavingLayer
 
 from keras import backend as K
 from matplotlib import pyplot as plt

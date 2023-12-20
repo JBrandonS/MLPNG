@@ -1,11 +1,8 @@
 # Dirs
 __pycache__/
-.ipynb_checkpoints/
-.vscode/
 data
-.lprof/
-logs
-.old
+.*/
+logs/
 wandb/
 scraped/
 

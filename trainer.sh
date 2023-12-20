@@ -15,7 +15,7 @@ JOB1="scripts/trainer.sbatch"
 # )
 
 SETTINGS=(
-  "ul_nn_256.json"
+  "ul_nn_128.json" # "ul_nn_256.json" "ul_nn_512.json" "ul_nn_1024.json"
 )
 
 SETTINGS_DIR="settings/"
