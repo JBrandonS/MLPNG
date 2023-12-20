@@ -26,6 +26,7 @@ echo "Currently in directory: $(pwd)"
 
 rm -rvf plots/*
 rm -rvf models/*
+rm -rvf tb/*
 rm -rvf tensorboard/*
 
 if [[ "$CLEAN_INCOMPLETE" -eq 1 ]] || [[ "$FULL_CLEAN" -eq 1 ]]; then

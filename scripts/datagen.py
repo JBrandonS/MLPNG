@@ -113,14 +113,11 @@ def interpolate_ells(func, ells_sparse, ls, axis=1):
 
 def generate_almngs():
     """This code completely calculates, and saves, the alms and almngs."""
-    # delta_phi = 2 * np.pi**2 * s.cosmo_params["As"] / (tr_k ** 3) * 3/5 * np.sqrt(1/2)
-    # delta_phi *= (tr_k / s.cosmo_params["pivot_scalar"])**((s.cosmo_params["ns"]-1))
-
     A = (3 / 5) ** 2 * 2 * np.pi**2 * s.cosmo_params["As"]
     delta_phi = (tr_k) ** ((s.cosmo_params["ns"] - 1)) / (tr_k**3)
 
     f_k = np.ones((len(tr_k), 2), dtype=s.r_dtype) * 5 / 3
-    # f_k[:, 0] = 1                           # f_k for alpha
+    # f_k[:, 0] = 1             # f_k for alpha
     f_k[:, 1] *= A * delta_phi  # f_k for beta
 
     rad = radial_func(f_k, tr_ell_k, tr_k, radii, tr_ells)
@@ -147,6 +144,7 @@ def generate_almngs():
 
     # Make sure we dont get error from the beam_ell being a vector
     beam_ell_2d = np.atleast_2d(beam_ell)
+
     # KSW expects the alms to be coevolved with the beam
     for i in range(s.nsims):
         for j in range(s.npol):
@@ -157,25 +155,20 @@ def generate_almngs():
     for i in tqdm(range(s.nsims), desc="almng progress"):
         for pol in range(s.npol):
             # create a generator
-            alm_gen = Parallel(
-                n_jobs=s.settings["nthreads_alm"], verbose=0, return_as="generator"
-            )(
+            alm_gen = Parallel(n_jobs=s.nthreads_alm, verbose=0, return_as="generator")(
                 delayed(get_alm)(
                     alms[i, pol],
                     bl_div_cl[ri, :, pol],
                     alpha_l[ri, :, pol],
                     radii[ri],
                     drs[ri],
-                )
-                for ri in range(len(drs))
+                ) for ri in range(len(drs))
             )
 
             # consume
             for alm in alm_gen:
                 sim_data[i, pol] += alm
 
-        # if s.debug:
-        # plot_cl_alm(sim_data[i, pol].copy(), s, plt_camb=False, save_name=s.base_name + "_get_alm_plot_complete")
     log.info("Done!")
 
     sdata = {}
@@ -212,6 +205,9 @@ def get_fs_patch_geo():
         patch_wcss.append(w)
     return fs_shape, fs_wcs, fs_map, patch_shapes, patch_wcss
 
+# helper function to process a single patch
+def process_patch(i, j, pol):
+    return np.array(cutPatches(alms[i, pol], fnls[i, j], almngs[i, pol]))
 
 if __name__ == "__main__":
     # %% [markdown]
@@ -269,7 +265,7 @@ if __name__ == "__main__":
     cosmo.compute_transfer(s.cosmo_params["max_l"], verbose=s.verbose)
     cosmo.compute_c_ell()
 
-    noise_ell, beam_ell = s.get_noise_beam()
+    noise_ell, beam_ell = s.noise_beam
     ksw_data = Data(s.lmax, noise_ell, beam_ell, s.polarizations, cosmo)
     c_ells = ksw_data.cosmology.c_ell["unlensed_scalar"]  # type: ignore
     tr_ell_k = ksw_data.cosmology.transfer["tr_ell_k"]
@@ -284,28 +280,18 @@ if __name__ == "__main__":
 
     # here we load in the alms either from a complete, combined, file or individual
     # if neither are found we generate the alms
-    if os.path.isfile(s.alm_file_complete) and not s.settings["force_alm_gen"]:
+    if os.path.isfile(s.alm_file_complete) and not s.force_alm_gen:
         log.info("Found completed alms file, skipping alm generation")
-        alm_file = s.alm_file_complete
-        log.info("Loading alms")
-        ldata = load_data(alm_file, ["alm", "almng"], verbose=s.verbose)
-        log.info("Done!")
-    elif os.path.isfile(s.alm_file_partial) and not s.settings["force_alm_gen"]:
-        log.info(
-            "Found partial alm file %s, skipping alm generation", s.alm_file_partial
-        )
-        alm_file = s.alm_file_partial
-        log.info("Loading alms")
-        ldata = load_data(alm_file, ["alm", "almng"], verbose=s.verbose)
-        log.info("Done!")
+        ldata = load_data(s.alm_file_complete, ["alm", "almng"], verbose=s.verbose)
+    elif os.path.isfile(s.alm_file_partial) and not s.force_alm_gen:
+        log.info("Found partial alm file %s, skipping alm generation", s.alm_file_partial)
+        ldata = load_data(s.alm_file_partial, ["alm", "almng"], verbose=s.verbose)
     else:
-        alm_file = s.alm_file_nc
-
         if os.path.isfile(s.alm_file_nc):
-            log.debug("Removing stale alm file: %s", s.alm_file_nc)
+            log.info("Removing stale alm file: %s", s.alm_file_nc)
             os.remove(s.alm_file_nc)
 
-        log.debug("Generating new alms")
+        log.info("Generating new alms")
         ldata = generate_almngs()
         alm_file = s.alm_file_partial
 
@@ -330,18 +316,12 @@ if __name__ == "__main__":
         )
 
     # Here we generate the fnls
-    fnls = uniform(
-        s.settings["fnl_range"][0], s.settings["fnl_range"][1], (s.nsims, s.ndup)
-    )
+    fnls = uniform(s.fnl_min, s.fnl_max, (s.nsims, s.ndup))
 
     # Start the patch generation, create the array to store the patches
     patches = np.empty(
         (s.nsims, s.ndup, s.npol, s.npatches, s.nside, s.nside), dtype=s.r_dtype
     )
-
-    # helper function to process a single patch
-    def process_patch(i, j, pol):
-        return np.array(cutPatches(alms[i, pol], fnls[i, j], almngs[i, pol]))
 
     # We setup an array with all our possible arguments to pass to the function
     args = [
@@ -351,10 +331,9 @@ if __name__ == "__main__":
         for pol in range(s.npol)
     ]
     # lets get our generator setup using parallel, return as generator so we consume memory as we go
-    patch_generator = Parallel(
-        n_jobs=s.settings["nthreads_sim"] // 4, return_as="generator"
-    )(delayed(process_patch)(*arg) for arg in args)
-    # actually gets our data from the generator, only update every 100 runs
+    patch_generator = Parallel(n_jobs=s.nthreads_sim // 4, return_as="generator")(delayed(process_patch)(*arg) for arg in args)
+
+    # actually gets our data from the generator, only update every 100 runs, takes a long time
     for idx, result in enumerate(tqdm(patch_generator, desc="patch progress", total=len(args), miniters=100)):
         i, j, pol = args[idx]
         patches[i, j, pol] = result
@@ -374,47 +353,4 @@ if __name__ == "__main__":
         os.remove(s.data_file_nc)
 
     save_data(s.data_file_nc, sdata, verbose=s.verbose)
-    # os.replace(s.data_file_nc, s.data_file_complete)
-
-    # %%
     log.info("Done with Generation!")
-
-    # below just generates a nice graph, possibly duplicating the patches
-    # this only runs once per sim and only if debug = True
-    # if s.debug and (s.job_array_index is None or s.job_array_index == 1):
-    #     nplots = 10
-    #     random_indices = [
-    #         (randint(s.nsims), randint(s.npol), randint(s.npatches))
-    #         for _ in range(nplots)
-    #     ]
-    #     grid_size = math.isqrt(len(random_indices))
-    #     if grid_size**2 < len(random_indices):
-    #         grid_size += 1
-
-    #     # Create the grid of subplots
-    #     fig, axs = plt.subplots(
-    #         grid_size, grid_size, sharex=True, sharey=True, figsize=(10, 10)
-    #     )
-
-    #     # If there's only one plot, put it in a list within a list to emulate a 2D list
-    #     if grid_size == 1:
-    #         axs = [[axs]]
-
-    #     # Iterate over the random_indices
-    #     for idx, (i, p, n) in enumerate(random_indices):
-    #         # Compute the subplot coordinates
-    #         row = idx // grid_size
-    #         col = idx % grid_size
-    #         # Plot the image
-    #         axs[row][col].imshow(patches[i, p, n])
-
-    #     # Hide the remaining unused subplots if any
-    #     if len(random_indices) < grid_size * grid_size:
-    #         for idx in range(len(random_indices), grid_size * grid_size):
-    #             row = idx // grid_size
-    #             col = idx % grid_size
-    #             axs[row][col].axis("off")
-
-    #     plt.title("Sample Patches")
-    #     save_plt(s.plot_dir, f"{s.name}-sample_patches")
-    #     plt.show()
