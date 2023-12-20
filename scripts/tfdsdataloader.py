@@ -1,13 +1,5 @@
 import numpy as np
-import h5py
-import copy
-from itertools import product
-
-import logging
-
-from tensorflow.keras.utils import Sequence
 import tensorflow as tf
-import tensorflow_datasets as tfds
 
 
 class TFDSDataLoader():
@@ -22,7 +14,6 @@ class TFDSDataLoader():
                 If None, a random seed is generated. Defaults to None.
             normalize (bool, optional): Whether to normalize the data. Defaults to False.
         """
-        self.logger = logging.getLogger(__name__)
         self.file_name = file_name
         self.shuffle = shuffle
         self.normalize = normalize
