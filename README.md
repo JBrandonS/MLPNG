@@ -1,7 +1,5 @@
 # Machine Learning for Primordial Non-Gaussianity
 
-[Google Doc](https://docs.google.com/document/d/1ogvANs4A7Ddb9--W0YCcQKWKaQXbMvZDO7PQbGw4Vsc/edit?usp=sharing)
-
 ## Overview
 
 ## Tasks
@@ -23,17 +21,20 @@ To install this project, follow these steps:
 
 ### Trainer
 
-IN PROGRESS
+1. Clone the repository using `git clone`, or download and extract the zip
+2. Create a python environment
+   - I have provided `conda-envs/training.yml` which is the conda env I use on superpod.
+3. You can now run the code, using the `trainer.sh` or `trainer.py`.
 
 ## Running
 
-> You will need to change the conda env in the `.sbatch` scripts located inside `datagen/`.
+> You will need to change the conda env in the `.sbatch` scripts located inside `scripts/`.
 >
 > The best method to run large amounts data is to use slurm job arrays.
 
 ### Data Generation
 
-The data generator is controlled by settings files located in the `settings/` directory. By default, the `settings/settings.json` file is used. You can specify a different settings file as an argument when running the Python scripts.
+The data generator is controlled by settings files located in the `settings/` directory. You can specify a different settings file as an argument when running the Python scripts.
 
 The `datagen.py` script generates the alms and patches.
 

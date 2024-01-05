@@ -46,7 +46,7 @@ from tensorflow.keras.layers import (
     UnitNormalization,
 )
 from tensorflow.keras.models import Model
-from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.optimizers.legacy import Adam
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.preprocessing import sequence
 from tensorflow.keras.regularizers import l2
@@ -200,7 +200,8 @@ def isensee_attn(
     level_output_layers = []
     level_filters = []
     for level in range(depth):
-        n_level_filters = n_base_filters // (2 ** level) or 2
+        n_level_filters = n_base_filters // (2 ** level)
+        n_level_filters = max(8, n_level_filters)
         level_filters.append(n_level_filters)
 
         if current_layer is inputs:
@@ -257,13 +258,7 @@ def isensee_attn(
         )
         current_layer = localization_output
         if level_number < n_segmentation_levels:
-            segmentation_layers.insert(
-                0,
-                Conv2D(
-                    n_labels,
-                    (1, 1),
-                )(current_layer),
-            )
+            segmentation_layers.insert(0, Conv2D(n_labels, (1, 1))(current_layer))
 
     output_layer = None
     for level_number in reversed(range(n_segmentation_levels - 1)):

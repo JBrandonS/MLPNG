@@ -5,7 +5,7 @@ import time
 import h5py
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"  # 1
-# os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit"
+os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit"
 os.environ[
     "XLA_FLAGS"
 ] = "--xla_gpu_cuda_data_dir=/hpc/mp/spack/opt/spack/linux-ubuntu20.04-zen2/gcc-10.3.0/cuda-11.4.4-ctldo35wmmwws3jbgwkgjjcjawddu3qz/"
@@ -156,12 +156,8 @@ if __name__ == "__main__":
     s = SimConfig(config_file)
 
     IMG_SHAPE = (s.nside, s.nside, 1)
-
-    if s.debug or s.verbose:
-        print(f"tf version: {tf.__version__}")
-
-    batch_size = 1
-    max_epochs = 10
+    BATCH_SIZE = 1
+    MAX_EPOCHS = 100
 
     #### load data as a generator, directly from hdf5
     # data_loader = DataLoader(
@@ -178,7 +174,7 @@ if __name__ == "__main__":
         tfds_filepath, shuffle=True, seed=None, normalize=True
     )
     train_dataset, test_dataset, val_dataset = data_loader.get_split_tfdataset(
-        0.8, 0.1, 0.1, batch_size=batch_size
+        0.8, 0.1, 0.1, BATCH_SIZE
     )
 
     # These get passed into the isensee_attn model, doing this here so we can save them into
@@ -191,20 +187,20 @@ if __name__ == "__main__":
         "loss_function": tf.keras.losses.mse,
         "initial_learning_rate": 0.001,
         "name": f"isensee_attn_{s.base_name}-{timestamp}",
-        "n_base_filters": 16,
+        "n_base_filters": 64,
         "n_labels": 1,
         "interpolation": "nearest",
-        "kernel_regularizer": l2(1e-8),
+        "kernel_regularizer": l2(1e-6),
         "attn_heads": 1,
-        "attn_key_dim": 32,
+        "attn_key_dim": 64,
     }
 
     # Just gather some more info for the wandb run, helps later
     extra_info = {
         "slurm_job_id": os.getenv("SLURM_JOB_ID") or 0,
         "start_time": timestamp,
-        "batch_size": batch_size,
-        "max_epochs": max_epochs,
+        "batch_size": BATCH_SIZE,
+        "max_epochs": MAX_EPOCHS,
         "comment": "testing tfds",
     }
 
@@ -249,18 +245,9 @@ if __name__ == "__main__":
         input_img = Input(IMG_SHAPE, name="img")
 
         opt = Adam(
-            learning_rate=lr_schedule,
-            # learning_rate=model_settings["initial_learning_rate"],
+            # learning_rate=lr_schedule,
+            learning_rate=model_settings["initial_learning_rate"],
         )
-
-        # joe_model = isensee2017_joe(
-        #     input_img,
-        #     depth=5,
-        #     n_segmentation_levels=3,
-        #     dropout_rate=0.3,
-        #     loss_function=tf.keras.losses.mse,
-        #     initial_learning_rate=0.001,
-        # )
 
         attn_model = isensee_attn(
             input_img,
@@ -275,18 +262,10 @@ if __name__ == "__main__":
         print("Number of GPUs being used:", strategy.num_replicas_in_sync)
         print("Comment:", extra_info["comment"])
 
-    # joe_history = joe_model.fit(
-    #     train_dataset,
-    #     validation_data=val_dataset,
-    #     epochs=max_epochs,
-    #     callbacks=callbacks,
-    #     verbose=2,
-    # )
-
     attn_history = attn_model.fit(
         train_dataset,
         validation_data=val_dataset,
-        epochs=max_epochs,
+        epochs=MAX_EPOCHS,
         callbacks=callbacks,
         verbose=1,
     )
@@ -299,7 +278,8 @@ if __name__ == "__main__":
         images, labels = first_batch
         activations = keract.get_activations(attn_model, images, auto_compile=True)
 
-        # attn = activations.get("multi_head_attention_3")
+        # Uncomment to plot just the attention
+        # activations = activations.get("multi_head_attention_3")
 
         keract.display_activations(activations, 
                                    save=True, 

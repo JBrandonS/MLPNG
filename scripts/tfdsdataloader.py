@@ -27,9 +27,7 @@ class TFDSDataLoader():
         if self.shuffle:
             # use a buffer size of 1000 prevents true shuffling but doesnt load everything into memory
             ret = ret.shuffle(buffer_size=1000, seed=self.seed)
-        if batch_size > 1:
-            # dont batch if we only have 1
-            ret = ret.batch(batch_size, num_parallel_calls=tf.data.AUTOTUNE)
+        ret = ret.batch(batch_size, num_parallel_calls=tf.data.AUTOTUNE, drop_remainder=True)
         return ret.prefetch(tf.data.AUTOTUNE)
 
     def get_split_tfdataset(

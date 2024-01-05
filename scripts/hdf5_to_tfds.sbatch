@@ -16,4 +16,4 @@ eval "$(conda shell.bash hook)"
 
 conda activate trainer
 
-time srun python hdf5_to_tfds.py
+time srun python scripts/hdf5_to_tfds.py
