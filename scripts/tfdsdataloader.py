@@ -18,8 +18,8 @@ class TFDSDataLoader():
 
     def __str__(self):
         return (
-            "TFDSDataLoader(file: %s, Seed: %s, Shuffle: %s, Normalize: %s, Length: %s, Batch Size: %s, Cache: %s)"
-            % (self.file_name, self.seed, self.shuffle, self.normalize, self.length, self.batch_size, self.cache)
+            "TFDSDataLoader(file: %s, Seed: %s, Shuffle: %s, Normalize: %s, Batch Size: %s, Cache: %s)"
+            % (self.file_name, self.seed, self.shuffle, self.normalize, self.batch_size, self.cache)
         )
     
     def _normalize(self, image, label):
