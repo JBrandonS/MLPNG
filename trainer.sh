@@ -10,7 +10,7 @@ JOB1="scripts/trainer.sbatch"
   "ul_nn_256.json"  # "l_nn_256.json"  "l_256.json"
   "ul_nn_512.json"  # "l_nn_512.json"  "l_512.json"
   "ul_nn_1024.json" # "l_nn_1024.json" "l_1024.json" 
-  "ul_nn_2048.json" # "l_nn_2048.json" "l_2048.json"
+  # "ul_nn_2048.json" # "l_nn_2048.json" "l_2048.json"
 )
 
 SETTINGS_DIR="settings/"

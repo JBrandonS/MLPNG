@@ -5,7 +5,7 @@ from itertools import product
 
 import logging
 
-from tensorflow.keras.utils import Sequence
+from keras.utils import Sequence
 import tensorflow as tf
 
 
@@ -43,8 +43,6 @@ class DataLoader(Sequence):
             self._nside,
             _,
         ) = self.file["patches"].shape
-
-        print(self.file["patches"].shape)
 
         self.length = self._nsims * self._ndup * self._npol * self._npatches
         self.idxs = np.arange(self.length)
@@ -93,15 +91,15 @@ class DataLoader(Sequence):
     #         yield tf.convert_to_tensor(patch), tf.convert_to_tensor(fnl)
 
     def _setup_tfds(self, ds, start, step):
-        ret = ds.skip(start).take(step)
-        ret = ret.apply(tf.data.experimental.assert_cardinality(step))
+        data = ds.skip(start).take(step)
+        data = data.apply(tf.data.experimental.assert_cardinality(step))
         if self.cache:
-            ret = ret.cache()
+            data = data.cache()
         if self.batch_size is not None and self.batch_size > 1:
-            ret = ret.batch(self.batch_size, num_parallel_calls=tf.data.AUTOTUNE)
-        return ret.prefetch(tf.data.AUTOTUNE)
+            data = data.batch(self.batch_size, num_parallel_calls=tf.data.AUTOTUNE)
+        return data.prefetch(tf.data.AUTOTUNE)
 
-    def get_split_tfdataset(
+    def get_split(
         self, train_frac=0.8, test_frac=0.1, val_frac=0.1
     ):
         n = self.length
