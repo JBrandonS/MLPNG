@@ -10,7 +10,7 @@ import tensorflow as tf
 
 
 class DataLoader(Sequence):
-    def __init__(self, file_name, shuffle=True, seed=None, normalize=False):
+    def __init__(self, file_name, shuffle=True, seed=None, normalize=False, batch_size=1, cache=True):
         """
         Initializes the DataLoader object.
 
@@ -25,6 +25,8 @@ class DataLoader(Sequence):
         self.file_name = file_name
         self.shuffle = shuffle
         self.normalize = normalize
+        self.batch_size = batch_size
+        self.cache = cache
 
         if seed is None:
             self.seed = np.random.randint(0, np.iinfo(np.int32).max)
@@ -51,8 +53,8 @@ class DataLoader(Sequence):
 
     def __str__(self):
         return (
-            "DataLoader(file: %s, Seed: %s, Shuffle: %s, Normalize: %s, Length: %s)"
-            % (self.file_name, self.seed, self.shuffle, self.normalize, self.length)
+            "DataLoader(file: %s, Seed: %s, Shuffle: %s, Normalize: %s, Length: %s, Batch Size: %s, Cache: %s)"
+            % (self.file_name, self.seed, self.shuffle, self.normalize, self.length, self.batch_size, self.cache)
         )
 
     def __getitem__(self, index):
@@ -90,15 +92,17 @@ class DataLoader(Sequence):
     #         fnl = self.file["fnls"][i, j]
     #         yield tf.convert_to_tensor(patch), tf.convert_to_tensor(fnl)
 
-    def _setup_tfds(self, ds, start, step, batch_size=1):
+    def _setup_tfds(self, ds, start, step):
         ret = ds.skip(start).take(step)
         ret = ret.apply(tf.data.experimental.assert_cardinality(step))
-        ret = ret.cache()
-        ret = ret.batch(batch_size, num_parallel_calls=tf.data.AUTOTUNE)
+        if self.cache:
+            ret = ret.cache()
+        if self.batch_size is not None and self.batch_size > 1:
+            ret = ret.batch(self.batch_size, num_parallel_calls=tf.data.AUTOTUNE)
         return ret.prefetch(tf.data.AUTOTUNE)
 
     def get_split_tfdataset(
-        self, train_frac=0.8, test_frac=0.1, val_frac=0.1, batch_size=1
+        self, train_frac=0.8, test_frac=0.1, val_frac=0.1
     ):
         n = self.length
         train_size = int(n * train_frac)
@@ -113,7 +117,7 @@ class DataLoader(Sequence):
             ),
         )
 
-        train_ds = self._setup_tfds(tfds, 0, train_size, batch_size)
-        val_ds = self._setup_tfds(tfds, train_size, val_size, batch_size)
-        test_ds = self._setup_tfds(tfds, train_size + val_size, test_size, batch_size)
+        train_ds = self._setup_tfds(tfds, 0, train_size)
+        val_ds = self._setup_tfds(tfds, train_size, val_size)
+        test_ds = self._setup_tfds(tfds, train_size + val_size, test_size)
         return train_ds, test_ds, val_ds

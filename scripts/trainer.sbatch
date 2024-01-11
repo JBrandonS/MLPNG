@@ -4,13 +4,14 @@
 #SBATCH --ntasks=1
 #SBATCH --mem=1024G  # per node
 #SBATCH --cpus-per-task=64
-#SBATCH --gpus-per-task=4
+#SBATCH --gpus-per-task=8
 #SBATCH --output=logs/training/%j.log
 #SBATCH --error=logs/training/%j.log
 #SBATCH --time=2-00:00:00
 
 module load conda gcc/11.2.0
-module load cuda/11.8.0-vbvgppx cudnn/8.7.0.84-11.8-fhn3dpf
+module load cuda/11.8.0-vbvgppx 
+module load cudnn/8.7.0.84-11.8-fhn3dpf
 
 eval "$(conda shell.bash hook)"
 

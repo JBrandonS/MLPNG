@@ -5,67 +5,47 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import tensorflow as tf
-
 from config import SimConfig
 from dataloader import DataLoader
-
 from keras import backend as K
 from matplotlib import pyplot as plt
 from sklearn import metrics as mt
 from tensorflow import pad
 from tensorflow.keras import Sequential
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, TensorBoard
-from tensorflow.keras.layers import (
-    Activation,
-    Add,
-    Attention,
-    BatchNormalization,
-    Concatenate,
-    Conv1D,
-    Conv2D,
-    Dense,
-    Dropout,
-    Embedding,
-    Flatten,
-    GlobalAveragePooling1D,
-    GlobalAveragePooling2D,
-    GroupNormalization,
-    Input,
-    Lambda,
-    Layer,
-    LayerNormalization,
-    LeakyReLU,
-    MaxPooling1D,
-    MultiHeadAttention,
-    Multiply,
-    PReLU,
-    SeparableConv2D,
-    SpatialDropout2D,
-    Subtract,
-    UpSampling2D,
-    UnitNormalization,
-)
+from tensorflow.keras.callbacks import (EarlyStopping, ReduceLROnPlateau,
+                                        TensorBoard)
+from tensorflow.keras.layers import (Activation, Add, Attention,
+                                     BatchNormalization, Concatenate, Conv1D,
+                                     Conv2D, Dense, Dropout, Embedding,
+                                     Flatten, GlobalAveragePooling1D,
+                                     GlobalAveragePooling2D,
+                                     GroupNormalization, Input, Lambda, Layer,
+                                     LayerNormalization, LeakyReLU,
+                                     MaxPooling1D, MultiHeadAttention,
+                                     Multiply, PReLU, SeparableConv2D,
+                                     SpatialDropout2D, Subtract,
+                                     UnitNormalization, UpSampling2D)
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers.legacy import Adam
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.preprocessing import sequence
 from tensorflow.keras.regularizers import l2
 
-@tf.function
+
+@tf.function(jit_compile=True)
 def dice_coefficient(y_true, y_pred, smooth=1.):
     y_true_f = K.flatten(y_true)
     y_pred_f = K.flatten(y_pred)
     intersection = K.sum(y_true_f * y_pred_f)
     return (2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
 
-@tf.function
+@tf.function(jit_compile=True)
 def dice_coefficient_loss(y_true, y_pred):
     return -dice_coefficient(y_true, y_pred)
 
 class ReflectionPadding2D(Layer):
     def __init__(self, padding=(1, 1), **kwargs):
         self.padding = tuple(padding)
-        self.input_spec = [tf.keras.layers.InputSpec(ndim=4)]
         super(ReflectionPadding2D, self).__init__(**kwargs)
 
     def compute_output_shape(self, s):
@@ -75,16 +55,6 @@ class ReflectionPadding2D(Layer):
     def call(self, x, mask=None):
         w_pad, h_pad = self.padding
         return pad(x, [[0, 0], [h_pad, h_pad], [w_pad, w_pad], [0, 0]], "REFLECT")
-
-    def get_config(self):
-        config = super().get_config()
-        config.update(
-            {
-                "padding": self.padding,
-                "input_spec": self.input_spec,
-            }
-        )
-        return config
 
 def create_localization_module(input_layer, n_filters):
     """
@@ -173,7 +143,7 @@ def isensee_attn(
     loss_function=dice_coefficient_loss,
     name="",
     metrics=[],
-    interpolation="bilinear",
+    interpolation="nearest",
     kernel_regularizer=None,
     attn_heads=2,
     attn_key_dim=64,
@@ -201,7 +171,7 @@ def isensee_attn(
     level_filters = []
     for level in range(depth):
         n_level_filters = n_base_filters // (2 ** level)
-        n_level_filters = max(8, n_level_filters)
+        n_level_filters = max(4, n_level_filters)
         level_filters.append(n_level_filters)
 
         if current_layer is inputs:
@@ -240,11 +210,11 @@ def isensee_attn(
         )
 
         # Reg attention
-        attention = MultiHeadAttention(num_heads=attn_heads, key_dim=attn_key_dim)(
-            level_output_layers[level_number], up_sampling
+        attention = Attention()(
+            [level_output_layers[level_number], up_sampling]
         )
-        attention = Multiply()([up_sampling, attention])
-        attention = LayerNormalization(epsilon=1e-6)(attention)
+        attention = Add()([up_sampling, attention])
+        attention = LayerNormalization()(attention)
 
         concatenation_layer = Concatenate()(
             [
@@ -274,13 +244,13 @@ def isensee_attn(
             )
 
     out_layer = Flatten()(output_layer)
-    # out_layer = Dropout(dropout_rate)(out_layer)
-    # out_layer = Dense(
-    #     1024,
-    #     activation="sigmoid",
-    #     kernel_initializer="glorot_uniform",
-    #     kernel_regularizer=kernel_regularizer,
-    # )(out_layer)
+    out_layer = Dropout(dropout_rate)(out_layer)
+    out_layer = Dense(
+        32,
+        activation="sigmoid",
+        kernel_initializer="glorot_uniform",
+        kernel_regularizer=kernel_regularizer,
+    )(out_layer)
     out_layer = Dense(1)(out_layer)
 
     model = Model(inputs=inputs, outputs=out_layer, name=name)
