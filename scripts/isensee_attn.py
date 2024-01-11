@@ -11,10 +11,10 @@ from keras import backend as K
 from matplotlib import pyplot as plt
 from sklearn import metrics as mt
 from tensorflow import pad
-from tensorflow.keras import Sequential
-from tensorflow.keras.callbacks import (EarlyStopping, ReduceLROnPlateau,
+from keras import Sequential
+from keras.callbacks import (EarlyStopping, ReduceLROnPlateau,
                                         TensorBoard)
-from tensorflow.keras.layers import (Activation, Add, Attention,
+from keras.layers import (Activation, Add, Attention,
                                      BatchNormalization, Concatenate, Conv1D,
                                      Conv2D, Dense, Dropout, Embedding,
                                      Flatten, GlobalAveragePooling1D,
@@ -25,11 +25,11 @@ from tensorflow.keras.layers import (Activation, Add, Attention,
                                      Multiply, PReLU, SeparableConv2D,
                                      SpatialDropout2D, Subtract,
                                      UnitNormalization, UpSampling2D)
-from tensorflow.keras.models import Model
-from tensorflow.keras.optimizers.legacy import Adam
-from tensorflow.keras.optimizers.schedules import ExponentialDecay
-from tensorflow.keras.preprocessing import sequence
-from tensorflow.keras.regularizers import l2
+from keras.models import Model
+from keras.optimizers.legacy import Adam
+from keras.optimizers.schedules import ExponentialDecay
+from keras.preprocessing import sequence
+from keras.regularizers import l2
 
 
 @tf.function(jit_compile=True)
@@ -244,13 +244,13 @@ def isensee_attn(
             )
 
     out_layer = Flatten()(output_layer)
-    out_layer = Dropout(dropout_rate)(out_layer)
-    out_layer = Dense(
-        32,
-        activation="sigmoid",
-        kernel_initializer="glorot_uniform",
-        kernel_regularizer=kernel_regularizer,
-    )(out_layer)
+    # out_layer = Dropout(dropout_rate)(out_layer)
+    # out_layer = Dense(
+    #     32,
+    #     activation="sigmoid",
+    #     kernel_initializer="glorot_uniform",
+    #     kernel_regularizer=kernel_regularizer,
+    # )(out_layer)
     out_layer = Dense(1)(out_layer)
 
     model = Model(inputs=inputs, outputs=out_layer, name=name)

@@ -23,19 +23,15 @@ from isensee import isensee2017_model
 from isensee_attn import isensee_attn
 from isensee_joe import isensee2017_joe
 from keras import Input, Model
-from keras.callbacks import (
-    EarlyStopping,
-    ModelCheckpoint,
-    ReduceLROnPlateau,
-    TensorBoard,
-)
+from keras.callbacks import (EarlyStopping, ModelCheckpoint, ReduceLROnPlateau,
+                             TensorBoard)
 from keras.layers import Add, Dense, Flatten, RandomFlip, RandomRotation
 from keras.metrics import KLDivergence, RootMeanSquaredError
 from keras.optimizers import Adam
+from keras.optimizers.schedules import ExponentialDecay
 from keras.regularizers import l2
 from sklearn.metrics import r2_score
-from tensorflow import keras
-from keras.optimizers.schedules import ExponentialDecay
+
 from tfdsdataloader import TFDSDataLoader
 
 
@@ -57,9 +53,11 @@ def plot_preds(y_val, y_pred, name, fisher=None, scaled_variance=None):
     plt.figure(figsize=(12, 6))
     sns.scatterplot(data=df, x="True Labels", y="Predicted Labels")
 
+    # Truth line
     plt.plot(
         [min(y_val), max(y_val)], [min(y_val), max(y_val)], color="red", linestyle="--"
     )
+
     if fisher is not None:
         std_dev = np.sqrt(1 / fisher)
         plt.plot(
@@ -82,7 +80,7 @@ def plot_preds(y_val, y_pred, name, fisher=None, scaled_variance=None):
             [min(y_val) + scaled_variance, max(y_val) + scaled_variance],
             color="green",
             linestyle="--",
-            label="Scaled Variance (1/$sqrt{f_{sky} f}$)})",
+            label="Scaled Variance (1/$\sqrt{f_{sky} f}$)",
         )
         plt.plot(
             [min(y_val), max(y_val)],
@@ -129,13 +127,13 @@ if __name__ == "__main__":
 
     # helps with the script running so we dont need to manually change the batch size
     if s.nside <= 128:
-        BATCH_SIZE = 128
+        BATCH_SIZE = 256
     elif s.nside <= 256:
-        BATCH_SIZE = 64
+        BATCH_SIZE = 128
     elif s.nside <= 512:
-        BATCH_SIZE = 32
+        BATCH_SIZE = 64
     elif s.nside <= 1024:
-        BATCH_SIZE = 8
+        BATCH_SIZE = 32
     else:
         BATCH_SIZE = 1
 
@@ -151,7 +149,7 @@ if __name__ == "__main__":
         "name": f"isensee_attn_{s.base_name}-{timestamp}",
         "n_base_filters": 64,
         "n_labels": 8,
-        "interpolation": "bilinear",
+        "interpolation": "nearest",
         "kernel_regularizer": l2(1e-6),
     }
 
@@ -183,7 +181,7 @@ if __name__ == "__main__":
             patience=10,
             verbose=1,
             restore_best_weights=True,
-            start_from_epoch=10,
+            # start_from_epoch=10,
         ),
         # model checkpoining to save the best model
         ModelCheckpoint(
@@ -277,11 +275,9 @@ if __name__ == "__main__":
     )
 
     # Plot the loss curves and metrics
-    print("Plotting history")
     plot_history(history, model_settings["name"], metrics=["loss"] + metrics)
 
     # Lets plot the predictions from the unseen test set
-    print("Plotting predictions")
     y_pred = model.predict(
         test_dataset,
         verbose=2,
@@ -295,6 +291,9 @@ if __name__ == "__main__":
     fisher = get_fisher(s.data_file_complete)
     scaled_variance = np.sqrt(1 / (f_sky * fisher))
 
+    print("Fisher:", fisher)
+    print("Scaled Variance:", scaled_variance)
+
     # And finally plot the predictions
     plot_preds(y_test, y_pred, model_settings["name"], fisher, scaled_variance)
 
@@ -305,7 +304,8 @@ if __name__ == "__main__":
 
         first_batch = next(iter(test_dataset.take(1)))
         images, labels = first_batch
-        activations = keract.get_activations(model, images, auto_compile=True)
+        img = images[0][None, :, :, :] # need to add back in the batch dim
+        activations = keract.get_activations(model, img, auto_compile=True)
 
         # Uncomment to plot just the attention, or any other layer
         # activations = activations.get("multi_head_attention_3")
