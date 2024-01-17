@@ -4,10 +4,6 @@ import json
 import matplotlib.pyplot as plt
 import numpy as np
 
-from pixell import enmap, curvedsky
-
-from astropy import units as u
-
 import h5py
 import logging
 
@@ -93,6 +89,8 @@ def plot_cl(
     save_name=None,
     save=True,
 ):
+    from astropy import units as u
+    
     lmax = settings.lmax
     ells = settings.ells[2:lmax]
     scale = ells * (ells + 1) / 2 / np.pi
@@ -144,6 +142,8 @@ def plot_cl_alm(
     save_name="alm",
     save=True,
 ):
+    from pixell import curvedsky
+
     cl = curvedsky.alm2cl(alm)
     plot_cl(cl, settings, plt_func, plt_camb, plt_noise, c_ells, title, save_name, save)
 
@@ -160,6 +160,8 @@ def plot_cl_map(
     save_name="cl",
     save=True,
 ):
+    from pixell import enmap, curvedsky
+
     tmap = enmap.ndmap(map, wcs)
     almsd = curvedsky.map2alm(tmap, lmax=settings.lmax)
     cl = curvedsky.alm2cl(almsd)
