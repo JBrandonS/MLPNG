@@ -1,38 +1,39 @@
 import os
 import sys
 import time
-
 import h5py
-
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
-os.environ["XLA_FLAGS"] = f"--xla_gpu_cuda_data_dir={os.environ['CUDA_HOME']}"
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import tensorflow as tf
-
-print("TensorFlow version:", tf.__version__)
-print("CUDA version:", tf.sysconfig.get_build_info()["cuda_version"])
-print("cuDNN version:", tf.sysconfig.get_build_info()["cudnn_version"])
-
 import seaborn as sns
-from config import SimConfig
-from dataloader import DataLoader
-from isensee import isensee2017_model
-from isensee_attn import isensee_attn
-from isensee_joe import isensee2017_joe
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
+os.environ["XLA_FLAGS"] = f"--xla_gpu_cuda_data_dir={os.environ['CUDA_HOME']}"
+
+import tensorflow as tf
 from keras import Input, Model
-from keras.callbacks import (EarlyStopping, ModelCheckpoint, ReduceLROnPlateau,
-                             TensorBoard)
+from keras.callbacks import (
+    EarlyStopping,
+    ModelCheckpoint,
+    ReduceLROnPlateau,
+    TensorBoard,
+)
 from keras.layers import Add, Dense, Flatten, RandomFlip, RandomRotation
 from keras.metrics import KLDivergence, RootMeanSquaredError
 from keras.optimizers import Adam
 from keras.optimizers.schedules import ExponentialDecay
 from keras.regularizers import l2
+
 from sklearn.metrics import r2_score
 
 from tfdsdataloader import TFDSDataLoader
+from config import SimConfig
+from dataloader import DataLoader
+
+from isensee import isensee2017_model
+from isensee_attn import isensee_attn
+from isensee_joe import isensee2017_joe
+from half_u import half_u
 
 
 def get_fisher(data_file):
@@ -44,7 +45,7 @@ def get_fisher(data_file):
         return np.array(kv[()])  # type: ignore
 
 
-def plot_preds(y_val, y_pred, name, fisher=None, scaled_variance=None):
+def plot_predictions(y_val, y_pred, name, fisher=None, scaled_variance=None):
     df = pd.DataFrame(
         {"True Labels": y_val.flatten(), "Predicted Labels": y_pred.flatten()}
     )
@@ -98,7 +99,7 @@ def plot_preds(y_val, y_pred, name, fisher=None, scaled_variance=None):
     plt.savefig(f"{s.plot_dir}/{name}.png")
 
 
-def plot_history(attn_history, name, metrics=["loss"]):
+def plot_history(history, name, metrics=["loss"]):
     num_metrics = len(metrics)
     fig, axs = plt.subplots(num_metrics, figsize=(15, 6 * num_metrics))
 
@@ -106,8 +107,8 @@ def plot_history(attn_history, name, metrics=["loss"]):
         axs = [axs]
 
     for i, metric in enumerate(metrics):
-        axs[i].plot(attn_history.history[metric])
-        axs[i].plot(attn_history.history[f"val_{metric}"])
+        axs[i].plot(history.history[metric])
+        axs[i].plot(history.history[f"val_{metric}"])
         axs[i].set_title(f"Model {metric}")
         axs[i].set_ylabel(metric)
         axs[i].set_xlabel("Epoch")
@@ -137,20 +138,24 @@ if __name__ == "__main__":
     else:
         BATCH_SIZE = 1
 
-    # These get passed into the isensee_attn model, doing this here so we can also save them into
-    # wandb for later analysis if wanted
+    # just some info for the model name
     timestamp = int(time.time())
+    lens_str = "lensed" if s.lensing else "unlensed"
+
+    # These get passed into the model, doing this here so we can also save them into wandb
     model_settings = {
         "depth": 5,
         "n_segmentation_levels": 3,
         "dropout_rate": 0.3,
         "loss_function": tf.keras.losses.mse,
         "initial_learning_rate": 0.001,
-        "name": f"isensee_attn_{s.base_name}-{timestamp}",
-        "n_base_filters": 64,
+        "name": f"attn_{lens_str}_{s.base_name}-{timestamp}",
+        "n_base_filters": 16,
         "n_labels": 8,
         "interpolation": "nearest",
         "kernel_regularizer": l2(1e-6),
+        "attn_heads": 2,
+        "attn_key_dim": 8,
     }
 
     # Just gather some more info for the wandb logs
@@ -159,7 +164,7 @@ if __name__ == "__main__":
         "start_time": timestamp,
         "batch_size": BATCH_SIZE,
         "max_epochs": MAX_EPOCHS,
-        "comment": "testing...",
+        "comment": "testing with flip, fixed imports",
     }
 
     # additional metrics we are intrested in
@@ -192,7 +197,7 @@ if __name__ == "__main__":
         ),
     ]
 
-    # let enable wandb, set to false if not using
+    # enable wandb, set to false if not using
     if True:
         import wandb
         from wandb.keras import WandbMetricsLogger, WandbModelCheckpoint
@@ -214,20 +219,19 @@ if __name__ == "__main__":
     with strategy.scope():
         input_img = Input((s.nside, s.nside, 1), name="img")
 
-        opt = Adam(
-            learning_rate=lr_schedule,
-            # learning_rate=model_settings["initial_learning_rate"],
-        )
+        opt = Adam(learning_rate=lr_schedule)
 
         model = isensee_attn(
-            input_img,
-            optimizer=opt,
-            metrics=metrics,
-            **model_settings,
+            input_img, optimizer=opt, metrics=metrics, **model_settings
         )
 
     if s.verbose:
         model.summary()
+
+    if s.verbose or s.debug:
+        print("TensorFlow version:", tf.__version__)
+        print("CUDA version:", tf.sysconfig.get_build_info()["cuda_version"])
+        print("cuDNN version:", tf.sysconfig.get_build_info()["cudnn_version"])
         print("Number of GPUs being used:", strategy.num_replicas_in_sync)
         print("Comment:", extra_info["comment"])
 
@@ -243,26 +247,18 @@ if __name__ == "__main__":
     if os.path.exists(tfds_filepath):
         # This might have a small speedup, but it also might not
         # This WILL let us run on multinode which the hdf5 loader does not
-        data_loader = TFDSDataLoader(
-            tfds_filepath,
-            **data_loader_args,
-        )
+        data_loader = TFDSDataLoader(tfds_filepath, **data_loader_args)
     else:
         # load data as a python generator, directly from hdf5
         # This requires everything to be in the same python environment
         # aka, no multinode
-        data_loader = DataLoader(
-            s.data_file_complete,
-            **data_loader_args,
-        )
+        data_loader = DataLoader(s.data_file_complete, **data_loader_args)
     print(data_loader)
 
     # Split into train, test, and validation sets
     # We have enought data that we just use a 80/10/10 split
     # TODO: ensure clean split with no dup backgrounds
-    train_dataset, test_dataset, val_dataset = data_loader.get_split(
-        0.8, 0.1, 0.1
-    )
+    train_dataset, test_dataset, val_dataset = data_loader.get_split(0.8, 0.1, 0.1)
 
     # Finally, lets fit our model
     # we use the train and val sets here, so the model will not see the test set
@@ -278,10 +274,7 @@ if __name__ == "__main__":
     plot_history(history, model_settings["name"], metrics=["loss"] + metrics)
 
     # Lets plot the predictions from the unseen test set
-    y_pred = model.predict(
-        test_dataset,
-        verbose=2,
-    )
+    y_pred = model.predict(test_dataset, verbose=2)
     y_test = np.concatenate([y.numpy() for _, y in test_dataset])
 
     # Since we are doing sky cuts we expect the variance to be a bit higher than the fisher
@@ -295,7 +288,7 @@ if __name__ == "__main__":
     print("Scaled Variance:", scaled_variance)
 
     # And finally plot the predictions
-    plot_preds(y_test, y_pred, model_settings["name"], fisher, scaled_variance)
+    plot_predictions(y_test, y_pred, model_settings["name"], fisher, scaled_variance)
 
     # Plot the activation layers, doing it this way to make it optional
     print("Plotting activations")
@@ -304,7 +297,9 @@ if __name__ == "__main__":
 
         first_batch = next(iter(test_dataset.take(1)))
         images, labels = first_batch
-        img = images[0][None, :, :, :] # need to add back in the batch dim
+        print("Images shape:", images.shape)
+        img = images[0][None, :, :, :]  # need to add back in the batch dim
+        print("Image shape:", img.shape)
         activations = keract.get_activations(model, img, auto_compile=True)
 
         # Uncomment to plot just the attention, or any other layer

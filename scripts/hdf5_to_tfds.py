@@ -9,7 +9,6 @@ import numpy as np
 
 def convert_hdf5_to_tfdata(hdf5_filepath, save_filepath):
     with h5py.File(hdf5_filepath, 'r') as f:
-        # Assuming that you have two datasets 'images' and 'labels' in the HDF5 file
         images = f['patches'][:]
         labels = f['fnls'][:]
 

@@ -55,7 +55,11 @@ class TFDSDataLoader:
             # use a buffer size of 1000 prevents true shuffling but doesnt load everything into memory
             data = data.shuffle(buffer_size=self.shuffle_buffer_size, seed=self.seed)
         if self.batch_size > 1:
-            data = data.batch(self.batch_size, num_parallel_calls=tf.data.AUTOTUNE, drop_remainder=True)
+            data = data.batch(
+                self.batch_size,
+                num_parallel_calls=tf.data.AUTOTUNE,
+                drop_remainder=True,
+            )
         return data.prefetch(tf.data.AUTOTUNE)
 
     def get_split(self, train_frac=0.8, test_frac=0.1, val_frac=0.1):
