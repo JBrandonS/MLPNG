@@ -9,7 +9,7 @@ from keras.layers import (
     BatchNormalization,
     GroupNormalization,
     Activation,
-    Lambda
+    Lambda,
 )
 import numpy as np
 
@@ -121,27 +121,16 @@ def create_convolution_block(
 
 
 def rotation_layer(input_tensor):
-    # needs testing
-    n = tf.random.uniform(shape=(), minval=0, maxval=4, dtype=tf.int32)
-    angle = n * np.pi / 2
+    """
+    rotates each image by a random number of 90 degree turns
+    """
+    def _work(image):
+        k = tf.random.uniform(shape=(), maxval=4, dtype=tf.int32)
+        return tf.image.rot90(image, k)
+
     rotated_tensor = Lambda(
-        lambda x: tf.raw_ops.ImageProjectiveTransformV2(
-            x,
-            tf.constant(
-                [
-                    np.cos(angle),
-                    -np.sin(angle),
-                    0.0,
-                    np.sin(angle),
-                    np.cos(angle),
-                    0.0,
-                    0.0,
-                    0.0,
-                ]
-            ),
-            interpolation="NEAREST",
-        ),
-        output_shape=tf.TensorShape(input_tensor.shape),
-        trainable=False,
+        lambda x: _work(x),
+        output_shape=input_tensor.shape,
+        name="rotation_layer"
     )(input_tensor)
     return rotated_tensor
