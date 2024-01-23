@@ -6,6 +6,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+import pprint
+
+# os.environ["NCCL_DEBUG"] = "INFO"
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
 os.environ["XLA_FLAGS"] = f"--xla_gpu_cuda_data_dir={os.environ['CUDA_HOME']}"
@@ -128,13 +132,13 @@ if __name__ == "__main__":
 
     # helps with the script running so we dont need to manually change the batch size
     if s.nside <= 128:
-        BATCH_SIZE = 256
-    elif s.nside <= 256:
-        BATCH_SIZE = 128
-    elif s.nside <= 512:
         BATCH_SIZE = 64
-    elif s.nside <= 1024:
+    elif s.nside <= 256:
         BATCH_SIZE = 32
+    elif s.nside <= 512:
+        BATCH_SIZE = 16
+    elif s.nside <= 1024:
+        BATCH_SIZE = 8
     else:
         BATCH_SIZE = 1
 
@@ -148,14 +152,17 @@ if __name__ == "__main__":
         "n_segmentation_levels": 3,
         "dropout_rate": 0.3,
         "loss_function": tf.keras.losses.mse,
-        "initial_learning_rate": 0.001,
+        "initial_learning_rate": 0.1,
         "name": f"attn_{lens_str}_{s.base_name}-{timestamp}",
-        "n_base_filters": 16,
-        "n_labels": 8,
+        "n_base_filters": 64,
+        "n_labels": 1,
         "interpolation": "nearest",
-        "kernel_regularizer": l2(1e-6),
+        # "kernel_regularizer": l2(1e-6),
         "attn_heads": 2,
         "attn_key_dim": 8,
+        "flip": True,
+        "rotate": True,
+        "add_t2":True,
     }
 
     # Just gather some more info for the wandb logs
@@ -164,7 +171,7 @@ if __name__ == "__main__":
         "start_time": timestamp,
         "batch_size": BATCH_SIZE,
         "max_epochs": MAX_EPOCHS,
-        "comment": "testing with flip, fixed imports",
+        "comment": "testing with no kernel reg, rotation, high init learning",
     }
 
     # additional metrics we are intrested in
@@ -173,7 +180,7 @@ if __name__ == "__main__":
     # enable a learning rate schedule
     lr_schedule = ExponentialDecay(
         initial_learning_rate=model_settings["initial_learning_rate"],
-        decay_steps=10000,
+        decay_steps=100000,
         decay_rate=0.95,
         staircase=True,
     )
@@ -186,7 +193,7 @@ if __name__ == "__main__":
             patience=10,
             verbose=1,
             restore_best_weights=True,
-            # start_from_epoch=10,
+            start_from_epoch=40,
         ),
         # model checkpoining to save the best model
         ModelCheckpoint(
@@ -215,6 +222,7 @@ if __name__ == "__main__":
 
     # strategy lets us use multigpu,
     # if using a single gpu or no gpu it should do nothing
+    # you can safely remove these 2 lines of code to disable this
     strategy = tf.distribute.MirroredStrategy()
     with strategy.scope():
         input_img = Input((s.nside, s.nside, 1), name="img")
@@ -224,16 +232,6 @@ if __name__ == "__main__":
         model = isensee_attn(
             input_img, optimizer=opt, metrics=metrics, **model_settings
         )
-
-    if s.verbose:
-        model.summary()
-
-    if s.verbose or s.debug:
-        print("TensorFlow version:", tf.__version__)
-        print("CUDA version:", tf.sysconfig.get_build_info()["cuda_version"])
-        print("cuDNN version:", tf.sysconfig.get_build_info()["cudnn_version"])
-        print("Number of GPUs being used:", strategy.num_replicas_in_sync)
-        print("Comment:", extra_info["comment"])
 
     # Lets load our data
     data_loader_args = {
@@ -253,7 +251,17 @@ if __name__ == "__main__":
         # This requires everything to be in the same python environment
         # aka, no multinode
         data_loader = DataLoader(s.data_file_complete, **data_loader_args)
+
+    # Just print some good info for the log
+    print("TensorFlow version:", tf.__version__)
+    print("CUDA version:", tf.sysconfig.get_build_info()["cuda_version"])
+    print("cuDNN version:", tf.sysconfig.get_build_info()["cudnn_version"])
+    print("Number of GPUs being used:", strategy.num_replicas_in_sync)
+
+    pprint.PrettyPrinter(indent=2).pprint(model_settings | extra_info)
     print(data_loader)
+    
+    model.summary()
 
     # Split into train, test, and validation sets
     # We have enought data that we just use a 80/10/10 split

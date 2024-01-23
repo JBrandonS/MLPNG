@@ -2,6 +2,7 @@ import tensorflow as tf
 from keras.layers import (
     Add,
     Attention,
+    MultiHeadAttention,
     Concatenate,
     Conv2D,
     Dense,
@@ -12,6 +13,7 @@ from keras.layers import (
     UpSampling2D,
     RandomFlip,
     RandomRotation,
+    Dropout
 )
 from keras.models import Model
 from keras.optimizers.legacy import Adam
@@ -44,8 +46,8 @@ def isensee_attn(
     attn_heads=2,
     attn_key_dim=64,
     flip=True,
-    rotate=False,
-    add_t2=False,
+    rotate=True,
+    add_t2=True,
 ):
     """
     This function builds a model proposed by Isensee et al. for the BRATS 2017 competition:
@@ -123,8 +125,10 @@ def isensee_attn(
         )
 
         # Reg attention
+        # with t2 this does not match sizes, need to fix
+        # gate = UpSampling2D(size=(2,2), interpolation=interpolation)(current_layer)
         # attention = MultiHeadAttention(num_heads=attn_heads, key_dim=attn_key_dim)(
-        #     level_output_layers[level_number], up_sampling
+        #     level_output_layers[level_number], gate
         # )
         attention = Attention()([level_output_layers[level_number], up_sampling])
         attention = Multiply()([up_sampling, attention])
@@ -158,7 +162,7 @@ def isensee_attn(
             )
 
     out_layer = Flatten()(output_layer)
-    # out_layer = Dropout(dropout_rate)(out_layer)
+    out_layer = Dropout(dropout_rate)(out_layer)
     # out_layer = Dense(
     #     32,
     #     activation="relu",
