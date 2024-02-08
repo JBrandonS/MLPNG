@@ -6,31 +6,27 @@
 
 ## Installing
 
-needs to be updated
-
-To install this project, follow these steps:
-
 ### Data Generator
 
 1. Clone the repository using `git clone`, or download and extract the zip
 2. Create a python environment
    - I have provided `conda-envs/datagen-m3.yml` which is the conda env I use on m3.
 3. Clone, or download, and install [KSW](https://github.com/AdriJD/ksw) and [optweight](https://github.com/AdriJD/optweight)
-   - `optweight` should be installed first, just need run `pip install -e .` in the root.
+   - `optweight` should be installed first, just need run `pip install -e .` in the root directory.
    - For `ksw` run `make && pip install -e . && make check` in the root.
       - You will probably see an error on the make check, this seems to be an issue with the ksw test code and does not affect anything.
-4. You can now run the code, using the `datagenerator.sh` or `datagen.py`.
+4. You can now run the code, using the pipeline with `datagenerator.sh` or manually with `scripts/datagen.py`.
 
 ### Trainer
 
 1. Clone the repository using `git clone`, or download and extract the zip
 2. Create a python environment
    - I have provided `conda-envs/training.yml` which is the conda env I use on superpod.
-3. You can now run the code, using the `trainer.sh` or `trainer.py`.
+3. You can now run the code, using the `trainer.sh` or `script/trainer.py`.
 
 ## Running
 
-> You will need to change the conda env in the `.sbatch` scripts located inside `scripts/`.
+> You will need to change the conda env in the `.sbatch` scripts located inside `sbatch/`.
 >
 > The best method to run large amounts data is to use slurm job arrays.
 
@@ -40,29 +36,36 @@ The data generator is controlled by settings files located in the `settings/` di
 
 The `datagen.py` script generates the alms and patches.
 
-**Note:** It's recommended to use slurm job arrays for this script. If you change the value in the `datagen/datagen.sbatch` file, make sure to update the `narray` value in your settings file to match the size of the job arrays. This ensures the `combiner` and `estimator` scripts handle the data correctly.
+> **Note:** 
+> 
+> It's recommended to use slurm job arrays for this script. If you change the value in the `sbatch/datagen.sbatch` file, make sure to update the `narray` value in your settings file to match the size of the job arrays. This ensures the `combiner` and `estimator` scripts handle the data correctly. I may possibly automate this later.
 
-### Data Combination
+#### Data Combination
 
-After data generation, if you're using job arrays, the data will be in separate files per job. You can use the `combiner.py` script to combine the data into a single file. Simply point it to the correct settings file.
+After data generation, if you're using job arrays, the data will be in separate files per job. You can use the `combiner.py` script to combine the data into a single file. Simply point it to the correct settings file. See the `datagen.sh` script for an example of how to automate this.
 
-### Data Estimation
+#### Data Estimation
 
 The `estimator` script applies the KSW estimator to the data. Point it to the correct settings file. This script also 'finalizes' the data by removing the `.nc` at the end of the file name.
 
-### Simplified Data Generation
+#### Simplified Data Generation
 
 For convenience, a `datagenerator.sh` script is provided. To use it:
 
 1. Make any necessary changes to your settings file.
-2. Check the sbatch file in `datagen/datagen.sbatch`. You may need to correct the array number to match the settings you will be using. Check and change the conda env used in all the `sbatch` files in `datagen/`.
+2. Check the sbatch file in `sbatch/datagen.sbatch`. You may need to correct the array number to match the settings you will be using. Check and change the conda env used in all the `sbatch` files in `sbatch/`.
 3. Point the `datagen.sh` script to the correct settings file and run it.
 
-You might want to use the command `nohup bash datagenerator.sh &`. This runs the script in the background (`&`) and keeps the process running if your connection drops (`nohup`). **This script is safe to run on the log-in nodes as it does no intensive work and spends most of its time idle**.
+For large runs you will want to use the command `nohup bash datagenerator.sh &`. This runs the script in the background (`&`) and keeps the process running if your connection drops (`nohup`). Once ran it will be save to log out of your ssh connection. **This script is safe to run on the log-in nodes as it does no intensive work and spends most of its time idle**.
 
 ### Training
 
-TODO
+The training pipeline is very simple. From superpod,
+
+0. Ensure your data is fully generated and avaible on the superpod filesystem.
+1. Create your model, follow the example in `scripts/isensee_attn.py`, or any of the other model files.
+2. Point the `trainer.sh` script to the correct settings files you would like to train on and point the `sbatch $JOB1 "scripts/isensee_attn.py" "$SETTINGSFILE"` line to the correct model file.
+3. Run the `trainer.sh` script.
 
 ## Some Notes
 
@@ -113,6 +116,7 @@ Adri Duivenvoorden:
 
 
 https://github.com/ai4cmb/NNhealpix/tree/master
+
 @article{ KrachmalnicoffTomasi2019,
 	author = {{Krachmalnicoff, N.} and {Tomasi, M.}},
 	title = {Convolutional neural networks on the HEALPix sphere: a pixel-based algorithm and its application to CMB data analysis},
