@@ -12,8 +12,8 @@ SETTINGS_DIR="settings/"
 # )
 
 SETTINGS=(
-  "ul_nn_128_large.json" #"ul_nn_256_large.json" "ul_nn_512_large.json" # "ul_nn_1024_large.json" "ul_nn_2048_large.json"
-  "l_128_large.json"  #"l_256_large.json" "l_512_large.json"  #"l_1024_large.json"  "l_2048_large.json"
+  "ul_nn_128_large.json" # "l_128_large.json" "ul_nn_512_large.json" "ul_nn_2048_large.json" #"ul_nn_256_large.json" "ul_nn_512_large.json" # "ul_nn_1024_large.json" "ul_nn_2048_large.json"
+  # "l_128_large.json"  #"l_256_large.json" "l_512_large.json"  #"l_1024_large.json"  "l_2048_large.json"
 )
 
 # SETTINGS=("${SETTINGS_DIR}"*.json)
@@ -21,7 +21,7 @@ SETTINGS=(
 
 JOB1="sbatch/datagen-large.sbatch"
 JOB2="sbatch/combiner.sbatch"
-# JOB3="estimator.sbatch"
+JOB3="sbatch/estimator.sbatch"
 
 mkdir -p logs/datagen/ logs/combiner/ logs/estimator/
 
