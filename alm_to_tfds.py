@@ -1,15 +1,17 @@
 import sys
 from numpy.random import uniform
 
-from scripts.utils import load_data
-from scripts.utils import SimConfig
 import tensorflow as tf
 import glob
 import numpy as np
 
+from scripts.utils import load_data
+from scripts.utils import SimConfig
+
 if __name__ == "__main__":
     hdf5_files = glob.glob(f'data/alm_cache/*.hdf5', recursive=True)
     for hdf5_file in hdf5_files:
+        print('processing', hdf5_file)
         ldata = load_data(hdf5_file, ["alm", "almng"])
 
         alms = ldata["alm"]
@@ -24,6 +26,4 @@ if __name__ == "__main__":
 
         dataset = tf.data.Dataset.from_tensor_slices((alm_total, fnls))
         tf.data.Dataset.save(dataset, hdf5_file.replace('.hdf5', '.tfds'))
-
-
-
+        print('finsihed with', hdf5_file)

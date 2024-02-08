@@ -38,9 +38,6 @@ class AlmDataLoader(Sequence):
     def _setup_tfds(self, ds, start, step) -> Dataset:
         data = ds.skip(start).take(step)
 
-        # data = data.map(lambda x, y: (tf.expand_dims(x, axis=-1), y))
-        data = data.map(lambda x, y: (tf.transpose(x, perm=[1, 0]), y))
-
         if self.cache:
             data = data.cache()
 
@@ -65,8 +62,6 @@ class AlmDataLoader(Sequence):
 
         ds_train = self._setup_tfds(ds, 0, ntrain)
         ds_test = self._setup_tfds(ds, ntrain, ntest)
-
-        print('Lengths', length, ntrain, ntest, flush=True)
 
         if val_frac is not None:
             nval = int(val_frac * length)
