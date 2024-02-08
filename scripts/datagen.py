@@ -281,6 +281,8 @@ if __name__ == "__main__":
         ldata = generate_almngs()
         alm_file = s.alm_file_partial
 
+    exit()
+
     alms = ldata["alm"]
     almngs = ldata["almng"]
 

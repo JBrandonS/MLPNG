@@ -2,7 +2,7 @@ import sys
 from numpy.random import uniform
 
 from scripts.utils import load_data
-from scripts.config import SimConfig
+from scripts.utils import SimConfig
 import tensorflow as tf
 import glob
 

@@ -22,7 +22,7 @@
     },
 
     "name" : "ulnn1024-large",
-    "nsims" : 100,
+    "nsims" : 1000,
     "narray": 1000,                   
     "npatches" : 10,
     "lensing" : false,

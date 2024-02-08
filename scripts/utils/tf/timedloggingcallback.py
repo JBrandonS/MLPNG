@@ -1,7 +1,8 @@
 import time
 
-import tensorflow as tf
 import keras
+import tensorflow as tf
+
 
 class TimedLoggingCallback(keras.callbacks.Callback):
     """

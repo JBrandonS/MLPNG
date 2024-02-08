@@ -140,7 +140,7 @@ if __name__ == "__main__":
             save_best_only=True,
             mode="auto",
         ),
-        TimedLoggingCallback(), # custom logger to work a little better with text logs
+        # TimedLoggingCallback(), # custom logger to work a little better with text logs
     ]
 
     # enable wandb, set to false if not using
@@ -189,6 +189,7 @@ if __name__ == "__main__":
         epochs=MAX_EPOCHS,
         callbacks=callbacks,
         verbose=0, # since we are using the custom logger
+        
     )
 
     # Lets plot the predictions from the unseen test set
