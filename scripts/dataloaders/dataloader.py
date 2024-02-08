@@ -1,9 +1,5 @@
 import numpy as np
 import h5py
-import copy
-from itertools import product
-
-import logging
 
 from keras.utils import Sequence
 import tensorflow as tf
@@ -11,27 +7,13 @@ import tensorflow as tf
 
 class DataLoader(Sequence):
     def __init__(self, file_name, shuffle=True, seed=None, normalize=False, batch_size=1, cache=True):
-        """
-        Initializes the DataLoader object.
-
-        Args:
-            file (str): The path to the file to load data from.
-            shuffle (bool, optional): Whether to shuffle the data. Defaults to True.
-            seed (int, optional): The seed for the random number generator used for shuffling.
-                If None, a random seed is generated. Defaults to None.
-            normalize (bool, optional): Whether to normalize the data. Defaults to False.
-        """
-        self.logger = logging.getLogger(__name__)
         self.file_name = file_name
         self.shuffle = shuffle
         self.normalize = normalize
         self.batch_size = batch_size
         self.cache = cache
 
-        if seed is None:
-            self.seed = np.random.randint(0, np.iinfo(np.int32).max)
-        else:
-            self.seed = seed
+        self.seed = seed if seed is not None else np.random.randint(0, np.iinfo(np.int32).max)
 
         self.file = h5py.File(self.file_name, mode="r", swmr=True, locking=False)
 
@@ -74,21 +56,6 @@ class DataLoader(Sequence):
 
     def __len__(self):
         return self.length
-
-    # def __iter__(self):
-    #     for index in self.idxs:
-    #         i, j, k, l = np.unravel_index(
-    #             index, (self._nsims, self._ndup, self._npol, self._npatches)
-    #         )
-
-    #         patch = self.file["patches"][i, j, k, l][:, :, None]
-    #         if self.normalize:
-    #             min_val = np.min(patch)
-    #             max_val = np.max(patch)
-    #             patch = (patch - min_val) / (max_val - min_val)
-
-    #         fnl = self.file["fnls"][i, j]
-    #         yield tf.convert_to_tensor(patch), tf.convert_to_tensor(fnl)
 
     def _setup_tfds(self, ds, start, step):
         data = ds.skip(start).take(step)

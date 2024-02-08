@@ -1,7 +1,3 @@
-# %% [markdown]
-# This script just combines the partial data files generated when using SLURM job arrays. It is not necessary to run this script if you are not using SLURM job arrays.
-
-# %%
 import os
 import sys
 import glob
@@ -9,7 +5,7 @@ import h5py
 import re
 from tqdm.auto import tqdm
 
-from config import SimConfig
+from utils import SimConfig
 
 import logging
 

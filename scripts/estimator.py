@@ -1,22 +1,19 @@
+import datetime
+import logging
 import os
 import sys
-import numpy as np
 
-import healpy as hp
 import camb
-import datetime
-
-from ksw import Shape, KSW, Cosmology, Data
+import healpy as hp
+import numpy as np
 from astropy import units as u
-
-from utils import load_data, save_data, get_radii, load_single_data
-from config import SimConfig
+from ksw import KSW, Cosmology, Data, Shape
 
 # This will still crash on mainframe if MPI fails to start correctly....
 # but try except doesn't work for some reason, and makes completion error
 from mpi4py import MPI
 
-import logging
+from utils import SimConfig, get_radii, load_data, load_single_data, save_data
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()

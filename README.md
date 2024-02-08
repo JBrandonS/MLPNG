@@ -110,3 +110,16 @@ Adri Duivenvoorden:
 - [Primordial Non-Gaussianity](http://arxiv.org/abs/1903.04409)
 - [ksw github](https://github.com/AdriJD/ksw)
 - [optweight github](https://github.com/AdriJD/optweight)
+
+
+https://github.com/ai4cmb/NNhealpix/tree/master
+@article{ KrachmalnicoffTomasi2019,
+	author = {{Krachmalnicoff, N.} and {Tomasi, M.}},
+	title = {Convolutional neural networks on the HEALPix sphere: a pixel-based algorithm and its application to CMB data analysis},
+	DOI= "10.1051/0004-6361/201935211",
+	url= "https://doi.org/10.1051/0004-6361/201935211",
+	journal = {A\&A},
+	year = 2019,
+	volume = 628,
+	pages = "A129",
+}

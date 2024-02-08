@@ -19,9 +19,9 @@ SETTINGS=(
 # SETTINGS=("${SETTINGS_DIR}"*.json)
 
 
-JOB1="scripts/datagen.sbatch"
-JOB2="scripts/combiner.sbatch"
-JOB3="scripts/estimator.sbatch"
+JOB1="datagen.sbatch"
+JOB2="combiner.sbatch"
+JOB3="estimator.sbatch"
 
 mkdir -p logs/datagen/ logs/combiner/ logs/estimator/
 

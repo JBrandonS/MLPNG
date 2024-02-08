@@ -114,7 +114,7 @@ def dice_coefficient(y_true, y_pred, smooth=1.0):
 def dice_coefficient_loss(y_true, y_pred):
     return -dice_coefficient(y_true, y_pred)
 
-def isensee2017_model(
+def isensee_model(
     inputs,
     n_base_filters=16,
     depth=5,

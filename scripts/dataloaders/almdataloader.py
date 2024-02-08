@@ -1,0 +1,76 @@
+import numpy as np
+from typing import Tuple, Optional
+from keras.utils import Sequence
+import tensorflow as tf
+
+from tensorflow.data import Dataset
+
+class AlmDataLoader(Sequence):
+    def __init__(
+        self,
+        file_name,
+        shuffle=True,
+        seed=None,
+        batch_size=1,
+        cache=True,
+        shuffle_buffer_size=1000,
+    ):
+        self.file_name = file_name
+        self.shuffle = shuffle
+        self.shuffle_buffer_size = shuffle_buffer_size
+        self.batch_size = batch_size
+        self.cache = cache
+
+        self.seed = seed if seed is not None else np.random.randint(0, np.iinfo(np.int32).max)
+
+    def __str__(self):
+        return (
+            "AlmDataLoader(File: %s, Seed: %s, Shuffle: %s, Batch Size: %s, Cache: %s)"
+            % (
+                self.file_name,
+                self.seed,
+                self.shuffle,
+                self.batch_size,
+                self.cache,
+            )
+        )
+
+    def _setup_tfds(self, ds, start, step) -> Dataset:
+        data = ds.skip(start).take(step)
+
+        # data = data.map(lambda x, y: (tf.expand_dims(x, axis=-1), y))
+        data = data.map(lambda x, y: (tf.transpose(x, perm=[1, 0]), y))
+
+        if self.cache:
+            data = data.cache()
+
+        if self.shuffle:
+            # use a buffer size of 1000 prevents true shuffling but doesnt load everything into memory
+            data = data.shuffle(buffer_size=self.shuffle_buffer_size, seed=self.seed)
+
+        if self.batch_size > 1:
+            data = data.batch(
+                self.batch_size,
+                num_parallel_calls=tf.data.AUTOTUNE,
+                drop_remainder=True,
+            )
+        return data.prefetch(tf.data.AUTOTUNE)
+
+    def get_split(self, train_frac=0.8, test_frac=0.1, val_frac=0.1) -> Tuple[Dataset, Dataset, Optional[Dataset]]:
+        ds = tf.data.Dataset.load(self.file_name)
+
+        length = ds.cardinality().numpy()
+        ntrain = int(train_frac * length)
+        ntest = int(test_frac * length)
+
+        ds_train = self._setup_tfds(ds, 0, ntrain)
+        ds_test = self._setup_tfds(ds, ntrain, ntest)
+
+        print('Lengths', length, ntrain, ntest, flush=True)
+
+        if val_frac is not None:
+            nval = int(val_frac * length)
+            ds_val = self._setup_tfds(ds, ntrain + ntest, nval)
+            return ds_train, ds_test, ds_val
+
+        return ds_train, ds_test

@@ -1,9 +1,9 @@
 #! /bin/bash
-#SBATCH --job-name=trainer
+#SBATCH --job-name=training
 #SBATCH --partition=batch
 #SBATCH --ntasks=1
 #SBATCH --mem=1024G  # per node
-#SBATCH --cpus-per-task=64
+#SBATCH --cpus-per-task=32
 #SBATCH --gpus-per-task=2
 #SBATCH --output=logs/training/%j.log
 #SBATCH --error=logs/training/%j.log
@@ -17,9 +17,4 @@ eval "$(conda shell.bash hook)"
 
 conda activate trainer
 
-if [ -n "$1" ]
-then
-    time srun python scripts/trainer.py "$1"
-else
-    time srun python scripts/trainer.py
-fi
+time srun python "$1" "$2"

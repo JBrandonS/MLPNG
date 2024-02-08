@@ -10,14 +10,7 @@ import pprint
 import logging
 log = logging.getLogger(__name__)
 
-def safe_makedirs(dir):
-    "Create a directory if it does not exist. Handles a race condition"
-    if not os.path.exists(dir):
-        try:
-            os.makedirs(dir)
-            log.debug("Created directory %s", dir)
-        except FileExistsError:
-            pass
+from utils.utils import safe_makedirs
 
 class SimConfig:
     def __init__(self, settings_file, print_settings=True):

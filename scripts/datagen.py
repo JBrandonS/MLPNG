@@ -1,39 +1,25 @@
-# %%
+import datetime
+import logging
+import math
 import os
 import sys
-import math
-import datetime
-import numpy as np
-from numpy.random import randint, uniform
-import matplotlib.pyplot as plt
-from scipy.interpolate import CubicSpline
-
-import logging
-
 from functools import partial
-from joblib import Parallel, delayed
 
-import healpy as hp
 import camb
-
+import healpy as hp
+import lenspyx
+import matplotlib.pyplot as plt
+import numpy as np
+from utils import SimConfig
+from joblib import Parallel, delayed
 from ksw import Cosmology, Data
 from ksw.radial_functional import radial_func
-
+from numpy.random import randint, uniform
+from pixell import curvedsky, enmap, lensing, reproject
+from scipy.interpolate import CubicSpline
 from tqdm.auto import tqdm
-from pixell import enmap, lensing, curvedsky, reproject
-
-from utils import (
-    load_data,
-    save_data,
-    save_plt,
-    get_radii,
-    plot_cl_alm,
-    plot_cl_map,
-)
-from config import SimConfig
-import lenspyx
-
-from joblib import Parallel, delayed
+from utils import (get_radii, load_data, plot_cl_alm, plot_cl_map, save_data,
+                   save_plt)
 
 log = logging.getLogger(__name__)
 
