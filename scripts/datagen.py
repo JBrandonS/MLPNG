@@ -10,7 +10,6 @@ import healpy as hp
 import lenspyx
 import matplotlib.pyplot as plt
 import numpy as np
-from utils import SimConfig
 from joblib import Parallel, delayed
 from ksw import Cosmology, Data
 from ksw.radial_functional import radial_func
@@ -18,10 +17,11 @@ from numpy.random import randint, uniform
 from pixell import curvedsky, enmap, lensing, reproject
 from scipy.interpolate import CubicSpline
 from tqdm.auto import tqdm
-from utils import (get_radii, load_data, plot_cl_alm, plot_cl_map, save_data,
-                   save_plt)
+from utils import (SimConfig, get_radii, load_data, plot_cl_alm, plot_cl_map,
+                   save_data, save_plt)
 
 log = logging.getLogger(__name__)
+
 
 def get_alm(alm, bl_div_cl, alpha_l, r, dr):
     """This calculates the alms from the precalculated values"""
@@ -120,10 +120,11 @@ def generate_almngs():
     bl_div_cl = np.ascontiguousarray(bl_div_cl)
 
     # Each alm takes ~30Mb at 1024. This is fast enough we don't need to parallelize even for very large datasets
+    log.info("Starting gaussian A_lm generation")
     alms = np.array(
         [
             ksw_data.compute_alm_sim(s.lensing)
-            for _ in tqdm(range(s.nsims), desc="a_lm progress")
+            for _ in tqdm(range(s.nsims), desc="A_lm progress")
         ],
         dtype=s.c_dtype,
     )
@@ -136,7 +137,7 @@ def generate_almngs():
         for j in range(s.npol):
             alms[i, j] = hp.almxfl(alms[i, j], beam_ell_2d[j] ** -1)
 
-    log.info("Starting almng generation")
+    log.info("Starting non-gaussian A_lm generation")
     sim_data = np.zeros((s.nsims, s.npol, s.nelem), dtype=s.c_dtype)
     for i in tqdm(range(s.nsims), desc="almng progress"):
         for pol in range(s.npol):
@@ -148,7 +149,8 @@ def generate_almngs():
                     alpha_l[ri, :, pol],
                     radii[ri],
                     drs[ri],
-                ) for ri in range(len(drs))
+                )
+                for ri in range(len(drs))
             )
 
             # consume
@@ -191,9 +193,11 @@ def get_fs_patch_geo():
         patch_wcss.append(w)
     return fs_shape, fs_wcs, fs_map, patch_shapes, patch_wcss
 
+
 # helper function to process a single patch
 def process_patch(i, j, pol):
     return np.array(cutPatches(alms[i, pol], fnls[i, j], almngs[i, pol]))
+
 
 if __name__ == "__main__":
     # %% [markdown]
@@ -270,7 +274,9 @@ if __name__ == "__main__":
         log.info("Found completed alms file, skipping alm generation")
         ldata = load_data(s.alm_file_complete, ["alm", "almng"], verbose=s.verbose)
     elif os.path.isfile(s.alm_file_partial) and not s.force_alm_gen:
-        log.info("Found partial alm file %s, skipping alm generation", s.alm_file_partial)
+        log.info(
+            "Found partial alm file %s, skipping alm generation", s.alm_file_partial
+        )
         ldata = load_data(s.alm_file_partial, ["alm", "almng"], verbose=s.verbose)
     else:
         if os.path.isfile(s.alm_file_nc):
@@ -281,6 +287,7 @@ if __name__ == "__main__":
         ldata = generate_almngs()
         alm_file = s.alm_file_partial
 
+    # TODO remove this, it is just for testing
     exit()
 
     alms = ldata["alm"]
@@ -319,10 +326,14 @@ if __name__ == "__main__":
         for pol in range(s.npol)
     ]
     # lets get our generator setup using parallel, return as generator so we consume memory as we go
-    patch_generator = Parallel(n_jobs=s.nthreads_sim // 4, return_as="generator")(delayed(process_patch)(*arg) for arg in args)
+    patch_generator = Parallel(n_jobs=s.nthreads_sim // 4, return_as="generator")(
+        delayed(process_patch)(*arg) for arg in args
+    )
 
     # actually gets our data from the generator, only update every 100 runs, takes a long time
-    for idx, result in enumerate(tqdm(patch_generator, desc="patch progress", total=len(args), miniters=100)):
+    for idx, result in enumerate(
+        tqdm(patch_generator, desc="patch progress", total=len(args), miniters=100)
+    ):
         i, j, pol = args[idx]
         patches[i, j, pol] = result
 

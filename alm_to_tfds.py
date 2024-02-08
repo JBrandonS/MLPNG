@@ -17,8 +17,9 @@ if __name__ == "__main__":
 
         alm_total = alms + fnls * almngs
 
-        
-
+        # TODO, convert to pol last just to match conv norms
+        # add data and target names to clear up confusion
+        # double check the shape of the data
         dataset = tf.data.Dataset.from_tensor_slices((alm_total, fnls))
         tf.data.Dataset.save(dataset, hdf5_file.replace('.hdf5', '.tfds'))
 

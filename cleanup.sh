@@ -22,7 +22,8 @@ fi
 
 rm -rvf logs/datagen/*
 rm -rvf logs/*/*.log
-rm -vf nohup.out
+rm -vf nohup.out 
+rm -vf .vscj.out
 
 cd "data" || ( echo "cannot find data folder" && exit )
 
@@ -40,7 +41,7 @@ if [[ "$CLEAN_INCOMPLETE" -eq 1 ]] || [[ "$FULL_CLEAN" -eq 1 ]]; then
         cd "$dir" 2>/dev/null || continue
         echo "Currently in directory: $(pwd)"
 
-        if [[ "$CLEAN_INCOMPLETE" -eq 1 ]]; then
+        if [[ "$CLEAN_INCOMPLETE" -eq 1 ]] || [[ "$FULL_CLEAN" -eq 1 ]]; then
             rm -rvf ./*.nc
         fi
 

@@ -15,25 +15,22 @@ def convert_hdf5_to_tfdata(hdf5_filepath, save_filepath):
     nsims, npatchs, npol, ndup, nside, _ = images.shape
     images = np.reshape(images, (-1, nside, nside, 1))
     labels = np.repeat(labels, ndup)
-    # labels = np.reshape(labels, (-1, 1))
-
-    print('images.shape', images.shape)
-    print('labels.shape', labels.shape)
 
     # Convert to tf.data.Dataset
     dataset = tf.data.Dataset.from_tensor_slices((images, labels))
     tf.data.Dataset.save(dataset, save_filepath)
 
 # Usage:
-dirs = ("data/unlensed", "data/lensed")
-for d in dirs:
-    hdf5_files = glob.glob(f'{d}/*.hdf5', recursive=True)
-    for hdf5_file in hdf5_files:
-        # Replace .hdf5 with .tfds in the file path
-        tfds_dir = hdf5_file.replace('.hdf5', '.tfds')
+if __name__ == "__main__":
+    dirs = ("data/unlensed", "data/lensed")
+    for d in dirs:
+        hdf5_files = glob.glob(f'{d}/*.hdf5', recursive=True)
+        for hdf5_file in hdf5_files:
+            # Replace .hdf5 with .tfds in the file path
+            tfds_dir = hdf5_file.replace('.hdf5', '.tfds')
 
-        # Check if the .tfds directory does not exist
-        if not os.path.isdir(tfds_dir):
-            # Convert the .hdf5 file to .tfds
-            print('Converting', hdf5_file, 'to', tfds_dir)
-            convert_hdf5_to_tfdata(hdf5_file, tfds_dir)
+            # Check if the .tfds directory does not exist
+            if not os.path.isdir(tfds_dir):
+                # Convert the .hdf5 file to .tfds
+                print('Converting', hdf5_file, 'to', tfds_dir)
+                convert_hdf5_to_tfdata(hdf5_file, tfds_dir)
