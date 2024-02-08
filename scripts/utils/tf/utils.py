@@ -1,8 +1,8 @@
 import os
 import tensorflow as tf
-from keras import backend as K
+from tensorflow.keras import backend as K
 from tensorflow import pad
-from keras.layers import (
+from tensorflow.keras.layers import (
     Layer,
     UpSampling2D,
     SpatialDropout2D,

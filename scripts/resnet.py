@@ -21,21 +21,21 @@ os.environ["XLA_FLAGS"] = f"--xla_gpu_cuda_data_dir={os.environ['CUDA_HOME']}"
 import numpy as np
 import tensorflow as tf
 from dataloaders import DataLoader, TFDSDataLoader
-from keras import Input, Model
-from keras.applications import ResNet50
-from keras.callbacks import (EarlyStopping, ModelCheckpoint, ReduceLROnPlateau,
+from tensorflow.keras import Input, Model
+from tensorflow.keras.applications import ResNet50
+from tensorflow.keras.callbacks import (EarlyStopping, ModelCheckpoint, ReduceLROnPlateau,
                              TensorBoard)
-from keras.layers import (Add, Attention, AveragePooling2D, BatchNormalization,
+from tensorflow.keras.layers import (Add, Attention, AveragePooling2D, BatchNormalization,
                           Concatenate, Conv2D, Dense, Dropout, Flatten,
                           GroupNormalization, Lambda, MaxPooling2D,
                           MultiHeadAttention, Multiply, RandomFlip,
                           RandomRotation, SeparableConv2D, SpatialDropout2D)
-from keras.metrics import KLDivergence, RootMeanSquaredError
-from keras.models import Model
-from keras.optimizers import SGD, Adam
-from keras.optimizers.legacy import Adam
-from keras.optimizers.schedules import ExponentialDecay, LearningRateSchedule
-from keras.regularizers import l2
+from tensorflow.keras.metrics import KLDivergence, RootMeanSquaredError
+from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers import SGD, Adam
+from tensorflow.keras.optimizers.legacy import Adam
+from tensorflow.keras.optimizers.schedules import ExponentialDecay, LearningRateSchedule
+from tensorflow.keras.regularizers import l2
 from utils import SimConfig
 from utils.tf import (ReflectionPadding2D, TimedLoggingCallback,
                       create_context_module, create_convolution_block,

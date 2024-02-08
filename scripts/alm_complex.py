@@ -16,7 +16,6 @@ os.environ["XLA_FLAGS"] = f"--xla_gpu_cuda_data_dir={os.environ['CUDA_HOME']}"
 
 import tensorflow as tf
 from tensorflow.keras import Input, Model
-from tensorflow.keras.models import Sequential
 from tensorflow.keras.callbacks import (EarlyStopping, ModelCheckpoint, ReduceLROnPlateau,
                              TensorBoard)
 from tensorflow.keras.layers import (Activation, Concatenate, Conv1D, Dense, Dropout,
@@ -30,6 +29,8 @@ from utils.tf import (TimedLoggingCallback, dice_coefficient_loss,
                       plot_histogram, plot_metrics, plot_predictions)
 from dataloaders import AlmDataLoader
 
+import cvnn.layers as complex_layers
+
 def alm_model(
     inputs,
     optimizer=Adam,
@@ -39,27 +40,38 @@ def alm_model(
     loss_function=dice_coefficient_loss,
     name="",
 ):
-    real_input = tf.math.real(inputs)
-    imag_input = tf.math.imag(inputs)
+    # real_input = tf.math.real(inputs)
+    # imag_input = tf.math.imag(inputs)
 
-    # Process the real and imaginary parts separately
-    cnn_block = Sequential([
-        Conv1D(32, 9, padding='same'),
-        Conv1D(64, 9, padding='same'),
-        Activation('relu'),
-        Dropout(dropout_rate),
-    ])
+    # # Process the real and imaginary parts separately
+    # real_layer = Conv1D(32, 9, padding='same')(real_input)
+    # real_layer = Conv1D(64, 9, padding='same')(real_input)
+    # real_layer = Activation('relu')(real_layer)
+    # real_out_layer = Dropout(dropout_rate)(real_layer)
 
-    real_layer = cnn_block(real_layer)
-    imag_layer = cnn_block(imag_layer)
+    # imag_layer = Conv1D(32, 9, padding='same')(imag_input)
+    # imag_layer = Conv1D(64, 9, padding='same')(imag_input)
+    # imag_layer = Activation('relu')(imag_layer)
+    # imag_out_layer = Dropout(dropout_rate)(imag_layer)
+
+    layer = complex_layers.ComplexConv1D(16, 9, padding='valid', activation='cart_relu')(inputs)
+    layer = complex_layers.ComplexConv1D(32, 9, padding='valid', activation='cart_relu')(layer)
+    layer = complex_layers.ComplexConv1D(64, 9, padding='valid', activation='cart_relu')(layer)
+    layer = complex_layers.ComplexAvgPooling1D(2)(layer)
+
+    layer = complex_layers.ComplexConv1D(128, 9, padding='valid', activation='cart_relu')(layer)
+    layer = complex_layers.ComplexConv1D(64, 9, padding='valid', activation='cart_relu')(layer)
+    layer = complex_layers.ComplexConv1D(32, 9, padding='valid', activation='cart_relu')(layer)
+    layer = complex_layers.ComplexAvgPooling1D(2)(layer)
+
 
     # Concatenate the real and imaginary parts
-    layer = Concatenate()([real_layer, imag_layer, real_input * imag_input])
-    layer =  Conv1D(1, 9, padding='same', activation='relu')(layer)
-    layer = Flatten()(layer)
-    layer = Dense(1024, activation='relu')(layer)
-    layer = Dense(256, activation='sigmoid')(layer)
-    layer = Dense(1)(layer)
+    # out_layer = Concatenate()([real_out_layer, imag_out_layer])
+    # layer =  complex_layers.ComplexConv1D(1, 9, padding='same', activation='cart_relu')(layer)
+    layer = complex_layers.ComplexFlatten()(layer)
+    layer = complex_layers.ComplexDense(512)(layer)
+    layer = complex_layers.ComplexDense(256)(layer)
+    layer = complex_layers.ComplexDense(1, activation='convert_to_real_with_abs')(layer)
 
     model = Model(inputs=inputs, outputs=layer, name=name)
 
@@ -139,7 +151,7 @@ if __name__ == "__main__":
             save_best_only=True,
             mode="auto",
         ),
-        TimedLoggingCallback(), # custom logger to work a little better with text logs
+        # TimedLoggingCallback(), # custom logger to work a little better with text logs
     ]
 
     # enable wandb, set to false if not using

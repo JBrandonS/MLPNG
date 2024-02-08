@@ -9,11 +9,11 @@ os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 os.environ["XLA_FLAGS"] = f"--xla_gpu_cuda_data_dir={os.environ['CUDA_HOME']}"
 
 import tensorflow as tf
-from keras.callbacks import (EarlyStopping, ModelCheckpoint, ReduceLROnPlateau,
+from tensorflow.keras.callbacks import (EarlyStopping, ModelCheckpoint, ReduceLROnPlateau,
                              TensorBoard)
-from keras.optimizers.schedules import ExponentialDecay
-from keras.regularizers import l2
-from keras.layers import (
+from tensorflow.keras.optimizers.schedules import ExponentialDecay
+from tensorflow.keras.regularizers import l2
+from tensorflow.keras.layers import (
     Add,
     Attention,
     MultiHeadAttention,
@@ -30,8 +30,8 @@ from keras.layers import (
     Dropout,
     LayerNormalization,
 )
-from keras.models import Model
-from keras.optimizers.legacy import Adam
+from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers.legacy import Adam
 
 from utils.tf import (
     dice_coefficient_loss,
