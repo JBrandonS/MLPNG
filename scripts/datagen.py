@@ -288,7 +288,7 @@ if __name__ == "__main__":
         alm_file = s.alm_file_partial
 
     # TODO remove this, it is just for testing
-    exit()
+    # exit()
 
     alms = ldata["alm"]
     almngs = ldata["almng"]

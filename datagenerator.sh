@@ -1,4 +1,5 @@
 #!/bin/bash
+
 # run with `nohup bash datagenerator.sh &`
 
 # exit on error
@@ -20,11 +21,8 @@ SETTINGS_DIR="settings/"
 # )
 
 SETTINGS=(
-  "ul_128_large.json" "ul_nn_512_large.json" "ul_nn_1024_large.json" "l_128_large.json"
+  "ul_nn_128_large.json" "ul_nn_512_large.json" "ul_nn_1024_large.json" "l_128_large.json"
 )
-
-# SETTINGS=("${SETTINGS_DIR}"*.json)
-
 
 JOB1="sbatch/datagen-large.sbatch"
 JOB2="sbatch/combiner.sbatch"
@@ -35,9 +33,8 @@ mkdir -p logs/datagen/ logs/combiner/ logs/estimator/
 for x in "${SETTINGS[@]}"
 do
     SETTINGSFILE="$SETTINGS_DIR$x"
-    # SETTINGSFILE="$x"
 
-    # # Submit the first job and capture the job ID
+    # Submit the first job and capture the job ID
     JOB1_ID=$(sbatch $JOB1 "$SETTINGSFILE" | awk '{print $4}')
     mkdir -p logs/datagen/"$JOB1_ID"
     while squeue -j "$JOB1_ID" | grep -q "$JOB1_ID"; do
@@ -50,7 +47,9 @@ do
     done
 
     JOB3_ID=$(sbatch $JOB3 "$SETTINGSFILE" | awk '{print $4}')
-    while squeue -j "$JOB3_ID" | grep -q "$JOB3_ID"; do
-      sleep 1
-    done
 done
+
+while squeue -j "$JOB3_ID" | grep -q "$JOB3_ID"; do
+  sleep 1
+done
+echo "All jobs finsihed."
