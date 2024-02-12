@@ -10,8 +10,6 @@ import pprint
 import logging
 log = logging.getLogger(__name__)
 
-from utils.utils import safe_makedirs
-
 class SimConfig:
     def __init__(self, settings_file, print_settings=True):
         with open(settings_file, "r") as f:
@@ -118,8 +116,8 @@ class SimConfig:
             self.alm_cache_dir, f"{self.base_name}.alms.hdf5"
         )
 
-        for s in [self.data_dir, self.plot_dir, self.alm_cache_dir]:
-            safe_makedirs(s)
+        # for s in [self.data_dir, self.plot_dir, self.alm_cache_dir]:
+        #     safe_makedirs(s)
 
     def get_noise_beam(self):
         beam_ell_pre = hp.gauss_beam(

@@ -20,6 +20,6 @@ do
     
     # Submit the first job and capture the job ID
     # JOB1_ID=$(sbatch $JOB1 "$SETTINGSFILE" | awk '{print $4}')
-    JOB2_ID=$(sbatch $JOB1 "scripts/dcnn.py" "$SETTINGSFILE" | awk '{print $4}')
+    # JOB2_ID=$(sbatch $JOB1 "scripts/dcnn.py" "$SETTINGSFILE" | awk '{print $4}')
     JOB3_ID=$(sbatch $JOB1 "scripts/alm.py" "$SETTINGSFILE" | awk '{print $4}')
 done

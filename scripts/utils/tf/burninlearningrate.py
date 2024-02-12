@@ -1,5 +1,5 @@
 import tensorflow as tf
-from keras.optimizers.schedules import LearningRateSchedule
+from tensorflow.keras.optimizers.schedules import LearningRateSchedule
 
 
 class BurnInLearningRate(LearningRateSchedule):

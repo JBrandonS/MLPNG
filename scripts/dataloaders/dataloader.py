@@ -1,8 +1,8 @@
 import numpy as np
 import h5py
 
-from keras.utils import Sequence
 import tensorflow as tf
+from tensorflow.keras.utils import Sequence
 
 
 class DataLoader(Sequence):

@@ -1,10 +1,9 @@
 import time
 
-import keras
 import tensorflow as tf
 
 
-class TimedLoggingCallback(keras.callbacks.Callback):
+class TimedLoggingCallback(tf.keras.callbacks.Callback):
     """
     A custom Keras callback for logging training progress and time.
 
