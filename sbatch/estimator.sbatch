@@ -14,9 +14,4 @@ module load spack conda gcc/11.2.0 gcc-11.2.0/intel-oneapi-mkl/2022.2.1-c4efjsy 
 eval "$(conda shell.bash hook)"
 conda activate mlpng
 
-if [ -n "$1" ] 
-then
-    time srun python scripts/estimator.py "$1"
-else
-    time srun python scripts/estimator.py
-fi
+time srun python scripts/estimator.py "$1"

@@ -23,7 +23,7 @@
 
     "name" : "l256-large",
     "nsims" : 1000,
-    "narray": 1000,                   
+    "narray": 100,                   
     "npatches" : 10,
     "lensing" : true,
     "disable_noise" : false,

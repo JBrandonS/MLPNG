@@ -10,11 +10,9 @@
 #SBATCH --time=2-00:00:00
 
 module load conda gcc/11.2.0
-module load cuda/11.8.0-vbvgppx 
-module load cudnn/8.7.0.84-11.8-fhn3dpf
+module load cuda/11.8.0-vbvgppx cudnn/8.7.0.84-11.8-fhn3dpf
 
 eval "$(conda shell.bash hook)"
-
 conda activate trainer
 
 time srun python "$1" "$2"

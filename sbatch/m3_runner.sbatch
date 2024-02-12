@@ -15,4 +15,4 @@ module load spack conda gcc/11.2.0 gcc-11.2.0/intel-oneapi-mkl/2022.2.1-c4efjsy 
 eval "$(conda shell.bash hook)"
 conda activate mlpng
 
-time srun python scripts/combiner.py "$1"
+time srun python "$1" "$2"

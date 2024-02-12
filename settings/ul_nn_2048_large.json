@@ -23,7 +23,7 @@
 
     "name" : "ulnn2048-large",
     "nsims" : 1000,
-    "narray": 1000,                   
+    "narray": 100,                   
     "npatches" : 10,
     "lensing" : false,
     "disable_noise" : true,

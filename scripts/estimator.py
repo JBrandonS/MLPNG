@@ -13,7 +13,7 @@ from ksw import KSW, Cosmology, Data, Shape
 # but try except doesn't work for some reason, and makes completion error
 from mpi4py import MPI
 
-from utils import SimConfig, get_radii, load_data, load_single_data, save_data
+from utils import SimConfig, load_data, load_single_data, save_data
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -68,14 +68,13 @@ if __name__ == "__main__":
     cosmo.compute_transfer(s.cosmo_params["max_l"], verbose=((rank == 0) and s.verbose))
     cosmo.compute_c_ell()
 
-    radii, drs = get_radii(s.settings["r_min"], s.settings["r_max"])
     loc_shape = Shape.prim_local(
         ns=s.cosmo_params["ns"], pivot=s.cosmo_params["pivot_scalar"]
     )
-    cosmo.add_prim_reduced_bispectrum(loc_shape, radii)
+    cosmo.add_prim_reduced_bispectrum(loc_shape, s.radii)
     log.info("done")
 
-    noise_ell, beam_ell = s.get_noise_beam()
+    noise_ell, beam_ell = s.noise_beam
     data = Data(s.lmax, noise_ell, beam_ell, s.polarizations, cosmo)
     icov = data.icov_diag_lensed if s.lensing else data.icov_diag_nonlensed
 
@@ -101,40 +100,37 @@ if __name__ == "__main__":
         precision="double" if s.double_precision else "single",
     )
 
-    theta_batch = 25  # nelem // 10000
-    # ksw_mc_file = os.path.join(s.data_dir, 'kswmc_'+s.data_str)
-    # if os.path.exists(ksw_mc_file):
-    #     vp('Loading MC from file:', ksw_mc_file)
-    #     ksw.start_from_read_state(ksw_mc_file, comm)
-    # else:
+    theta_batch = 250  # nelem // 10000
+    ksw_mc_file = os.path.join(s.data_dir, 'kswmc_'+s.data_str)
+    if os.path.exists(ksw_mc_file):
+        ksw.start_from_read_state(ksw_mc_file, comm)
+        alm_strs = np.arange(s.total_sims).astype(str)
+    else:
+        # 100 should be ~1%, so we take a random 100 for initializing the KSW estimator
+        alm_strs = np.arange(s.total_sims).astype(str)
+        if s.total_sims > 200:
+            alm_strs = np.arange(200) #np.random.choice(alm_strs, size=100, replace=False)
 
-    # 100 should be ~1%, so we take a random 100 for initializing the KSW estimator
-    alm_strs = np.arange(s.total_sims).astype(str)
-    if s.total_sims > 100:
-        alm_strs = np.arange(100) #np.random.choice(alm_strs, size=100, replace=False)
+        def alm_step_loader(idx):
+            # needs a gaussian realization of signal + noise
+            return data.compute_alm_sim(lens_power=s.lensing)
+        
+        log.debug("Running KSW step")
+        ksw.step_batch(alm_step_loader, alm_strs, comm, verbose=(rank == 0), theta_batch=theta_batch)
+        log.debug("done")
 
-    def alm_step_loader(idx):
-        # needs a gaussian realization of signal + noise
-        return data.compute_alm_sim(lens_power=s.lensing)
-    
-    log.debug("Running KSW step")
-    ksw.step_batch(alm_step_loader, alm_strs, comm, verbose=(rank == 0), theta_batch=theta_batch)
-    log.debug("done")
-
-    # Disabling for now
-    # if rank == 0:
-    #     ksw.write_state(ksw_mc_file, comm)
+        # Disabling for now
+        if rank == 0:
+            ksw.write_state(ksw_mc_file, comm)
 
     log.debug("Computing estimates")
     fisher = ksw.compute_fisher()
-    # alm_strs = np.arange(s.total_sims).astype(str)
     estimates = ksw.compute_estimate_batch(
         alm_loader,
         alm_strs,
         comm,
         verbose=(rank == 0),
-        fisher=fisher,
-        # theta_batch=theta_batch,
+        fisher=fisher
     )
     log.debug("done")
 

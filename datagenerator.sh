@@ -1,7 +1,15 @@
 #!/bin/bash
 # run with `nohup bash datagenerator.sh &`
 
+# exit on error
 set -e
+
+# prints the scripts id if it is not interactive
+# this is useful for being able to kill the script later
+# sometiems murder is nice
+if [[ $- != *i* ]]; then
+    echo "Script PID: $$"
+fi
 
 SETTINGS_DIR="settings/"
 
@@ -12,8 +20,7 @@ SETTINGS_DIR="settings/"
 # )
 
 SETTINGS=(
-  "ul_nn_128_large.json" # "l_128_large.json" "ul_nn_512_large.json" "ul_nn_2048_large.json" #"ul_nn_256_large.json" "ul_nn_512_large.json" # "ul_nn_1024_large.json" "ul_nn_2048_large.json"
-  # "l_128_large.json"  #"l_256_large.json" "l_512_large.json"  #"l_1024_large.json"  "l_2048_large.json"
+  "ul_128_large.json" "ul_nn_512_large.json" "ul_nn_1024_large.json" "l_128_large.json"
 )
 
 # SETTINGS=("${SETTINGS_DIR}"*.json)
@@ -33,17 +40,17 @@ do
     # # Submit the first job and capture the job ID
     JOB1_ID=$(sbatch $JOB1 "$SETTINGSFILE" | awk '{print $4}')
     mkdir -p logs/datagen/"$JOB1_ID"
-    # while squeue -j "$JOB1_ID" | grep -q "$JOB1_ID"; do
-    #   sleep 1
-    # done
+    while squeue -j "$JOB1_ID" | grep -q "$JOB1_ID"; do
+      sleep 1
+    done
 
-    # JOB2_ID=$(sbatch $JOB2 "$SETTINGSFILE" | awk '{print $4}')
-    # while squeue -j "$JOB2_ID" | grep -q "$JOB2_ID"; do
-    #   sleep 1
-    # done
+    JOB2_ID=$(sbatch $JOB2 "$SETTINGSFILE" | awk '{print $4}')
+    while squeue -j "$JOB2_ID" | grep -q "$JOB2_ID"; do
+      sleep 1
+    done
 
-    # JOB3_ID=$(sbatch $JOB3 "$SETTINGSFILE" | awk '{print $4}')
-    # while squeue -j "$JOB3_ID" | grep -q "$JOB3_ID"; do
-    #   sleep 1
-    # done
+    JOB3_ID=$(sbatch $JOB3 "$SETTINGSFILE" | awk '{print $4}')
+    while squeue -j "$JOB3_ID" | grep -q "$JOB3_ID"; do
+      sleep 1
+    done
 done
