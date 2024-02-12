@@ -1,14 +1,15 @@
 import time
-
 import tensorflow as tf
 
+from tensorflow.keras.callbacks import Callback
 
-class TimedLoggingCallback(tf.keras.callbacks.Callback):
+class TimedLoggingCallback(Callback):
     """
     A custom Keras callback for logging training progress and time.
 
     This callback logs the progress of training along with the time taken for each batch and epoch.
     The frequency of logging can be controlled with the `print_frequency` parameter.
+    The number of batches to log can be limited with the `stop_batch_after` parameter to help with log spam.
 
     Attributes:
         print_frequency (int): The frequency of logging in seconds. Default is 60 seconds.
@@ -28,7 +29,7 @@ class TimedLoggingCallback(tf.keras.callbacks.Callback):
 
     def _get_time_str(self, seconds):
         minutes, seconds = divmod(int(seconds), 60)
-        if minutes > 60:
+        if minutes >= 60:
             hours, minutes = divmod(minutes, 60)
             return f"{hours}:{minutes:02}:{seconds:02}"
         return f"{minutes}:{seconds:02}" if minutes else f"{seconds}s"
@@ -36,7 +37,7 @@ class TimedLoggingCallback(tf.keras.callbacks.Callback):
     def on_train_batch_begin(self, batch, logs=None):
         self.batch_start_time = time.time()
 
-    def on_train_batch_end(self, batch, logs=None):
+    def on_train_batch_end(self, batch, logs=None):        
         current_time = time.time()
         if current_time - self.last_print_time >= self.print_frequency:
             eta = (self.params["steps"] - batch) * (
@@ -64,10 +65,8 @@ class TimedLoggingCallback(tf.keras.callbacks.Callback):
         if self.first_epoch:
             print("Starting training...", flush=True)
             self.first_epoch = False
-
-    def on_epoch_end(self, epoch, logs=None):
-        logs['lr'] = tf.keras.backend.get_value(self.model.optimizer.lr)
         
+    def on_epoch_end(self, epoch, logs=None):        
         elapsed_time = time.time() - self.epoch_start_time
         elapsed_time = self._get_time_str(elapsed_time)
 

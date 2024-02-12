@@ -82,4 +82,4 @@ if __name__ == '__main__':
     if not os.path.isfile(s.alm_file_complete):
         combine_data(s.alm_cache_dir, s.alm_str, '.alms.hdf5', finalize=True)
 
-    # combine_data(s.data_dir, s.data_str, '.hdf5')
+    combine_data(s.data_dir, s.data_str, '.hdf5')

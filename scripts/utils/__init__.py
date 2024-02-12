@@ -1,2 +1,2 @@
-from .config import SimConfig
+from .simconfig import SimConfig
 from .utils import *

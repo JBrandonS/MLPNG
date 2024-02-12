@@ -165,7 +165,6 @@ if __name__ == "__main__":
     model_settings = {
         "depth": DEPTH,
         "dropout_rate": 0.3,
-        "loss_function": tf.keras.losses.mse,
         "initial_learning_rate": 5e-3,
         "name": f"{extra_info['slurm_job_id']}_DeepCCN_{s.base_name}-{timestamp}",
         "kernel_regularizer": l2(1e-6),
@@ -180,7 +179,7 @@ if __name__ == "__main__":
     }
 
     # additional metrics we are intrested in
-    metrics = ["mean_absolute_error"]
+    metrics = ["mean_absolute_error", "mse"]
 
     # enable a learning rate schedule
     lr_schedule = ExponentialDecay(

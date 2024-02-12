@@ -1,9 +1,9 @@
 import numpy as np
 from typing import Tuple, Optional
-from keras.utils import Sequence
-import tensorflow as tf
 
+import tensorflow as tf
 from tensorflow.data import Dataset
+from tensorflow.keras.utils import Sequence
 
 class AlmDataLoader(Sequence):
     def __init__(
@@ -54,7 +54,7 @@ class AlmDataLoader(Sequence):
         return data.prefetch(tf.data.AUTOTUNE)
 
     def get_split(self, train_frac=0.8, test_frac=0.1, val_frac=0.1) -> Tuple[Dataset, Dataset, Optional[Dataset]]:
-        ds = tf.data.Dataset.load(self.file_name)
+        ds = Dataset.load(self.file_name)
 
         length = ds.cardinality().numpy()
         ntrain = int(train_frac * length)

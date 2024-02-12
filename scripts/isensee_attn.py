@@ -4,13 +4,17 @@ import time
 import pprint
 import numpy as np
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 os.environ["XLA_FLAGS"] = f"--xla_gpu_cuda_data_dir={os.environ['CUDA_HOME']}"
 
 import tensorflow as tf
-from tensorflow.keras.callbacks import (EarlyStopping, ModelCheckpoint, ReduceLROnPlateau,
-                             TensorBoard)
+from tensorflow.keras.callbacks import (
+    EarlyStopping,
+    ModelCheckpoint,
+    ReduceLROnPlateau,
+    TensorBoard,
+)
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.regularizers import l2
 from tensorflow.keras.layers import (
@@ -29,27 +33,39 @@ from tensorflow.keras.layers import (
     RandomRotation,
     Dropout,
     LayerNormalization,
+    Conv2DTranspose,
 )
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers.legacy import Adam
 
+from utils import get_fisher
+
 from utils.tf import (
+    TimedLoggingCallback,
     dice_coefficient_loss,
+)
+
+from utils.tf.layers import (
     ReflectionPadding2D,
     create_context_module,
     create_convolution_block,
     create_up_sampling_module,
     create_localization_module,
-    rotation_layer,
+    augmentation_layer,
+)
+
+from utils.tf.plots import (
+    plot_metrics,
+    plot_predictions,
+    plot_histogram,
 )
 
 from dataloaders import TFDSDataLoader, DataLoader
-from utils import SimConfig, TimedLoggingCallback, plot_metrics, plot_predictions, plot_histogram, get_fisher
+from utils import SimConfig
 
 
 def isensee_attn(
     inputs,
-    n_base_filters=16,
     depth=5,
     dropout_rate=0.3,
     n_segmentation_levels=3,
@@ -61,13 +77,9 @@ def isensee_attn(
     metrics=[],
     interpolation="nearest",
     kernel_regularizer=None,
-    attn_heads=2,
-    attn_key_dim=64,
     flip=True,
     rotate=True,
-    add_t2=True,
-    ccb_activation="relu",  # "relu"
-    ccb_kernel_initializer="he_uniform",
+    add_powers=0,
 ):
     """
     This function builds a model proposed by Isensee et al. for the BRATS 2017 competition:
@@ -87,48 +99,31 @@ def isensee_attn(
     :return:
     """
 
-    input_layer = inputs
 
-    if flip:
-        # flips vertical and horizontal
-        input_layer = RandomFlip()(input_layer)
-
-    if rotate:
-        # random rotation
-        input_layer = rotation_layer(input_layer)
-
-    if add_t2:
-        # Squares every pixel and add them, gets T2 map
-        squared = Lambda(lambda x: tf.square(x), name="t_squared")(input_layer)
-        input_layer = Concatenate()([input_layer, squared])
+    input_layer = augmentation_layer(flip, rotate, add_powers)(inputs)
 
     current_layer = input_layer
     level_output_layers = []
     level_filters = []
     for level in range(depth):
-        n_level_filters = 2**(5+level) #n_base_filters // (2**level)
-        # n_level_filters = max(4, n_level_filters)
+        n_level_filters = 2 ** (4 + level // 2)
         level_filters.append(n_level_filters)
 
         if current_layer is input_layer:
             layer = ReflectionPadding2D()(current_layer)
-            in_conv = create_convolution_block(layer, n_level_filters, activation=ccb_activation, kernel_initializer=ccb_kernel_initializer)
+            in_conv = create_convolution_block(layer, n_level_filters)
         else:
             layer = ReflectionPadding2D()(current_layer)
             in_conv = create_convolution_block(
                 layer,
                 n_level_filters,
                 strides=(2, 2),
-                activation=ccb_activation,
-                kernel_initializer=ccb_kernel_initializer,
-                kernel_regularizer=kernel_regularizer,
             )
 
         context_output_layer = create_context_module(
             in_conv,
-            # attention_output,
             n_level_filters,
-            dropout_rate=dropout_rate,  # in_cov -> attention
+            dropout_rate=dropout_rate,
         )
 
         summation_layer = Add()([in_conv, context_output_layer])
@@ -143,19 +138,15 @@ def isensee_attn(
 
         # Reg attention
         # with t2 this does not match sizes, need to fix
-        # gate = UpSampling2D(size=(2,2), interpolation=interpolation)(current_layer)
-        # attention = MultiHeadAttention(num_heads=attn_heads, key_dim=attn_key_dim)(
-        #     level_output_layers[level_number], up_sampling
-        # )
-        # attention = Attention()([level_output_layers[level_number], up_sampling])
-        # attention = Multiply()([up_sampling, attention])
-        # attention = LayerNormalization()(attention)
+        attention = Attention()([level_output_layers[level_number], up_sampling])
+        attention = Multiply()([up_sampling, attention])
+        attention = LayerNormalization()(attention)
 
-        concatenation_layer = Concatenate()( # changed to add
+        concatenation_layer = Concatenate()(  # changed to add
             [
                 level_output_layers[level_number],
-                # attention,
-                up_sampling,
+                attention,
+                # up_sampling,
             ]
         )
         localization_output = create_localization_module(
@@ -163,7 +154,9 @@ def isensee_attn(
         )
         current_layer = localization_output
         if level_number < n_segmentation_levels:
-            segmentation_layers.insert(0, Conv2D(n_labels, (1, 1), activation="sigmoid")(current_layer))
+            segmentation_layers.insert(
+                0, Conv2D(1, (1, 1))(current_layer)
+            )
 
     output_layer = None
     for level_number in reversed(range(n_segmentation_levels - 1)):
@@ -174,19 +167,15 @@ def isensee_attn(
             output_layer = Add()([output_layer, segmentation_layer])
 
         if level_number > 0:
-            output_layer = UpSampling2D(size=(2, 2), interpolation=interpolation)(
-                output_layer
-            )
+            # output_layer = UpSampling2D(size=(2, 2), interpolation=interpolation)(
+            #     output_layer
+            # )
+            output_layer = Conv2DTranspose(level_filters[level_number], kernel_size=(2, 2), strides=(2, 2))(output_layer)
+
 
     out_layer = Flatten()(output_layer)
     out_layer = Dropout(dropout_rate)(out_layer)
-    out_layer = Dense(
-        128,
-        activation="relu",
-        kernel_initializer="he_uniform",
-        kernel_regularizer=kernel_regularizer,
-    )(out_layer)
-    out_layer = Dense(1, activation='sigmoid')(out_layer) * 1000
+    out_layer = Dense(1)(out_layer) * 1000
 
     model = Model(inputs=inputs, outputs=out_layer, name=name)
 
@@ -201,30 +190,27 @@ def isensee_attn(
     )
     return model
 
+
 if __name__ == "__main__":
     # Get the config file from the command line
     # you can manually set it here if you want
     config_file = sys.argv[1]
     s = SimConfig(config_file)
 
-    MAX_EPOCHS = 300
+    MAX_EPOCHS = 30
 
     # lower nside can not handle as deep of a network
     # higher nside will run out of memory
-    DEPTH = 5
-    N_SEG_LEVELS = 3
+    DEPTH = 7
+    N_SEG_LEVELS = 5
 
     # helps with the script running so we dont need to manually change the batch size
     if s.nside <= 128:
         BATCH_SIZE = 128
     elif s.nside <= 256:
         BATCH_SIZE = 64
-        DEPTH = 7
-        N_SEG_LEVELS = 5
     elif s.nside <= 512:
         BATCH_SIZE = 32
-        DEPTH = 7
-        N_SEG_LEVELS = 5
     elif s.nside <= 1024:
         BATCH_SIZE = 16
     else:
@@ -247,24 +233,19 @@ if __name__ == "__main__":
         "depth": DEPTH,
         "n_segmentation_levels": N_SEG_LEVELS,
         "dropout_rate": 0.3,
-        "loss_function": tf.keras.losses.mse,
+        # "loss_function": tf.keras.losses.mse,
         "initial_learning_rate": 0.001,
         "name": f"{extra_info['slurm_job_id']}_{s.base_name}-{timestamp}",
-        "n_base_filters": 64,
         "n_labels": 16,
         "interpolation": "nearest",
         "kernel_regularizer": l2(1e-6),
-        "attn_heads": 2,
-        "attn_key_dim": 8,
         "flip": True,
         "rotate": True,
-        "add_t2":True,
-        "ccb_activation":"sigmoid",  # "relu"
-        "ccb_kernel_initializer":"glorot_uniform",
+        "add_powers": 2,
     }
 
     # additional metrics we are intrested in
-    metrics = ["mean_absolute_error"]
+    metrics = ["mean_absolute_error", "mse"]
 
     # enable a learning rate schedule
     lr_schedule = ExponentialDecay(
@@ -295,7 +276,7 @@ if __name__ == "__main__":
     ]
 
     # enable wandb, set to false if not using
-    if True:
+    if False:
         import wandb
         from wandb.keras import WandbMetricsLogger, WandbModelCheckpoint
 
@@ -383,6 +364,18 @@ if __name__ == "__main__":
     y_test = np.concatenate([y.numpy() for _, y in test_dataset])
 
     # Plot the loss curves and metrics
-    plot_metrics(history, f"{s.plot_dir}/{model_settings['name']}-metrics.png", metrics=["loss"] + metrics)
-    plot_predictions(y_test, y_pred, f"{s.plot_dir}/{model_settings['name']}-preds.png", fisher, scaled_variance)
-    plot_histogram(y_test, y_pred, f"{s.plot_dir}/{model_settings['name']}-histogram.png")
+    plot_metrics(
+        history,
+        f"{s.plot_dir}/{model_settings['name']}-metrics.png",
+        metrics=["loss"] + metrics,
+    )
+    plot_predictions(
+        y_test,
+        y_pred,
+        f"{s.plot_dir}/{model_settings['name']}-preds.png",
+        fisher,
+        scaled_variance,
+    )
+    plot_histogram(
+        y_test, y_pred, f"{s.plot_dir}/{model_settings['name']}-histogram.png"
+    )

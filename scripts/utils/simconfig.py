@@ -92,6 +92,8 @@ class SimConfig:
         self.noise_scale_te = settings.get("noise_scale_te", 1) * u.arcmin
         self.noise_beam = self.get_noise_beam()
 
+        self.radii, self.drs = self.get_radii(settings["r_min"], settings["r_max"])
+
         # set up the file names
         nn_str = "nn_" if self.disable_noise else ""
         ja_str = (
@@ -115,9 +117,6 @@ class SimConfig:
         self.alm_file_complete = os.path.join(
             self.alm_cache_dir, f"{self.base_name}.alms.hdf5"
         )
-
-        # for s in [self.data_dir, self.plot_dir, self.alm_cache_dir]:
-        #     safe_makedirs(s)
 
     def get_noise_beam(self):
         beam_ell_pre = hp.gauss_beam(
@@ -158,3 +157,39 @@ class SimConfig:
             beam_ell = np.ones_like(beam_ell, dtype=self.r_dtype)
 
         return noise_ell, beam_ell
+    
+    def get_radii(self, r_min, r_max):
+        # For the radii we follow Table 2. of Smith and Zaldarriaga which gives a greater density of points near reionization and recombination.
+        #
+        # Spacing for all ranges but the last row are linear, with the last row having log spacing.
+        #
+        # radii are in Mpc
+        radii = []
+        #          start,  stop, resolution
+        ranges = [
+            (0, 9500, 150),
+            (9500, 11000, 300),
+            (11000, 13800, 150),
+            (13800, 14600, 400),
+            (14600, 16000, 100),
+            (16000, 50000, 100),
+        ]
+
+        for r in ranges:
+            start = max(r_min, r[0])
+            end = min(r_max, r[1])
+
+            if start > end:
+                continue
+
+            if r == ranges[-1]:  # For the last range, use logspace
+                temp_radii = np.logspace(np.log10(start), np.log10(end), num=r[2])
+            else:
+                temp_radii = np.linspace(start, end, num=r[2], endpoint=False)
+
+            radii.extend(temp_radii)
+
+        radii = np.array([r for r in radii if r_min <= r < r_max])
+        drs = np.diff(radii) / 2.
+        return radii, drs
+

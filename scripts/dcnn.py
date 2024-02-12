@@ -26,6 +26,7 @@ from tensorflow.keras.layers import (
     Multiply,
     RandomFlip,
     SpatialDropout2D,
+    GlobalAveragePooling2D,
 )
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers.legacy import Adam
@@ -33,15 +34,15 @@ from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.regularizers import l2
 
 from dataloaders import DataLoader, TFDSDataLoader
-from utils import SimConfig
-from utils.tf import (
+from utils import SimConfig, get_fisher
+from utils.tf import TimedLoggingCallback, dice_coefficient_loss
+from utils.tf.layers import (
     ReflectionPadding2D,
     create_context_module,
     create_convolution_block,
-    dice_coefficient_loss,
-    rotation_layer,
-    TimedLoggingCallback,
-    get_fisher,
+    augmentation_layer,
+)
+from utils.tf.plots import (
     plot_histogram,
     plot_metrics,
     plot_predictions,
@@ -53,72 +54,49 @@ def deep_cnn_block(
     n_filters,
     depth=2,
     kernel=(3, 3),
-    activation="sigmoid",
-    kernel_initializer="glorot_uniform",
+    activation="relu",
+    kernel_initializer="he_uniform",
     padding="valid",
     strides=(1, 1),
     kernel_regularizer=None,
-    avg_pooling=False,
-    max_pooling=True,
-    residual=False,
+    avg_pooling=True,
+    max_pooling=False,
+    residual=True,
     attention=True,
+    dropuot_rate=0.3,
 ):
     layer = input_layer
 
     # create a CNN block
-    for _ in range(2):
-        for level in range(2):
-            if level < depth - 1:
-                layer = Conv2D(
-                    n_filters,
-                    kernel,
-                    padding=padding,
-                    strides=strides,
-                    kernel_initializer=kernel_initializer,
-                    # kernel_regularizer=kernel_regularizer,
-                    activation=activation,
-                )(layer)
-            else:
-                # no activation on last layer
-                layer = Conv2D(
-                    n_filters,
-                    kernel,
-                    padding=padding,
-                    strides=strides,
-                    # kernel_regularizer=kernel_regularizer,
-                )(layer)
-
-            layer = BatchNormalization()(layer)
-
-            # restore the shape of the input layer
-            pad = (kernel[0] - 1) // 2
-            layer = ReflectionPadding2D((pad, pad))(layer)
-
-    if attention:
-
-        gate = Conv2D(
+    for _ in range(depth):
+        layer = Conv2D(
             n_filters,
-            (1, 1),
-            padding="same",
+            kernel,
+            padding=padding,
+            strides=strides,
             kernel_initializer=kernel_initializer,
             kernel_regularizer=kernel_regularizer,
             activation=activation,
-        )(input_layer)
+        )(layer)
+        # no activation on last layer
+        layer = Conv2D(n_filters, kernel, padding=padding, strides=strides)(layer)
+
+        # restore the shape of the input layer
+        pad = (kernel[0] - 1) // 2
+        layer = ReflectionPadding2D((pad, pad))(layer)
+
+        layer = BatchNormalization()(layer)
+        layer = Dropout(dropuot_rate)(layer)
+
+    if attention:
+        gate = Conv2D(n_filters, (1, 1), padding="same")(input_layer)
         att_layer = Attention(use_scale=True)([gate, layer])
         layer = Multiply()([att_layer, layer])
 
     if residual:
-        # this is a 1x1 convolution to match the number of filters
-        res_layer = Conv2D(
-            n_filters,
-            (1, 1),
-            padding="same",
-            kernel_initializer=kernel_initializer,
-            kernel_regularizer=kernel_regularizer,
-            activation=activation,
-        )(input_layer)
-        layer = Add()([layer, res_layer])
-        # layer = Concatenate()([layer+res_layer, layer, res_layer])
+        res_layer = Conv2D(n_filters, (1, 1), padding="same")(input_layer)
+        # layer = Add()([layer, res_layer])
+        layer = Concatenate()([layer+res_layer, layer, res_layer])
 
     # Pool at the end to reduce size
     if avg_pooling:
@@ -142,36 +120,20 @@ def dcnn_model(
     loss_function=dice_coefficient_loss,
     name="",
     kernel_regularizer=None,
-    flip=False,
-    rotate=False,
-    add_t2=False,
-    ff_activation="relu",
-    ff_kinit="he_uniform",
-    **kwargs,
+    flip=True,
+    rotate=True,
+    add_powers=2,
 ):
     input_layer = inputs
 
     # this finds the number of factor of 2 reductions in the spatial dimensions to make final depth 16x16
     # just to ensure we don't go too deep / small
-    max_depth = math.log(inputs.shape[1] / 32, 2) + 1
+    max_depth = math.log(inputs.shape[1] / 8, 2) + 1
     depth = min(depth, int(max_depth))
 
-    if flip:
-        input_layer = RandomFlip()(input_layer)
-
-    if rotate:
-        # random rotation
-        input_layer = rotation_layer(input_layer)
-
-    if add_t2:
-        # Squares every pixel and add them, gets T2 map
-        squared = tf.square(input_layer)
-        cube = tf.pow(input_layer, 3)
-        input_layer = Concatenate()([input_layer, squared, cube])
-
-    layer = input_layer
+    layer = augmentation_layer(flip, rotate, add_powers)(input_layer)
     for level in range(depth):
-        n_level_filters = 2 ** (4 + 2 * level)
+        n_level_filters = 2 ** (6 + 2 * level)
 
         layer = deep_cnn_block(
             layer,
@@ -182,25 +144,28 @@ def dcnn_model(
         layer = SpatialDropout2D(dropout_rate)(layer)
 
     # FF network
-    out_layer = Flatten()(layer)
-    out_layer = Dropout(dropout_rate)(out_layer)
+    out_layer = GlobalAveragePooling2D()(layer)
+    out_layer = Flatten()(out_layer)
+    out_layer = Dense(1)(out_layer)
+    # out_layer = Flatten()(layer)
+    # out_layer = Dropout(dropout_rate)(out_layer)
 
-    min_neurons = 32
-    n_neurons = out_layer.shape[-1]
-    while n_neurons > 1:
-        n_neurons = max(1, n_neurons // min_neurons)
+    # min_neurons = 32
+    # n_neurons = out_layer.shape[-1]
+    # while n_neurons > 1:
+    #     n_neurons = max(1, n_neurons // min_neurons)
 
-        if n_neurons < min_neurons:
-            # create last layer with 1 neuron, and no activation then stop
-            out_layer = Dense(1, activation="sigmoid")(out_layer)
-            break
-        else:
-            out_layer = Dense(
-                n_neurons,
-                activation=ff_activation,
-                kernel_initializer=ff_kinit,
-                # kernel_regularizer=kernel_regularizer,
-            )(out_layer)
+    #     if n_neurons < min_neurons:
+    #         # create last layer with 1 neuron, and no activation then stop
+    #         out_layer = Dense(1, activation="sigmoid")(out_layer)
+    #         break
+    #     else:
+    #         out_layer = Dense(
+    #             n_neurons,
+    #             activation=ff_activation,
+    #             kernel_initializer=ff_kinit,
+    #             # kernel_regularizer=kernel_regularizer,
+    #         )(out_layer)
 
     # allows the model to operate on a -1,1 scale
     out_layer = out_layer * 1000
@@ -228,7 +193,6 @@ if __name__ == "__main__":
     s = SimConfig(config_file)
 
     MAX_EPOCHS = 300
-
     DEPTH = 2
 
     # helps with the script running so we dont need to manually change the batch size
@@ -259,8 +223,7 @@ if __name__ == "__main__":
     model_settings = {
         "depth": DEPTH,
         "dropout_rate": 0.3,
-        "loss_function": tf.keras.losses.mse,
-        "initial_learning_rate": 5e-5,
+        "initial_learning_rate": 1e-3,
         "name": f"{extra_info['slurm_job_id']}_DeepCCN_{s.base_name}-{timestamp}",
         "kernel_regularizer": l2(1e-6),
     }
@@ -274,7 +237,7 @@ if __name__ == "__main__":
     }
 
     # additional metrics we are intrested in
-    metrics = ["mean_absolute_error"]
+    metrics = ["mean_absolute_error", "mse"]
 
     # enable a learning rate schedule
     lr_schedule = ExponentialDecay(
@@ -305,7 +268,7 @@ if __name__ == "__main__":
     ]
 
     # enable wandb, set to false if not using
-    if True:
+    if False:
         import wandb
         from wandb.keras import WandbMetricsLogger, WandbModelCheckpoint
 

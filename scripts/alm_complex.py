@@ -36,7 +36,6 @@ def alm_model(
     optimizer=Adam,
     metrics=[],
     dropout_rate=0.3,
-    initial_learning_rate=5e-4,
     loss_function=dice_coefficient_loss,
     name="",
 ):
@@ -75,10 +74,6 @@ def alm_model(
 
     model = Model(inputs=inputs, outputs=layer, name=name)
 
-    # Allows for us to pass in a complete optimizer or incomplete with learning rate
-    if callable(optimizer):
-        optimizer = optimizer(learning_rate=initial_learning_rate)
-
     # finally we compile the model
     # needs to be done in strategy scope
     model.compile(
@@ -111,8 +106,6 @@ if __name__ == "__main__":
 
     model_settings = {
         "dropout_rate": 0.3,
-        "loss_function": tf.keras.losses.mse,
-        "initial_learning_rate": 1e-3,
         "name": f"{extra_info['slurm_job_id']}_Alm_{s.base_name}-{timestamp}",
     }
 
@@ -124,7 +117,7 @@ if __name__ == "__main__":
     }
 
     # additional metrics we are intrested in
-    metrics = ["mean_absolute_error"]
+    metrics = ["mean_absolute_error", "mse"]
 
     # enable a learning rate schedule
     lr_schedule = ExponentialDecay(

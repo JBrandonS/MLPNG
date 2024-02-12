@@ -17,8 +17,9 @@ from numpy.random import randint, uniform
 from pixell import curvedsky, enmap, lensing, reproject
 from scipy.interpolate import CubicSpline
 from tqdm.auto import tqdm
-from utils import (SimConfig, get_radii, load_data, plot_cl_alm, plot_cl_map,
-                   save_data, save_plt)
+from utils import (SimConfig, load_data,
+                   save_data)
+from utils.plots import plot_cl_map
 
 log = logging.getLogger(__name__)
 
@@ -106,7 +107,7 @@ def generate_almngs():
     # f_k[:, 0] = 1             # f_k for alpha
     f_k[:, 1] *= A * delta_phi  # f_k for beta
 
-    rad = radial_func(f_k, tr_ell_k, tr_k, radii, tr_ells)
+    rad = radial_func(f_k, tr_ell_k, tr_k, s.radii, tr_ells)
 
     alpha_ell = rad[:, :, :, 0]
     alpha_l = np.concatenate(np.array([interpolate_ells(alpha_ell, tr_ells, s.ells)]))
@@ -147,10 +148,10 @@ def generate_almngs():
                     alms[i, pol],
                     bl_div_cl[ri, :, pol],
                     alpha_l[ri, :, pol],
-                    radii[ri],
-                    drs[ri],
+                    s.radii[ri],
+                    s.drs[ri],
                 )
-                for ri in range(len(drs))
+                for ri in range(len(s.drs))
             )
 
             # consume
@@ -265,8 +266,6 @@ if __name__ == "__main__":
     mask = tr_ells <= s.lmax
     tr_ell_k = tr_ell_k[mask]
     tr_ells = tr_ells[mask]
-
-    radii, drs = get_radii(s.settings["r_min"], s.settings["r_max"])
 
     # here we load in the alms either from a complete, combined, file or individual
     # if neither are found we generate the alms

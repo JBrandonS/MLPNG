@@ -1,28 +1,23 @@
-import os
 import json
-
-import matplotlib.pyplot as plt
-import numpy as np
+import logging
+import os
 
 import h5py
-import logging
+import numpy as np
 
-import pandas as pd
-
-log = logging.getLogger(__name__)
+_logger = logging.getLogger(__name__)
 
 def safe_makedirs(dir, verbose=False):
     "Create a directory if it does not exist. Handles a race condition"
     if not os.path.exists(dir):
         try:
             os.makedirs(dir)
-            log.debug("Created directory %s", dir)
+            _logger.debug("Created directory %s", dir)
         except FileExistsError:
             pass
 
-
 def save_data(file_path, data_dict, verbose=False):
-    log.debug("Saving data to %s", file_path)
+    _logger.debug("Saving data to %s", file_path)
 
     with h5py.File(file_path, "a") as hf:
         for key, value in data_dict.items():
@@ -41,7 +36,7 @@ def save_data(file_path, data_dict, verbose=False):
             else:
                 # Create a new dataset for this key
                 hf.create_dataset(key, data=value, maxshape=(None,) + value.shape[1:])
-    log.debug("done")
+    _logger.debug("done")
 
 
 def load_data(data_file, keys, start_index=None, end_index=None, verbose=False):
@@ -51,7 +46,7 @@ def load_data(data_file, keys, start_index=None, end_index=None, verbose=False):
     data = {}
     with h5py.File(data_file, "r", swmr=True, locking=False) as hdf:
         for key in keys:
-            log.debug("Loading key %s from %s", key, data_file)
+            _logger.debug("Loading key %s from %s", key, data_file)
             kv = hdf.get(key, None)
             if kv is None:
                 raise ValueError(f"Key {key} not found in {data_file}")
@@ -60,7 +55,7 @@ def load_data(data_file, keys, start_index=None, end_index=None, verbose=False):
                 data[key] = np.array(kv[start_index:end_index])  # type: ignore
             else:
                 data[key] = np.array(kv[()]) # type: ignore
-    log.debug("Finished loading data from %s", data_file)
+    _logger.debug("Finished loading data from %s", data_file)
     return data
 
 
@@ -73,133 +68,10 @@ def load_single_data(data_file, key, index, verbose=False):
             return np.array(kv[index])  # type: ignore
 
 
-def save_plt(plot_dir, name):
-    file = f"{plot_dir}/{name}.png"
-    plt.savefig(file)
-
-
-def plot_cl(
-    cl,
-    settings,
-    plt_func=plt.semilogy,
-    plt_camb=True,
-    plot_noise=True,
-    c_ells=None,
-    title="Angular power spectrum from cl",
-    save_name=None,
-    save=True,
-):
-    from astropy import units as u
-    
-    lmax = settings.lmax
-    ells = settings.ells[2:lmax]
-    scale = ells * (ells + 1) / 2 / np.pi
-
-    plt.figure()
-    plt_func(ells, scale * cl[2:lmax], label="data")
-
-    if plt_camb:
-        camb_cl = c_ells["c_ell"][2:lmax][:, 0]
-
-        if plot_noise:
-            nstt = settings.noise_scale_tt.to_value(u.radian)
-            bwr = settings.beam_width.to_value(u.radian)
-            noise_ell_b = np.array(
-                [
-                    nstt**2 * np.exp((l * (l + 1) * bwr**2) / (8 * np.log(2)))
-                    for l in range(settings.nell)
-                ]
-            )
-
-            camb_cls_n = camb_cl + noise_ell_b[2:lmax]
-            camb_n_inner_plt = scale * camb_cls_n
-            plt_func(ells, camb_n_inner_plt, label="camb + noise")
-
-        camb_inner_plt = scale * camb_cl
-        plt_func(ells, camb_inner_plt, label="camb")
-
-    plt.xlabel(r"$\ell$")
-    plt.ylabel(r"$\ell(\ell+1)/2\pi\;C_{\ell}$")
-    plt.title(title)
-    plt.legend()
-    plt.grid()
-
-    if save:
-        save_plt("data/plots", save_name)
-
-    plt.show()
-    plt.close()
-
-
-def plot_cl_alm(
-    alm,
-    settings,
-    plt_func=plt.semilogy,
-    plt_camb=True,
-    plt_noise=True,
-    c_ells=None,
-    title="Angular power spectrum from alm",
-    save_name="alm",
-    save=True,
-):
-    from pixell import curvedsky
-
-    cl = curvedsky.alm2cl(alm)
-    plot_cl(cl, settings, plt_func, plt_camb, plt_noise, c_ells, title, save_name, save)
-
-
-def plot_cl_map(
-    map,
-    wcs,
-    settings,
-    plt_func=plt.semilogy,
-    plt_camb=True,
-    plt_noise=True,
-    c_ells=None,
-    title="Angular power spectrum from map",
-    save_name="cl",
-    save=True,
-):
-    from pixell import enmap, curvedsky
-
-    tmap = enmap.ndmap(map, wcs)
-    almsd = curvedsky.map2alm(tmap, lmax=settings.lmax)
-    cl = curvedsky.alm2cl(almsd)
-
-    plot_cl(cl, settings, plt_func, plt_camb, plt_noise, c_ells, title, save_name, save)
-
-
-def get_radii(r_min, r_max):
-    # For the radii we follow Table 2. of Smith and Zaldarriaga which gives a greater density of points near reionization and recombination.
-    #
-    # Spacing for all ranges but the last row are linear, with the last row having log spacing.
-    #
-    # radii are in Mpc
-    radii = []
-    #          start,  stop, resolution
-    ranges = [
-        (0, 9500, 150),
-        (9500, 11000, 300),
-        (11000, 13800, 150),
-        (13800, 14600, 400),
-        (14600, 16000, 100),
-        (16000, 50000, 100),
-    ]
-
-    for r in ranges:
-        start = max(r_min, r[0])
-        end = min(r_max, r[1])
-
-        if start > end:
-            continue
-
-        if r == ranges[-1]:  # For the last range, use logspace
-            temp_radii = np.logspace(np.log10(start), np.log10(end), num=r[2])
-        else:
-            temp_radii = np.linspace(start, end, num=r[2], endpoint=False)
-
-        radii.extend(temp_radii)
-
-    radii = np.array([r for r in radii if r_min <= r < r_max])
-    drs = np.diff(radii) / 2.
-    return radii, drs
+def get_fisher(data_file):
+    """Get the fisher matrix from the data file"""
+    with h5py.File(data_file, "r", swmr=True, locking=False) as hdf:
+        kv = hdf.get("fisher", None)
+        if kv is None:
+            raise ValueError(f"Key fisher not found in {data_file}")
+        return np.array(kv[()])  # type: ignore

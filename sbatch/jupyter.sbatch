@@ -11,8 +11,10 @@
 #module load conda gcc/11.2.0
 #module load cuda/11.8.0-vbvgppx cudnn/8.7.0.84-11.8-fhn3dpf
 
-module load spack conda
-module load gcc/11.2.0  cuda/11.8.0-vbvgppx cudnn/8.7.0.84-11.8-fhn3dpf
+module load spack conda gcc/11.2.0 
+
+# module load gcc-11.2.0/intel-oneapi-mkl/2022.2.1-c4efjsy openmpi/4.1.4-7al4h2x fftw/3.3.10-gz7qiki
+module load cuda/11.8.0-vbvgppx cudnn/8.7.0.84-11.8-fhn3dpf
 
 eval "$(conda shell.bash hook)"
 
