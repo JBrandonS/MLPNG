@@ -1,4 +1,3 @@
-import datetime
 import logging
 import os
 import sys
@@ -8,9 +7,6 @@ import healpy as hp
 import numpy as np
 from astropy import units as u
 from ksw import KSW, Cosmology, Data, Shape
-
-# This will still crash on mainframe if MPI fails to start correctly....
-# but try except doesn't work for some reason, and makes completion error
 from mpi4py import MPI
 
 from utils import SimConfig, load_data, load_single_data, save_data
@@ -26,16 +22,16 @@ def alm_loader(str_idx):
     idx = idx // s.ndup
     pol = 0
 
-    # TODO support pol, not just 0.
     alm = load_single_data(s.alm_file_complete, "alm", idx, verbose=s.verbose)[pol]
     almng = load_single_data(s.alm_file_complete, "almng", idx, verbose=s.verbose)[pol]
     fnl = load_single_data(s.data_file_nc, "fnls", idx, verbose=s.verbose)[dup_idx]
 
-    log.debug('idx: %s, dup_idx: %s, fnl: %s', idx, dup_idx, fnl)
+    logging.debug("idx: %s, dup_idx: %s, fnl: %s", idx, dup_idx, fnl)
 
     alm = remove_mono_dipole(alm)
     almng = remove_mono_dipole(almng)
     return alm + fnl * almng
+
 
 def remove_mono_dipole(alm):
     """
@@ -45,51 +41,47 @@ def remove_mono_dipole(alm):
     alm[hp.Alm.getidx(lmax, 0, 0)] = 0.0  # Remove monopole
     alm[hp.Alm.getidx(lmax, 1, 0)] = 0.0  # Remove dipole
     alm[hp.Alm.getidx(lmax, 1, 1)] = 0.0  # Remove dipole
-    alm[hp.Alm.getidx(lmax, 1,-1)] = 0.0  # Remove dipole
+    alm[hp.Alm.getidx(lmax, 1, -1)] = 0.0  # Remove dipole
     return alm
 
+def compute_icov_ell(N, b):
+    S_ell = cosmo._camb_data.get_cmb_power_spectra(
+        cosmo.camb_params, s.lmax, ["total"], "muK", True
+    )["total"][:, 0]
+    b_inv = 1 / b
+    return (1 / (S_ell + b_inv * N * b_inv))[None, :]
+    
 if __name__ == "__main__":
-    # Loads in our settings file, defaulting to settings/settings.json if no argument was provided
     logging.basicConfig(
-        level=logging.INFO, 
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
-        datefmt='%d-%b-%y %H:%M:%S',
-        handlers=[logging.StreamHandler(sys.stdout)]
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%d-%b-%y %H:%M:%S",
+        handlers=[logging.StreamHandler(sys.stdout)],
     )
-    log = logging.getLogger(__name__)
+    logger = logging.getLogger(__name__)
 
-    config_file = sys.argv[1] if len(sys.argv) > 1 else "settings/settings.json"
-    s = SimConfig(config_file, print_settings=(rank == 0))
+    s = SimConfig(sys.argv[1], print_settings=(rank == 0))
 
     # init camb and setup the reduced bispecturm to local
-    log.info("Running camb")
+    logger.info("Running camb")
     camb_params_obj = camb.set_params(**s.cosmo_params)
     cosmo = Cosmology(camb_params_obj)
     cosmo.compute_transfer(s.cosmo_params["max_l"], verbose=((rank == 0) and s.verbose))
     cosmo.compute_c_ell()
+    logger.info("done starting camb")
 
-    loc_shape = Shape.prim_local(
-        ns=s.cosmo_params["ns"], pivot=s.cosmo_params["pivot_scalar"]
-    )
+    # create the local shape
+    loc_shape = Shape.prim_local(s.cosmo_params["ns"], s.cosmo_params["pivot_scalar"])
     cosmo.add_prim_reduced_bispectrum(loc_shape, s.radii)
-    log.info("done")
 
     noise_ell, beam_ell = s.noise_beam
     data = Data(s.lmax, noise_ell, beam_ell, s.polarizations, cosmo)
     icov = data.icov_diag_lensed if s.lensing else data.icov_diag_nonlensed
 
-    # TODO: double check this is correct
-    if s.disable_noise:
-
-        def beam(alm):
-            return alm  # hp.sphtfunc.smoothalm(alm, fwhm=0, pol=False)
-
-    else:
-        beam_width = s.settings["beam_width"] * u.arcmin
-        beam_width_rad = beam_width.to_value(u.radian)
-
-        def beam(alm):
-            return hp.sphtfunc.smoothalm(alm, fwhm=beam_width_rad)
+    # generate our beam functioned based on noise
+    beam_width_rad = 0 if s.disable_noise else s.beam_width.to_value(u.radian)
+    def beam(alm):
+        return hp.sphtfunc.smoothalm(alm, fwhm=beam_width_rad, inplace=False)
 
     ksw = KSW(
         cosmo.red_bispectra,
@@ -100,47 +92,35 @@ if __name__ == "__main__":
         precision="double" if s.double_precision else "single",
     )
 
-    theta_batch = 250  # nelem // 10000
-    ksw_mc_file = os.path.join(s.data_dir, 'kswmc_'+s.data_str)
+    # setup the estimator, check if we have a previous run
+    alm_strs = np.arange(s.total_sims).astype(str)
+
+    ksw_mc_file = os.path.join(s.data_dir, "kswmc_" + s.data_str)
     if os.path.exists(ksw_mc_file):
         ksw.start_from_read_state(ksw_mc_file, comm)
-        alm_strs = np.arange(s.total_sims).astype(str)
     else:
-        # 100 should be ~1%, so we take a random 100 for initializing the KSW estimator
-        alm_strs = np.arange(s.total_sims).astype(str)
-        if s.total_sims > 200:
-            alm_strs = np.arange(200) #np.random.choice(alm_strs, size=100, replace=False)
+        # we dont need to step through all the alms if we have more than 100
+        alm_strs_i = np.arange(200) if s.total_sims > 200 else alm_strs
 
         def alm_step_loader(idx):
             # needs a gaussian realization of signal + noise
-            return data.compute_alm_sim(lens_power=s.lensing)
-        
-        log.debug("Running KSW step")
-        ksw.step_batch(alm_step_loader, alm_strs, comm, verbose=(rank == 0), theta_batch=theta_batch)
-        log.debug("done")
+            return data.compute_alm_sim(s.lensing)
 
-        # Disabling for now
+        logger.debug("Running KSW step")
+        ksw.step_batch(alm_step_loader, alm_strs_i, comm, (rank == 0))
+        logger.debug("Done with KSW step")
+
         if rank == 0:
             ksw.write_state(ksw_mc_file, comm)
 
-    log.debug("Computing estimates")
+    logger.debug("Computing estimates")
     fisher = ksw.compute_fisher()
     estimates = ksw.compute_estimate_batch(
-        alm_loader,
-        alm_strs,
-        comm,
-        verbose=(rank == 0),
-        fisher=fisher
+        alm_loader, alm_strs, comm, verbose=(rank == 0), fisher=fisher
     )
-    log.debug("done")
+    logger.debug("done")
 
-    def compute_icov_ell(N, b):
-        S_ell = cosmo._camb_data.get_cmb_power_spectra(
-            cosmo.camb_params, lmax=s.lmax, raw_cl=True, CMB_unit="muK"
-        )["total"][:, 0]
-        b_inv = 1/b
-        return (1 / (S_ell + b_inv * N * b_inv))[None, :]
-
+    # compute isotropic fisher
     icov_ell = compute_icov_ell(noise_ell, beam_ell)
     fisher_iso = ksw.compute_fisher_isotropic(icov_ell, comm=comm)
 
@@ -161,4 +141,4 @@ if __name__ == "__main__":
         save_data(s.data_file_nc, sdata, verbose=s.verbose)
         os.replace(s.data_file_nc, s.data_file_complete)
 
-    log.debug("Finished %s!", rank)
+    logger.debug("Finished %s!", rank)
