@@ -1,18 +1,21 @@
 {
     "cosmo_params" : {
-        "H0": 67.5,
+        "H0": 70.1,
         "r": 0,
-        "As": 2.13e-09,
-        "ns": 0.9624,
+        "As": 2.457e-09,
+        "ns": 0.96,
         "pivot_scalar": 0.05,
-        "ombh2": 0.02233,
-        "omch2": 0.1198,
-        "mnu": 0.06,
-        "tau": 0.0561,
+
+        "omnuh2": 0.00064,
+        "omk": 0,
+
+        "ombh2": 0.02256,
+        "omch2": 0.1143,
+        "tau": 0.084,
         "TCMB": 2.7255,
 
-        "max_l": 3000,
-        "lmax": 2000,
+        "max_l": 1500,
+        "lmax": 1024,
         "lens_potential_accuracy": 2,
 
         "DoLateRadTruncation": false,
@@ -21,16 +24,16 @@
         "lAccuracyBoost": 2.0
     },
 
-    "name" : "default",
-    "nsims" : 10,
-    "narray": 10,                   
+    "name" : "heidelberg",
+    "nsims" : 100,
+    "narray": 1,                   
     "npatches" : 10,
     "lensing" : false,
-    "disable_noise" : true,
+    "disable_noise" : false,
     "double_precision": false,
 
-    "fnl_range":[-1000, 1000],        
-    "nside":1024,
+    "fnl_range":[-50, 50],        
+    "nside":512,
     "patch_side_deg" : 10,
     "polarizations" : ["T"], 
 
@@ -41,8 +44,8 @@
     "plot_dir" : "plots",
 
     "noise_scale_tt" : 43,
-    "noise_scale_ee" : 4.3,
-    "noise_scale_te" : 0.43, 
+    "noise_scale_ee" : 0,
+    "noise_scale_te" : 0, 
 
     "beam_width" : 7.1,
 

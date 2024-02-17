@@ -1,5 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+
+from sklearn.metrics import r2_score
 
 
 def save_plt(plot_dir, name):
@@ -54,7 +58,7 @@ def plot_cl(
     plt.grid()
 
     if save:
-        save_plt("data/plots", save_name)
+        save_plt(settings.plot_dir, save_name)
 
     plt.show()
     plt.close()
@@ -96,3 +100,42 @@ def plot_cl_map(
     cl = curvedsky.alm2cl(almsd)
 
     plot_cl(cl, settings, plt_func, plt_camb, plt_noise, c_ells, title, save_name, save)
+
+def plot_ksw_predictions(fnls, preds, save_file=None, fisher=None):
+    df = pd.DataFrame(
+        {"True Labels": fnls.flatten(), "Predicted Labels": preds.flatten()}
+    )
+
+    # Create a scatter plot with seaborn
+    plt.figure(figsize=(12, 6))
+    sns.scatterplot(data=df, x="True Labels", y="Predicted Labels")
+
+    # Truth line
+    plt.plot(
+        [min(fnls), max(fnls)], [min(fnls), max(fnls)], color="red", linestyle="--"
+    )
+
+    if fisher is not None:
+        std_dev = np.sqrt(1 / fisher)
+        plt.plot(
+            [min(fnls), max(fnls)],
+            [min(fnls) + std_dev, max(fnls) + std_dev],
+            color="blue",
+            linestyle="--",
+            label="Fisher",
+        )
+        plt.plot(
+            [min(fnls), max(fnls)],
+            [min(fnls) - std_dev, max(fnls) - std_dev],
+            color="blue",
+            linestyle="--",
+        )
+
+    # Line for perfect fit
+    r2 = r2_score(df["True Labels"], df["Predicted Labels"])
+    plt.text(min(fnls), max(fnls), f"R^2 = {r2:.2f}", verticalalignment="top")
+
+    plt.title("Predicted vs True Labels")
+
+    if save_file is not None:
+        plt.savefig(save_file)

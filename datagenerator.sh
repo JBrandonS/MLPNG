@@ -5,12 +5,7 @@
 # exit on error
 set -e
 
-# prints the scripts id if it is not interactive
-# this is useful for being able to kill the script later
-# sometiems murder is nice
-if [[ $- != *i* ]]; then
-    echo "Script PID: $$"
-fi
+echo "Script PID: $$"
 
 SETTINGS_DIR="settings/"
 
