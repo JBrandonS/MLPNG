@@ -1,6 +1,7 @@
 # Dirs
 __pycache__/
 data
+data-shared
 .*/
 logs/
 wandb/

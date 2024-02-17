@@ -63,7 +63,7 @@ def convert_alm_to_tfds():
 def convert_alm_to_tfds_split():
     hdf5_files = glob.glob(f'data/alm_cache/*.hdf5', recursive=True)
     for hdf5_file in hdf5_files:
-        tfds_dir = hdf5_file.replace('.hdf5', 'split.tfds')
+        tfds_dir = hdf5_file.replace('.hdf5', '-split.tfds')
         if not os.path.isdir(tfds_dir):
             print('processing', hdf5_file)
             ldata = load_data(hdf5_file, ["alm", "almng"])

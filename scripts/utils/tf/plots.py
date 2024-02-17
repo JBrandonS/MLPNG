@@ -42,7 +42,7 @@ def plot_predictions(y_val, y_pred, save_file, fisher=None, scaled_variance=None
             [min(y_val) + scaled_variance, max(y_val) + scaled_variance],
             color="green",
             linestyle="--",
-            label="Scaled Variance (1/$\sqrt{f_{sky} f}$)",
+            label=r"Scaled Variance (1/$\sqrt{f_{sky} f}$)",
         )
         plt.plot(
             [min(y_val), max(y_val)],

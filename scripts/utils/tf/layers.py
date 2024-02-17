@@ -1,3 +1,4 @@
+import numpy as np
 import tensorflow as tf
 from tensorflow.keras import Sequential
 from tensorflow.keras.layers import (
@@ -11,6 +12,20 @@ from tensorflow.keras.layers import (
     Lambda,
     RandomFlip,
 )
+
+
+class PeriodicPadding2D(Layer):
+    def __init__(self, current_grid, **kwargs):
+        super(PeriodicPadding2D, self).__init__(**kwargs)
+        self.current_grid = current_grid
+        self.indices = np.append(
+            np.insert(np.arange(self.current_grid), 0, self.current_grid - 1), 0
+        ).astype(np.int32)
+
+    def call(self, x):
+        x = tf.gather(x, self.indices, axis=1)
+        x = tf.gather(x, self.indices, axis=2)
+        return x
 
 
 class ReflectionPadding2D(Layer):
@@ -110,13 +125,13 @@ def rotation_layer():
     """
     rotates each image by a random number of 90 degree turns
     """
+
     def _work(image):
         k = tf.random.uniform(shape=(), maxval=4, dtype=tf.int32)
         return tf.image.rot90(image, k)
 
-    return Lambda(
-        lambda x: _work(x), name="rotation_layer"
-    )
+    return Lambda(lambda x: _work(x), name="rotation_layer")
+
 
 def augmentation_layer(flip=True, rotate=True, add_powers=0):
     layers = []
@@ -135,5 +150,5 @@ def augmentation_layer(flip=True, rotate=True, add_powers=0):
     if not layers:
         # If no layers are added, create a dummy layer that does nothing
         layers.append(Lambda(lambda x: x))
-        
+
     return Sequential(layers, name="augmentations")

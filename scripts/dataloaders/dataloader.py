@@ -6,14 +6,14 @@ from tensorflow.keras.utils import Sequence
 
 
 class DataLoader(Sequence):
-    def __init__(self, file_name, shuffle=True, seed=None, normalize=False, batch_size=1, cache=True):
+    def __init__(self, file_name, shuffle=True, shuffle_buffer=100, seed=None, normalize=False, batch_size=1, cache=True):
         self.file_name = file_name
         self.shuffle = shuffle
+        self.shuffle_buffer = shuffle_buffer
         self.normalize = normalize
         self.batch_size = batch_size
         self.cache = cache
-
-        self.seed = seed if seed is not None else np.random.randint(0, np.iinfo(np.int32).max)
+        self.seed = seed
 
         self.file = h5py.File(self.file_name, mode="r", swmr=True, locking=False)
 
@@ -28,8 +28,6 @@ class DataLoader(Sequence):
 
         self.length = self._nsims * self._ndup * self._npol * self._npatches
         self.idxs = np.arange(self.length)
-        if self.shuffle:
-            np.random.shuffle(self.idxs)
 
     def __str__(self):
         return (
@@ -62,8 +60,9 @@ class DataLoader(Sequence):
         data = data.apply(tf.data.experimental.assert_cardinality(step))
         if self.cache:
             data = data.cache()
-        if self.batch_size is not None and self.batch_size > 1:
-            data = data.batch(self.batch_size, num_parallel_calls=tf.data.AUTOTUNE)
+        if self.shuffle:
+            data = data.shuffle(self.shuffle_buffer, seed=self.seed)
+        data = data.batch(self.batch_size, num_parallel_calls=tf.data.AUTOTUNE)
         return data.prefetch(tf.data.AUTOTUNE)
 
     def get_split(
@@ -71,18 +70,22 @@ class DataLoader(Sequence):
     ):
         n = self.length
         train_size = int(n * train_frac)
-        val_size = int(n * val_frac)
         test_size = int(n * test_frac)
 
-        tfds = tf.data.Dataset.from_generator(
+        ds = tf.data.Dataset.from_generator(
             lambda: self,
             output_signature=(
-                tf.TensorSpec(shape=(self._nside, self._nside, 1), dtype=float),
-                tf.TensorSpec(shape=(), dtype=float),
+                tf.TensorSpec(shape=(self._nside, self._nside, 1), dtype=tf.float32),
+                tf.TensorSpec(shape=(), dtype=tf.float32),
             ),
         )
 
-        train_ds = self._setup_tfds(tfds, 0, train_size)
-        val_ds = self._setup_tfds(tfds, train_size, val_size)
-        test_ds = self._setup_tfds(tfds, train_size + val_size, test_size)
-        return train_ds, test_ds, val_ds
+        train_ds = self._setup_tfds(ds, 0, train_size)
+        test_ds = self._setup_tfds(ds, train_size, test_size)
+
+        if val_frac is not None:
+            val_size = int(n * val_frac)
+            val_ds = self._setup_tfds(ds, train_size + test_size, val_size)
+            return train_ds, test_ds, val_ds
+        else:
+            return train_ds, test_ds

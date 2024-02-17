@@ -27,9 +27,9 @@ def alm_loader(str_idx):
     idx = idx // s.ndup
     pol = 0
 
-    alm = load_single_data(s.alm_file_complete, "alm", idx, verbose=s.verbose)[pol]
-    almng = load_single_data(s.alm_file_complete, "almng", idx, verbose=s.verbose)[pol]
-    fnl = load_single_data(s.data_file_nc, "fnls", idx, verbose=s.verbose)[dup_idx]
+    alm = load_single_data(s.alm_file_complete, "alm", idx)[pol]
+    almng = load_single_data(s.alm_file_complete, "almng", idx)[pol]
+    fnl = load_single_data(s.data_file_nc, "fnls", idx)[dup_idx]
 
     logging.info("idx: %s, dup_idx: %s, fnl: %s", idx, dup_idx, fnl)
 
@@ -72,7 +72,7 @@ if __name__ == "__main__":
     logger.info("Running camb")
     camb_params_obj = camb.set_params(**s.cosmo_params)
     cosmo = Cosmology(camb_params_obj)
-    cosmo.compute_transfer(s.cosmo_params["max_l"], verbose=((rank == 0) and s.verbose))
+    cosmo.compute_transfer(s.cosmo_params["max_l"], verbose=((rank == 0)))
     cosmo.compute_c_ell()
     logger.info("done starting camb")
 
@@ -138,7 +138,7 @@ if __name__ == "__main__":
     if rank == 0:
         sdata = {}
 
-        fnls = load_data(s.data_file_nc, ["fnls"], verbose=s.verbose)["fnls"]
+        fnls = load_data(s.data_file_nc, ["fnls"])["fnls"]
         fnls = fnls.ravel()
         est_length = estimates.shape[0]
         snr = (estimates - fnls[est_length]) * np.sqrt(fisher)
@@ -148,7 +148,7 @@ if __name__ == "__main__":
         sdata["estimates"] = estimates
         sdata["errors"] = snr
 
-        save_data(s.data_file_nc, sdata, verbose=s.verbose)
+        save_data(s.data_file_nc, sdata)
         os.replace(s.data_file_nc, s.data_file_complete)
 
     logger.info("Finished %s!", rank)

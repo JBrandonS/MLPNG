@@ -53,7 +53,6 @@ def cutSqPatches_lenspyx(s, fs_shape, fs_wcs, pshapes, pwcs, cl_phi, alm, fnl, a
         dlm,
         geometry=geom_info,
         nthreads=4,
-        verbose=s.debug,
         epsilon=epsilon,
         pol=False,
     )
@@ -166,7 +165,7 @@ def generate_almngs():
     if s.job_array_index is None or s.job_array_index == 1:
         sdata["settings"] = s.settings
 
-    save_data(s.alm_file_nc, sdata, verbose=s.verbose)
+    save_data(s.alm_file_nc, sdata)
     os.replace(s.alm_file_nc, s.alm_file_partial)
     return sdata
 
@@ -249,11 +248,11 @@ if __name__ == "__main__":
 
     # here we setup camb since it is needed for the sims in both the alm generation
     # and patch generation
-    camb_params_obj = camb.set_params(**s.cosmo_params, verbose=s.verbose)
-    cosmo = Cosmology(camb_params_obj, verbose=s.verbose)
+    camb_params_obj = camb.set_params(**s.cosmo_params)
+    cosmo = Cosmology(camb_params_obj)
     # Additional settings here, i.e.
     # cosmo._setattr_camb('ns', 0.9624, subclass='InitPower')
-    cosmo.compute_transfer(s.cosmo_params["max_l"], verbose=s.verbose)
+    cosmo.compute_transfer(s.cosmo_params["max_l"])
     cosmo.compute_c_ell()
 
     noise_ell, beam_ell = s.noise_beam
@@ -271,12 +270,12 @@ if __name__ == "__main__":
     # if neither are found we generate the alms
     if os.path.isfile(s.alm_file_complete) and not s.force_alm_gen:
         log.info("Found completed alms file, skipping alm generation")
-        ldata = load_data(s.alm_file_complete, ["alm", "almng"], verbose=s.verbose)
+        ldata = load_data(s.alm_file_complete, ["alm", "almng"])
     elif os.path.isfile(s.alm_file_partial) and not s.force_alm_gen:
         log.info(
             "Found partial alm file %s, skipping alm generation", s.alm_file_partial
         )
-        ldata = load_data(s.alm_file_partial, ["alm", "almng"], verbose=s.verbose)
+        ldata = load_data(s.alm_file_partial, ["alm", "almng"])
     else:
         if os.path.isfile(s.alm_file_nc):
             log.info("Removing stale alm file: %s", s.alm_file_nc)
@@ -350,5 +349,5 @@ if __name__ == "__main__":
         log.debug("Removing stale data file: %s", s.data_file_nc)
         os.remove(s.data_file_nc)
 
-    save_data(s.data_file_nc, sdata, verbose=s.verbose)
+    save_data(s.data_file_nc, sdata)
     log.info("Done with Generation!")

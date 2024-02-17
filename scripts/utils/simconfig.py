@@ -8,7 +8,9 @@ from astropy import units as u
 import pprint
 
 import logging
-log = logging.getLogger(__name__)
+
+logger = logging.getLogger(__name__)
+
 
 class SimConfig:
     def __init__(self, settings_file, print_settings=True):
@@ -16,13 +18,10 @@ class SimConfig:
             self.settings = settings = json.load(f)
 
         if print_settings:
-            log.info("Loaded settings from file: %s", settings_file)
-            pp = pprint.PrettyPrinter(indent=2)
-            pp.pprint(settings)
+            logger.info(f"Loading settings from file {settings_file}:")
+            pprint.PrettyPrinter(indent=2).pprint(settings)
 
-        # debug settings
-        self.debug = settings.get("debug", False)
-        self.verbose = settings.get("verbose", False)
+        # get the settings
         self.save_fullsky = settings.get("save_fullsky", False)
         self.force_alm_gen = settings.get("force_alm_gen", False)
 
@@ -40,16 +39,6 @@ class SimConfig:
         self.lensing = settings.get("lensing", False)
         self.disable_noise = settings.get("disable_noise", True)
 
-        # paths
-        self.base_dir = settings.get("base_dir", "data")
-        self.alm_cache_dir = settings.get("alm_cache_dir", "data/alm_cache")
-        self.plot_dir = settings.get("plot_dir", "data/plots")
-        self.data_dir = os.path.join(
-            self.base_dir, "lensed" if self.lensing else "unlensed"
-        )
-        self.tb_dir = settings.get("tb_dir", "data/tensorboard")
-        self.model_dir = settings.get("model_dir", "data/models")
-
         # find out the number of sims
         self.nsims = settings.get("nsims", 1)
         self.ndup = settings.get("duplicate_backgrounds", 1)
@@ -57,12 +46,9 @@ class SimConfig:
 
         self.job_array_index = os.environ.get("SLURM_ARRAY_TASK_ID")
         if self.job_array_index is not None:
+            logger.debug("Running with SLURM job array index %s", self.job_array_index)
             self.job_array_index = int(self.job_array_index)
-            njobs = int(os.environ.get("SLURM_ARRAY_TASK_COUNT"))  # type: ignore
-            self.job_array_min = int(os.environ.get("SLURM_ARRAY_TASK_MIN"))  # type: ignore
-            self.job_array_max = int(os.environ.get("SLURM_ARRAY_TASK_MAX"))  # type: ignore
-            self.total_sims *= njobs
-            log.info("Running with SLURM job array index %s", self.job_array_index)
+            self.total_sims *= int(os.environ.get("SLURM_ARRAY_TASK_COUNT"))
         else:
             self.total_sims *= self.narray
 
@@ -71,11 +57,13 @@ class SimConfig:
         self.nelem = hp.Alm.getsize(self.lmax)
         self.npix = hp.nside2npix(self.nside)
         self.ells = np.arange(self.nell)
-        self.chars_of_polarizations = "".join(self.polarizations)
+
+        self.pol_chars = "".join(self.polarizations)
         self.fnl_min, self.fnl_max = settings.get("fnl_range", [0, 0])
 
         self.nthreads_sim = settings["nthreads_sim"]
         self.nthreads_alm = settings["nthreads_alm"]
+
         # set up units
         self.double_precision = self.settings.get("double_precision", False)
         if self.double_precision:
@@ -92,22 +80,36 @@ class SimConfig:
         self.noise_scale_te = settings.get("noise_scale_te", 1) * u.arcmin
         self.noise_beam = self.get_noise_beam()
 
+        # get the radii
         self.radii, self.drs = self.get_radii(settings["r_min"], settings["r_max"])
 
-        # set up the file names
+        # paths
+        self.base_dir = settings.get("base_dir", "data")
+        self.alm_cache_dir = os.path.join(
+            self.base_dir, settings.get("alm_cache_dir", "alm_cache")
+        )
+        self.plot_dir = os.path.join(self.base_dir, settings.get("plot_dir", "plots"))
+        self.data_dir = os.path.join(
+            self.base_dir, "lensed" if self.lensing else "unlensed"
+        )
+        self.tb_dir = os.path.join(self.base_dir, settings.get("tb_dir", "tensorboard"))
+        self.model_dir = os.path.join(
+            self.base_dir, settings.get("model_dir", "models")
+        )
+
+        # add info to the strings
         nn_str = "nn_" if self.disable_noise else ""
-        ja_str = (
-            f"_{self.job_array_index}" if self.job_array_index is not None else ""
-        )
-        self.base_name = (
-            f"{self.nside}_{nn_str}{self.chars_of_polarizations}_{self.total_sims}"
-        )
-        self.data_str = f'{self.base_name}x{self.npatches}x{self.ndup}_fnl{self.fnl_min}-{self.fnl_max}{ja_str}'
+        ja_str = f"_{self.job_array_index}" if self.job_array_index is not None else ""
+
+        # set up the file names
+        self.base_name = f"{self.nside}_{nn_str}{self.pol_chars}_{self.total_sims}"
+        self.data_str = f"{self.base_name}x{self.npatches}x{self.ndup}_fnl{self.fnl_min}-{self.fnl_max}{ja_str}"
         self.alm_str = f"{self.base_name}{ja_str}"
 
         # setup the file paths
         self.data_file_nc = os.path.join(self.data_dir, f"{self.data_str}.hdf5.nc")
         self.data_file_complete = os.path.join(self.data_dir, f"{self.data_str}.hdf5")
+        
         self.alm_file_nc = os.path.join(
             self.alm_cache_dir, f"{self.alm_str}.alms.hdf5.nc"
         )
@@ -157,15 +159,14 @@ class SimConfig:
             beam_ell = np.ones_like(beam_ell, dtype=self.r_dtype)
 
         return noise_ell, beam_ell
-    
+
     def get_radii(self, r_min, r_max):
         # For the radii we follow Table 2. of Smith and Zaldarriaga which gives a greater density of points near reionization and recombination.
-        #
         # Spacing for all ranges but the last row are linear, with the last row having log spacing.
-        #
         # radii are in Mpc
+
         radii = []
-        #          start,  stop, resolution
+        #    start,  stop, resolution
         ranges = [
             (0, 9500, 150),
             (9500, 11000, 300),
@@ -190,6 +191,5 @@ class SimConfig:
             radii.extend(temp_radii)
 
         radii = np.array([r for r in radii if r_min <= r < r_max])
-        drs = np.diff(radii) / 2.
+        drs = np.diff(radii) / 2.0
         return radii, drs
-

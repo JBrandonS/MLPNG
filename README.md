@@ -8,25 +8,29 @@
 
 ### Data Generator
 
-1. Clone the repository using `git clone`, or download and extract the zip
+1. Load in your modules. On m3 I use
+    - `module load spack conda gcc/11.2.0 gcc-11.2.0/intel-oneapi-mkl/2022.2.1-c4efjsy fftw/3.3.10-gz7qiki openmpi/4.1.6-a4ksrza`
 2. Create a python environment
    - I have provided `conda-envs/datagen-m3.yml` which is the conda env I use on m3.
 3. Clone, or download, and install [KSW](https://github.com/AdriJD/ksw) and [optweight](https://github.com/AdriJD/optweight)
    - `optweight` should be installed first, just need run `pip install -e .` in the root directory.
    - For `ksw` run `make && pip install -e . && make check` in the root.
       - You will probably see an error on the make check, this seems to be an issue with the ksw test code and does not affect anything.
-4. You can now run the code, using the pipeline with `datagenerator.sh` or manually with `scripts/datagen.py`.
+4. You can now run the code, using the pipeline with `datagenerator.sh` or manually with `scripts/datagen.py`, `scripts/combiner.py`, and `scripts/estimator.py`.
 
 ### Trainer
 
-1. Clone the repository using `git clone`, or download and extract the zip
-2. Create a python environment
-   - I have provided `conda-envs/training.yml` which is the conda env I use on superpod.
-3. You can now run the code, using the `trainer.sh` or `script/trainer.py`.
+1. Load in the modules on Superpod
+   - `module load conda nvidia/nvhpc`
+2. Create a python environment with the required packages
+   - I have provided `conda-envs/mlpng-gpu.yml` which is the conda env I use on Superpod.
+       - If you have issues installing mpi4py with the nvhpc module, try `CFLAGS=-noswitcherror pip install mpi4py`
+3. Ensure your data is avaible in the path expected by the settings file.
+4. You can now run the code, using `trainer.sh`.
 
 ## Running
 
-> You will need to change the conda env in the `.sbatch` scripts located inside `sbatch/`.
+> You will need to change the conda env in the `.sbatch` scripts located inside `sbatch/`
 >
 > The best method to run large amounts data is to use slurm job arrays.
 
@@ -38,7 +42,7 @@ The `datagen.py` script generates the alms and patches.
 
 > **Note:** 
 > 
-> It's recommended to use slurm job arrays for this script. If you change the value in the `sbatch/datagen.sbatch` file, make sure to update the `narray` value in your settings file to match the size of the job arrays. This ensures the `combiner` and `estimator` scripts handle the data correctly. I may possibly automate this later.
+> It's recommended to use slurm job arrays for this script. If you change the `array` setting in the `sbatch/datagen.sbatch` file, make sure to update the `narray` value in your settings file to match the size of the job arrays. This ensures the `combiner` and `estimator` scripts handle the data correctly. I may possibly automate this later.
 
 #### Data Combination
 
@@ -74,7 +78,7 @@ The training pipeline is very simple. From superpod,
 The data is stored in `hdf5` files as they allow reading and appending data without the need to load the whole dataset into memory. You can think of these files as python dicts. The data is stored in the following format:
 
 - For alms in `data/alm_cache` the following key and values are stored:
-  - `alm` : the gaussian $a_{\ell m}$ values in `shape: (nims, len(polarizations), data)`
+  - `alm` : the gaussian $a_{\ell m}$ values in `shape: (nsims, len(polarizations), data)`
   - `almng`: the non-gaussian $a_{\ell m}^{NG}$ values in `shape :(nsims, len(polarizations), data)`
     - where the size of `data` depends on the settings used in a complicated way, see `healpy` or `pixell` documentation.
   - `settings`: A copy of the settings file used to generate the data, for reference.
