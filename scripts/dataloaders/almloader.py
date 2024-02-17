@@ -40,7 +40,7 @@ class AlmLoader(Sequence):
 
         # This is ugly but it gets a tuple from the json string read in from the settings of the config file
         # and then uses it to generate the fnl values, since they are not in the cache file
-        fnl_range = self.file["settings"].get("fnl_range")[0]
+        fnl_range = self.file["settings"].get("fnl_range", ["[-1, 1]"])[0]
         fnl_range = tuple(json.loads(fnl_range))
 
         # generate the fnl values

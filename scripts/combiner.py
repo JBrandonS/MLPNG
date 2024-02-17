@@ -26,7 +26,7 @@ def combine_data(directory, base_name, ext, remove_files=True, finalize=False):
     files_to_combine = sorted(files_to_combine, key=extract_number)
 
     if len(files_to_combine) == 0:
-        log.error("did not find any files to combine with %s", file_pattern)
+        logger.error("did not find any files to combine with %s", file_pattern)
         return
 
     def recursive_copy(hf_source, hf_dest):
@@ -69,7 +69,7 @@ def combine_data(directory, base_name, ext, remove_files=True, finalize=False):
             with h5py.File(file, "r") as hf:
                 recursive_copy(hf, hf_combined)
 
-        log.debug("Final keys in file %s are %s", base_name + ext, hf_combined.keys())
+        logger.debug("Final keys in file %s are %s", base_name + ext, hf_combined.keys())
 
     if finalize:
         os.replace(
@@ -89,10 +89,9 @@ if __name__ == "__main__":
         datefmt="%d-%b-%y %H:%M:%S",
         handlers=[logging.StreamHandler(sys.stdout)],
     )
-    log = logging.getLogger(__name__)
+    logger = logging.getLogger(__name__)
 
-    config_file = sys.argv[1] if len(sys.argv) > 1 else "settings/settings.json"
-    s = SimConfig(config_file)
+    s = SimConfig(sys.argv[1])
 
     # check that we are not using a already completed file!
     if not os.path.isfile(s.alm_file_complete):

@@ -2,7 +2,7 @@ import time
 import tensorflow as tf
 
 from tensorflow.keras.callbacks import Callback
-
+from keras.utils.io_utils import print_msg
 
 class TimedLoggingCallback(Callback):
     """
@@ -62,11 +62,11 @@ class TimedLoggingCallback(Callback):
         return " - ".join(f"{k}: {v:.4f}" for k, v in logs.items())
 
     def on_train_begin(self, logs=None):
-        print("Starting training...")
+        print_msg("Starting training...", flush=True)
         self.last_print_time = time.time()
 
     def on_train_end(self, logs=None):
-        print("Training complete.")
+        print_msg("Training complete.")
 
     def on_train_batch_begin(self, batch, logs=None):
         self.batch_start_time = time.time()
@@ -86,7 +86,7 @@ class TimedLoggingCallback(Callback):
             metrics_log = self._get_log_line(logs)
 
             batch_str = f"{str(batch).rjust(self._steps_str_len)} / {steps}"
-            print(f"{batch_str} [{progress_bar}] - ETA: {eta} - {metrics_log}")
+            print_msg(f"{batch_str} [{progress_bar}] - ETA: {eta} - {metrics_log}")
             self.last_print_time = current_time
 
     def on_epoch_begin(self, epoch, logs=None):
@@ -101,5 +101,7 @@ class TimedLoggingCallback(Callback):
 
         epoch_str = str(epoch).rjust(self._epoch_str_len)
 
-        print(f"Epoch: {epoch_str} - Time: {elapsed_time} - {metrics_log}")
+        print_msg(
+            f"Epoch: {epoch_str} / {self.params['epochs']} - Time: {elapsed_time} - {metrics_log}"
+        )
         self.last_print_time = current_time
