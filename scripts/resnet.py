@@ -20,7 +20,8 @@ os.environ["XLA_FLAGS"] = f"--xla_gpu_cuda_data_dir={os.environ['CUDA_HOME']}"
 
 import numpy as np
 import tensorflow as tf
-from dataloaders import DataLoader, TFDSDataLoader
+from dataloaders import DataLoader
+from dataloaders.tfds import TFDSDataLoader
 from tensorflow.keras import Input, Model
 from tensorflow.keras.applications import ResNet50
 from tensorflow.keras.callbacks import (EarlyStopping, ModelCheckpoint, ReduceLROnPlateau,
@@ -36,11 +37,10 @@ from tensorflow.keras.optimizers import SGD, Adam
 from tensorflow.keras.optimizers.legacy import Adam
 from tensorflow.keras.optimizers.schedules import ExponentialDecay, LearningRateSchedule
 from tensorflow.keras.regularizers import l2
-from utils import SimConfig
-from utils.tf import (ReflectionPadding2D, TimedLoggingCallback,
-                      create_context_module, create_convolution_block,
-                      dice_coefficient_loss, get_fisher, plot_histogram,
-                      plot_metrics, plot_predictions, rotation_layer)
+from utils import SimConfig, get_fisher
+from utils.tf import TimedLoggingCallback, dice_coefficient_loss 
+from utils.tf.plots import plot_histogram, plot_metrics, plot_predictions
+from utils.tf.layers import (ReflectionPadding2D, create_context_module, create_convolution_block, rotation_layer, augmentation_layer)
 
 
 def resnet_model(
@@ -55,7 +55,7 @@ def resnet_model(
     kernel_regularizer=None,
     flip=False,
     rotate=False,
-    add_t2=False,
+    add_powers=2,
     ff_activation="relu",
     ff_kinit="he_uniform",
     **kwargs,
@@ -67,18 +67,8 @@ def resnet_model(
     max_depth = math.log(inputs.shape[1] / 32, 2) + 1
     depth = min(depth, int(max_depth))
 
-    if flip:
-        input_layer = RandomFlip()(input_layer)
-
-    if rotate:
-        # random rotation
-        input_layer = rotation_layer(input_layer)
-
-    if add_t2:
-        # Squares every pixel and add them, gets T2 map
-        squared = tf.square(input_layer)
-        input_layer = Concatenate()([input_layer, squared])
-
+    input_layer = augmentation_layer(flip, rotate, add_powers)(input_layer)
+    
     input_layer_rgb = Concatenate()([input_layer, input_layer, input_layer])
     base_model = ResNet50(weights='imagenet', include_top=False, input_tensor=input_layer_rgb)
 

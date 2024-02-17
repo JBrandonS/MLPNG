@@ -37,13 +37,11 @@
     "patch_side_deg" : 10,
     "polarizations" : ["T"], 
 
-    "debug" : true,
-    "verbose" : true,
     "force_alm_gen" : false, 
 
     "base_dir" : "data",
-    "alm_cache_dir" : "data/alm_cache",
-    "plot_dir" : "data/plots",
+    "alm_cache_dir" : "alm_cache",
+    "plot_dir" : "plots",
 
     "noise_scale_tt" : 43,
     "noise_scale_ee" : 0,

@@ -1,3 +1,2 @@
-from .almdataloader import AlmDataLoader
 from .dataloader import DataLoader
-from .tfdsdataloader import TFDSDataLoader
+from .almloader import AlmLoader

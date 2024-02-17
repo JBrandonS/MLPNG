@@ -4,53 +4,34 @@ import pprint
 import sys
 import time
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 os.environ["XLA_FLAGS"] = f"--xla_gpu_cuda_data_dir={os.environ['CUDA_HOME']}"
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
-from tensorflow.keras.layers import (
-    Add,
-    Attention,
-    AveragePooling2D,
-    BatchNormalization,
-    Concatenate,
-    Conv2D,
-    Dense,
-    Dropout,
-    Flatten,
-    Input,
-    MaxPooling2D,
-    Multiply,
-    RandomFlip,
-    SpatialDropout2D,
-    GlobalAveragePooling2D,
-)
+from dataloaders import DataLoader
+from dataloaders.tfds import TFDSDataLoader
+from tensorflow.keras.callbacks import (EarlyStopping, ModelCheckpoint,
+                                        ReduceLROnPlateau)
+from tensorflow.keras.layers import (Add, Attention, AveragePooling2D,
+                                     BatchNormalization, Concatenate, Conv2D,
+                                     Dense, Dropout, Flatten,
+                                     GlobalAveragePooling2D, Input,
+                                     MaxPooling2D, Multiply, RandomFlip,
+                                     SpatialDropout2D)
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers.legacy import Adam
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.regularizers import l2
-
-from dataloaders import DataLoader, TFDSDataLoader
 from utils import SimConfig, get_fisher
 from utils.tf import TimedLoggingCallback, dice_coefficient_loss
-from utils.tf.layers import (
-    ReflectionPadding2D,
-    create_context_module,
-    create_convolution_block,
-    augmentation_layer,
-)
-from utils.tf.plots import (
-    plot_histogram,
-    plot_metrics,
-    plot_predictions,
-)
+from utils.tf.layers import (ReflectionPadding2D, augmentation_layer,
+                             create_context_module, create_convolution_block)
+from utils.tf.plots import plot_histogram, plot_metrics, plot_predictions
 
 
 def deep_cnn_block(
-    input_layer,
     n_filters,
     depth=2,
     kernel=(3, 3),
@@ -59,93 +40,75 @@ def deep_cnn_block(
     padding="valid",
     strides=(1, 1),
     kernel_regularizer=None,
-    avg_pooling=True,
-    max_pooling=False,
-    residual=True,
-    attention=True,
     dropuot_rate=0.3,
 ):
-    layer = input_layer
+    pad = (kernel[0] - 1) // 2
 
     # create a CNN block
+    layers = []
     for _ in range(depth):
-        layer = Conv2D(
-            n_filters,
-            kernel,
-            padding=padding,
-            strides=strides,
-            kernel_initializer=kernel_initializer,
-            kernel_regularizer=kernel_regularizer,
-            activation=activation,
-        )(layer)
-        # no activation on last layer
-        layer = Conv2D(n_filters, kernel, padding=padding, strides=strides)(layer)
+        layers.append(
+            Conv2D(
+                n_filters,
+                kernel,
+                padding=padding,
+                strides=strides,
+                kernel_initializer=kernel_initializer,
+                kernel_regularizer=kernel_regularizer,
+                activation=activation,
+            )
+        )
+        layers.append(ReflectionPadding2D((pad, pad)))
+        layers.append(Conv2D(n_filters, kernel, padding=padding, strides=strides))
+        layers.append(ReflectionPadding2D((pad, pad)))
+        layers.append(BatchNormalization())
+        layers.append(Dropout(dropuot_rate))
 
-        # restore the shape of the input layer
-        pad = (kernel[0] - 1) // 2
-        layer = ReflectionPadding2D((pad, pad))(layer)
-
-        layer = BatchNormalization()(layer)
-        layer = Dropout(dropuot_rate)(layer)
-
-    if attention:
-        gate = Conv2D(n_filters, (1, 1), padding="same")(input_layer)
-        att_layer = Attention(use_scale=True)([gate, layer])
-        layer = Multiply()([att_layer, layer])
-
-    if residual:
-        res_layer = Conv2D(n_filters, (1, 1), padding="same")(input_layer)
-        # layer = Add()([layer, res_layer])
-        layer = Concatenate()([layer+res_layer, layer, res_layer])
-
-    # Pool at the end to reduce size
-    if avg_pooling:
-        layer = AveragePooling2D(pool_size=(2, 2))(layer)
-    elif max_pooling:
-        layer = MaxPooling2D(pool_size=(2, 2))(layer)
-
-    # finally normalize the layer
-    layer = BatchNormalization()(layer)
-
-    return layer
+    return tf.keras.Sequential(layers)
 
 
 def dcnn_model(
     inputs,
     optimizer=Adam,
     metrics=[],
-    depth=3,
+    depth=5,
     dropout_rate=0.3,
     initial_learning_rate=5e-4,
-    loss_function=dice_coefficient_loss,
+    loss_function=tf.keras.losses.MeanSquaredError(),
     name="",
     kernel_regularizer=None,
     flip=True,
     rotate=True,
     add_powers=2,
 ):
-    input_layer = inputs
-
     # this finds the number of factor of 2 reductions in the spatial dimensions to make final depth 16x16
     # just to ensure we don't go too deep / small
     max_depth = math.log(inputs.shape[1] / 8, 2) + 1
     depth = min(depth, int(max_depth))
 
-    layer = augmentation_layer(flip, rotate, add_powers)(input_layer)
+    layer = augmentation_layer(flip, rotate, add_powers)(inputs)
     for level in range(depth):
-        n_level_filters = 2 ** (6 + 2 * level)
+        n_level_filters = 2 ** (5 + level)
+        res_layer = layer
 
-        layer = deep_cnn_block(
-            layer,
-            n_level_filters,
-            kernel_regularizer=kernel_regularizer,
+        layer = deep_cnn_block(n_level_filters, kernel_regularizer=kernel_regularizer)(
+            layer
         )
 
+        # add attention and residual connection
+        res_layer = Conv2D(n_level_filters, (1, 1))(res_layer)
+        att_layer = Attention(use_scale=True)([res_layer, layer])
+        layer = Multiply()([att_layer, layer])
+        layer = Add()([layer, res_layer])
+
+        # downsample
+        layer = MaxPooling2D((2, 2))(layer)
         layer = SpatialDropout2D(dropout_rate)(layer)
 
     # FF network
-    out_layer = GlobalAveragePooling2D()(layer)
-    out_layer = Flatten()(out_layer)
+    
+    # out_layer = GlobalAveragePooling2D()(layer)
+    out_layer = Flatten()(layer)
     out_layer = Dense(1)(out_layer)
     # out_layer = Flatten()(layer)
     # out_layer = Dropout(dropout_rate)(out_layer)
@@ -168,7 +131,7 @@ def dcnn_model(
     #         )(out_layer)
 
     # allows the model to operate on a -1,1 scale
-    out_layer = out_layer * 1000
+    # out_layer = out_layer * 1000
 
     model = Model(inputs=inputs, outputs=out_layer, name=name)
 
@@ -193,7 +156,6 @@ if __name__ == "__main__":
     s = SimConfig(config_file)
 
     MAX_EPOCHS = 300
-    DEPTH = 2
 
     # helps with the script running so we dont need to manually change the batch size
     if s.nside <= 128:
@@ -221,7 +183,6 @@ if __name__ == "__main__":
     }
 
     model_settings = {
-        "depth": DEPTH,
         "dropout_rate": 0.3,
         "initial_learning_rate": 1e-3,
         "name": f"{extra_info['slurm_job_id']}_DeepCCN_{s.base_name}-{timestamp}",

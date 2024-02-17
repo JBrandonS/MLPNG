@@ -7,8 +7,8 @@ import numpy as np
 from healpy.sphtfunc import Alm
 
 # os.environ["NCCL_DEBUG"] = "INFO"
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "false"
 os.environ["XLA_FLAGS"] = f"--xla_gpu_cuda_data_dir={os.environ['CUDA_HOME']}"
 
 import tensorflow as tf
@@ -47,7 +47,7 @@ from utils.tf.plots import (
     plot_metrics,
     plot_predictions,
 )
-from dataloaders import AlmDataLoader
+from dataloaders.tfds import AlmDataLoader
 
 
 def alm_model(
@@ -56,59 +56,62 @@ def alm_model(
     metrics=[],
     dropout_rate=0.3,
     initial_learning_rate=5e-4,
-    loss_function=dice_coefficient_loss,
+    loss_function="mse",
     name="",
 ):
-    real_input = inputs[:, :, :, 0]
-    imag_input = inputs[:, :, :, 1]
+    comp_input = inputs[:, :, 0, :]
+    real_input = inputs[:, :, 0, 0]
+    imag_input = inputs[:, :, 0, 1]
 
     # Process the real and imaginary parts separately
+    padding = "causal"
     cnn_block = Sequential(
         [
-            # Conv1D(16, 3, padding="valid"),
-            # Conv1D(16, 3, padding="valid"),
+            Conv1D(16, 9, padding=padding),
+            Conv1D(16, 9),
             # BatchNormalization(),
-            # Activation("relu"), 
-            # Dropout(dropout_rate),
-
-            Conv1D(64, 9, padding="valid"),
-            Conv1D(64, 9, padding="valid"),
-            BatchNormalization(),
             Activation("relu"), 
             Dropout(dropout_rate),
 
-            Conv1D(128, 9, padding="valid"),
-            Conv1D(128, 9, padding="valid"),
-            BatchNormalization(),
+            Conv1D(64, 9, 3, padding=padding),
+            Conv1D(64, 9),
+            # BatchNormalization(),
             Activation("relu"), 
             Dropout(dropout_rate),
 
-            Conv1D(256, 9, padding="valid"),
-            Conv1D(256, 9, padding="valid"),
+            Conv1D(128, 9, 2, padding=padding),
+            Conv1D(128, 9),
+            # BatchNormalization(),
+            Activation("relu"), 
+            Dropout(dropout_rate),
+
+            Conv1D(256, 9, 2, padding=padding),
+            Conv1D(256, 9),
+            # BatchNormalization(),
+            Activation("relu"), 
+            Dropout(dropout_rate),
+
+            Conv1D(512, 9, 7, padding=padding),
+            Conv1D(512, 9),
+            # BatchNormalization(),
+            Activation("relu"), 
+            Dropout(dropout_rate),
+
+            BatchNormalization(),
             AveragePooling1D(pool_size=2),
             Dropout(dropout_rate),
-            Activation("relu"), 
         ],
         "cnn_block"
     )
 
+    # c = cnn_block(comp_input)
     r = cnn_block(real_input)
     i = cnn_block(imag_input)
-    sqr = tf.pow(r, 2) - tf.pow(i, 2) + 2 * r * i
 
-    # Concatenate the real and imaginary parts
-    layer = Concatenate()([r, i, sqr])
-    # layer = Dropout(dropout_rate)(layer)
-    layer = Conv1D(1, 32, padding='same', activation='relu')(layer)
+    layer = Concatenate()([r, i])
+    # layer = c
+    # layer = Conv1D(1, 3, padding='same', activation='relu')(layer)
     layer = Flatten()(layer)
-    # layer = Dense(512, activation="relu")(layer)
-    # layer = Dense(256, activation="sigmoid")(layer)
-    # layer = Dense(128, activation="sigmoid")(layer)
-    # layer = Dense(64, activation="sigmoid")(layer)
-    # layer = Dense(32)(layer)
-    # layer = Dense(16)(layer)
-    # layer = Dense(8)(layer)
-    # layer = Dense(4)(layer)
     layer = Dense(1)(layer)
 
     model = Model(inputs=inputs, outputs=layer, name=name)
@@ -160,7 +163,7 @@ if __name__ == "__main__":
     }
 
     # additional metrics we are intrested in
-    metrics = ["mean_absolute_error", "mse"]
+    metrics = ["mean_absolute_error"]
 
     # enable a learning rate schedule
     lr_schedule = ExponentialDecay(

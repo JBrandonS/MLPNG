@@ -25,9 +25,10 @@ from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.regularizers import l2
 
 from utils import SimConfig
-from utils.tf import (TimedLoggingCallback, dice_coefficient_loss,
-                      plot_histogram, plot_metrics, plot_predictions)
-from dataloaders import AlmDataLoader
+from utils.tf import TimedLoggingCallback, dice_coefficient_loss
+from utils.tf.plots import plot_histogram, plot_metrics, plot_predictions
+
+from dataloaders.tfds import AlmDataLoader
 
 import cvnn.layers as complex_layers
 

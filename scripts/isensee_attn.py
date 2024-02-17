@@ -60,7 +60,8 @@ from utils.tf.plots import (
     plot_histogram,
 )
 
-from dataloaders import TFDSDataLoader, DataLoader
+from dataloaders import DataLoader
+from dataloaders.tfds import TFDSDataLoader
 from utils import SimConfig
 
 
@@ -155,7 +156,7 @@ def isensee_attn(
         current_layer = localization_output
         if level_number < n_segmentation_levels:
             segmentation_layers.insert(
-                0, Conv2D(1, (1, 1))(current_layer)
+                0, Conv2D(level_filters[level_number+1], (1, 1))(current_layer)
             )
 
     output_layer = None
@@ -175,7 +176,7 @@ def isensee_attn(
 
     out_layer = Flatten()(output_layer)
     out_layer = Dropout(dropout_rate)(out_layer)
-    out_layer = Dense(1)(out_layer) * 1000
+    out_layer = Dense(1)(out_layer)
 
     model = Model(inputs=inputs, outputs=out_layer, name=name)
 
@@ -233,7 +234,7 @@ if __name__ == "__main__":
         "depth": DEPTH,
         "n_segmentation_levels": N_SEG_LEVELS,
         "dropout_rate": 0.3,
-        # "loss_function": tf.keras.losses.mse,
+        "loss_function": tf.keras.losses.mse,
         "initial_learning_rate": 0.001,
         "name": f"{extra_info['slurm_job_id']}_{s.base_name}-{timestamp}",
         "n_labels": 16,

@@ -5,6 +5,7 @@ import tensorflow as tf
 from tensorflow.data import Dataset
 from tensorflow.keras.utils import Sequence
 
+
 class AlmDataLoader(Sequence):
     def __init__(
         self,
@@ -21,7 +22,9 @@ class AlmDataLoader(Sequence):
         self.batch_size = batch_size
         self.cache = cache
 
-        self.seed = seed if seed is not None else np.random.randint(0, np.iinfo(np.int32).max)
+        self.seed = (
+            seed if seed is not None else np.random.randint(0, np.iinfo(np.int32).max)
+        )
 
     def __str__(self):
         return (
@@ -45,15 +48,12 @@ class AlmDataLoader(Sequence):
             # use a buffer size of 1000 prevents true shuffling but doesnt load everything into memory
             data = data.shuffle(buffer_size=self.shuffle_buffer_size, seed=self.seed)
 
-        if self.batch_size > 1:
-            data = data.batch(
-                self.batch_size,
-                num_parallel_calls=tf.data.AUTOTUNE,
-                drop_remainder=True,
-            )
+        data = data.batch(self.batch_size, num_parallel_calls=tf.data.AUTOTUNE)
         return data.prefetch(tf.data.AUTOTUNE)
 
-    def get_split(self, train_frac=0.8, test_frac=0.1, val_frac=0.1) -> Tuple[Dataset, Dataset, Optional[Dataset]]:
+    def get_split(
+        self, train_frac=0.8, test_frac=0.1, val_frac=0.1
+    ) -> Tuple[Dataset, Dataset, Optional[Dataset]]:
         ds = Dataset.load(self.file_name)
 
         length = ds.cardinality().numpy()

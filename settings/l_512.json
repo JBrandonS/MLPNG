@@ -34,15 +34,13 @@
     "patch_side_deg" : 10,
     "polarizations" : ["T"], 
 
-    "debug" : true,
-    "verbose" : true,
     "force_alm_gen" : false, 
 
     "base_dir" : "data",
-    "alm_cache_dir" : "data/alm_cache",
-    "plot_dir" : "data/plots",
-    "tb_dir" : "data/tensorboard",
-    "model_dir" : "data/models",
+    "alm_cache_dir" : "alm_cache",
+    "plot_dir" : "plots",
+    "tb_dir" : "tensorboard",
+    "model_dir" : "models",
 
     "noise_scale_tt" : 1,
     "noise_scale_ee" : 1.41421,

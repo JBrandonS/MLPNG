@@ -34,7 +34,7 @@ class TimedLoggingCallback(Callback):
         self._steps_str_len = len(str(self.params["steps"]))
 
     @staticmethod
-    def _get_time_str(seconds: int):
+    def _get_time_str(seconds):
         """
         Convert seconds to a human readable string.
 
@@ -43,6 +43,7 @@ class TimedLoggingCallback(Callback):
             _get_time_str(1946) -> "32:26"
             _get_time_str(26)   -> "26s"
         """
+        seconds = int(seconds)
         if seconds >= 60:
             minutes, seconds = divmod(seconds, 60)
             if minutes >= 60:
@@ -75,7 +76,7 @@ class TimedLoggingCallback(Callback):
         if current_time - self.last_print_time >= self.print_frequency:
             steps = self.params["steps"]
 
-            eta = (steps - batch) * int(current_time - self.batch_start_time)
+            eta = (steps - batch) * (current_time - self.batch_start_time)
             eta = self._get_time_str(eta)
 
             progress = batch / steps
@@ -93,7 +94,7 @@ class TimedLoggingCallback(Callback):
 
     def on_epoch_end(self, epoch, logs=None):
         current_time = time.time()
-        elapsed_time = int(current_time - self.epoch_start_time)
+        elapsed_time = current_time - self.epoch_start_time
         elapsed_time = self._get_time_str(elapsed_time)
 
         metrics_log = self._get_log_line(logs)
