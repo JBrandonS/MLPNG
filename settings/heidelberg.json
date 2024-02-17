@@ -24,7 +24,7 @@
         "lAccuracyBoost": 2.0
     },
 
-    "name" : "scraped-noise",
+    "name" : "heidelberg",
     "nsims" : 100,
     "narray": 1,                   
     "npatches" : 10,
@@ -32,7 +32,7 @@
     "disable_noise" : false,
     "double_precision": false,
 
-    "fnl_range":[-1000, 1000],        
+    "fnl_range":[-50, 50],        
     "nside":512,
     "patch_side_deg" : 10,
     "polarizations" : ["T"], 

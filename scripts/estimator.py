@@ -14,6 +14,11 @@ from utils import SimConfig, load_data, load_single_data, save_data
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
+# fix healpy logging because we will get a lot of info
+logging.getLogger('healpy').setLevel(logging.WARNING)
+
+# remove astropy warning about verbose that I can't change
+logging.getLogger('astropy').setLevel(logging.ERROR)
 
 def alm_loader(str_idx):
     """Loads in a single alm given a int in string form. Used inside the KSW code."""
@@ -26,7 +31,7 @@ def alm_loader(str_idx):
     almng = load_single_data(s.alm_file_complete, "almng", idx, verbose=s.verbose)[pol]
     fnl = load_single_data(s.data_file_nc, "fnls", idx, verbose=s.verbose)[dup_idx]
 
-    logging.debug("idx: %s, dup_idx: %s, fnl: %s", idx, dup_idx, fnl)
+    logging.info("idx: %s, dup_idx: %s, fnl: %s", idx, dup_idx, fnl)
 
     alm = remove_mono_dipole(alm)
     almng = remove_mono_dipole(almng)
@@ -53,12 +58,13 @@ def compute_icov_ell(N, b):
     
 if __name__ == "__main__":
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.INFO if rank == 0 else logging.ERROR,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         datefmt="%d-%b-%y %H:%M:%S",
         handlers=[logging.StreamHandler(sys.stdout)],
     )
     logger = logging.getLogger(__name__)
+    logger.name = f"estimator_{rank}"
 
     s = SimConfig(sys.argv[1], print_settings=(rank == 0))
 
@@ -74,6 +80,7 @@ if __name__ == "__main__":
     loc_shape = Shape.prim_local(s.cosmo_params["ns"], s.cosmo_params["pivot_scalar"])
     cosmo.add_prim_reduced_bispectrum(loc_shape, s.radii)
 
+    # setup the data and get our icov object
     noise_ell, beam_ell = s.noise_beam
     data = Data(s.lmax, noise_ell, beam_ell, s.polarizations, cosmo)
     icov = data.icov_diag_lensed if s.lensing else data.icov_diag_nonlensed
@@ -81,7 +88,7 @@ if __name__ == "__main__":
     # generate our beam functioned based on noise
     beam_width_rad = 0 if s.disable_noise else s.beam_width.to_value(u.radian)
     def beam(alm):
-        return hp.sphtfunc.smoothalm(alm, fwhm=beam_width_rad, inplace=False)
+        return hp.sphtfunc.smoothalm(alm, fwhm=beam_width_rad, verbose=False, inplace=False)
 
     ksw = KSW(
         cosmo.red_bispectra,
@@ -92,15 +99,18 @@ if __name__ == "__main__":
         precision="double" if s.double_precision else "single",
     )
 
-    # setup the estimator, check if we have a previous run
+    # need a list of str arguments to pass into the alm_loader
     alm_strs = np.arange(s.total_sims).astype(str)
 
+    # check for existing ksw state
     ksw_mc_file = os.path.join(s.data_dir, "kswmc_" + s.data_str)
     if os.path.exists(ksw_mc_file):
+        logger.info("Loading KSW state from %s", ksw_mc_file)
         ksw.start_from_read_state(ksw_mc_file, comm)
     else:
+        logger.info("No KSW state found, starting from scratch")
         # we dont need to step through all the alms if we have more than 100
-        alm_strs_i = np.arange(200) if s.total_sims > 200 else alm_strs
+        alm_strs_i = np.arange(1000) if s.total_sims > 1000 else alm_strs
 
         def alm_step_loader(idx):
             # needs a gaussian realization of signal + noise
@@ -113,12 +123,12 @@ if __name__ == "__main__":
         if rank == 0:
             ksw.write_state(ksw_mc_file, comm)
 
-    logger.debug("Computing estimates")
+    logger.info("Computing estimates")
     fisher = ksw.compute_fisher()
     estimates = ksw.compute_estimate_batch(
         alm_loader, alm_strs, comm, verbose=(rank == 0), fisher=fisher
     )
-    logger.debug("done")
+    logger.info("done")
 
     # compute isotropic fisher
     icov_ell = compute_icov_ell(noise_ell, beam_ell)
@@ -141,4 +151,4 @@ if __name__ == "__main__":
         save_data(s.data_file_nc, sdata, verbose=s.verbose)
         os.replace(s.data_file_nc, s.data_file_complete)
 
-    logger.debug("Finished %s!", rank)
+    logger.info("Finished %s!", rank)

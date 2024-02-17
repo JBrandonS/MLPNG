@@ -9,7 +9,8 @@ from astropy import units as u
 from ksw import KSW, Cosmology, Data, Shape
 from mpi4py import MPI
 
-from utils import SimConfig, load_data, load_single_data, save_data
+from utils import SimConfig, load_data, load_single_data, save_data 
+from utils.plots import plot_ksw_predictions, plot_cl_alm
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -19,6 +20,8 @@ logging.getLogger('healpy').setLevel(logging.WARNING)
 
 # remove astropy warning about verbose that I can't change
 logging.getLogger('astropy').setLevel(logging.ERROR)
+
+fnls = []
 
 def alm_loader(str_idx):
     idx = str_idx.zfill(4)
@@ -34,7 +37,8 @@ def alm_loader(str_idx):
     alm_h_nl = remove_mono_dipole(alm_heidelberg_nl)
 
     # rng = np.random.default_rng()
-    fnl = np.random.uniform(-10, 10)
+    fnl = np.random.uniform(-50, 50)
+    fnls.append(fnl)
     logging.info("sending fnl: %s", fnl)
     return (alm_h_l + fnl * alm_h_nl)*t_scale
 
@@ -75,7 +79,7 @@ if __name__ == "__main__":
         handlers=[logging.StreamHandler(sys.stdout)],
     )
     logger = logging.getLogger(__name__)
-    logger.name = f"estimator_{rank}"
+    logger.name = f"heidelberg_estimator_{rank}"
 
     s = SimConfig("settings/heidelberg.json", print_settings=(rank == 0))
 
@@ -83,7 +87,7 @@ if __name__ == "__main__":
     logger.info("Running camb")
     camb_params_obj = camb.set_params(**s.cosmo_params)
     cosmo = Cosmology(camb_params_obj)
-    cosmo.compute_transfer(s.cosmo_params["max_l"], verbose=((rank == 0) and s.verbose))
+    cosmo.compute_transfer(s.cosmo_params["max_l"])
     cosmo.compute_c_ell()
     logger.info("done starting camb")
 
@@ -99,7 +103,7 @@ if __name__ == "__main__":
     # generate our beam functioned based on noise
     beam_width_rad = 0 if s.disable_noise else s.beam_width.to_value(u.radian)
     def beam(alm):
-        return hp.sphtfunc.smoothalm(alm, fwhm=beam_width_rad, verbose=False, inplace=False)
+        return hp.sphtfunc.smoothalm(alm, fwhm=beam_width_rad, inplace=False)
 
     ksw = KSW(
         cosmo.red_bispectra,
@@ -111,9 +115,9 @@ if __name__ == "__main__":
     )
 
     # need a list of str arguments to pass into the alm_loader
-    alm_strs = np.arange(s.total_sims).astype(str)
+    alm_strs = np.arange(1, s.total_sims).astype(str)
     # we dont need to step through all the alms if we have more than 100
-    alm_strs_i = np.arange(1000) if s.total_sims > 1000 else alm_strs
+    alm_strs_i = np.arange(1, 1000) if s.total_sims > 1000 else alm_strs
 
     def alm_step_loader(idx):
         # needs a gaussian realization of signal + noise
@@ -133,6 +137,8 @@ if __name__ == "__main__":
     # compute isotropic fisher
     icov_ell = compute_icov_ell(noise_ell, beam_ell)
     fisher_iso = ksw.compute_fisher_isotropic(icov_ell, comm=comm)
-    logger.info('Isotropic fisher: %s', fisher_iso)
 
     logger.info("Finished %s!", rank)
+
+    plot_ksw_predictions(fnls, estimates, fisher, os.path.join(s.plot_dir, "ksw_predictions.png"))
+    plot_cl_alm(alm_loader(1), s, save_name="heidelberg_alm", save=True)

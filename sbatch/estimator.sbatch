@@ -1,7 +1,7 @@
 #! /bin/bash
 #SBATCH --job-name=estimator
 #SBATCH --partition=standard-s
-#SBATCH --ntasks=25
+#SBATCH --ntasks=4
 #SBATCH --mem-per-cpu=40G
 #SBATCH --cpus-per-task=1
 #SBATCH --output=logs/estimator/%j.log
@@ -15,4 +15,4 @@ module load gcc/11.2.0 gcc-11.2.0/intel-oneapi-mkl/2022.2.1-c4efjsy fftw/3.3.10-
 eval "$(conda shell.bash hook)"
 conda activate mlpng
 
-time srun python scripts/estimator.py "$1"
+time srun python scripts/heidelberg-estimator.py "$1"
