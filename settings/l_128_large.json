@@ -29,7 +29,7 @@
     "disable_noise" : false,
     "double_precision": false,
 
-    "duplicate_backgrounds": 10,
+    "duplicate_backgrounds": 1,
 
     "fnl_range":[-1000, 1000],        
     "nside":128,

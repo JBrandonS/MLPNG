@@ -28,7 +28,7 @@
     "lensing" : false,
     "disable_noise" : true,
     "double_precision": false,
-    "duplicate_backgrounds": 10,
+    "duplicate_backgrounds": 1,
     "fnl_range":[-1000, 1000],        
     "nside":128,
     "patch_side_deg" : 10,
@@ -36,7 +36,7 @@
 
     "force_alm_gen" : false, 
 
-    "base_dir" : "data-shared",
+    "base_dir" : "data",
     "alm_cache_dir" : "alm_cache",
     "plot_dir" : "plots",
     "tb_dir" : "tensorboard",

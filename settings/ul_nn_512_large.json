@@ -28,7 +28,7 @@
     "lensing" : false,
     "disable_noise" : true,
     "double_precision": false,
-    "duplicate_backgrounds": 10,
+    "duplicate_backgrounds": 1,
     "fnl_range":[-1000, 1000],        
     "nside":512,
     "patch_side_deg" : 10,
