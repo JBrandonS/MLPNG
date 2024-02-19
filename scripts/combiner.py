@@ -13,10 +13,7 @@ import logging
 def extract_number(filename):
     # Extracts the number from a filename
     matches = re.findall(r"\d+", filename)
-    if matches:
-        return int(matches[-2])  # Consider the last numerical value for ordering
-    else:
-        return None
+    return int(matches[-2]) if matches else 0
 
 
 def combine_data(directory, base_name, ext, remove_files=True, finalize=False):

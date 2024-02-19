@@ -60,8 +60,7 @@ from utils.tf.plots import (
     plot_histogram,
 )
 
-from dataloaders import DataLoader
-from dataloaders.tfds import TFDSDataLoader
+from utils.data import PatchLoader, PatchLoaderTFDS
 from utils import SimConfig
 
 
@@ -321,12 +320,12 @@ if __name__ == "__main__":
     if os.path.exists(tfds_filepath):
         # This might have a small speedup, but it also might not
         # This WILL let us run on multinode which the hdf5 loader does not
-        data_loader = TFDSDataLoader(tfds_filepath, **data_loader_args)
+        data_loader = PatchLoaderTFDS(tfds_filepath, **data_loader_args)
     else:
         # load data as a python generator, directly from hdf5
         # This requires everything to be in the same python environment
         # aka, no multinode
-        data_loader = DataLoader(s.data_file_complete, **data_loader_args)
+        data_loader = PatchLoader(s.data_file_complete, **data_loader_args)
 
     # Just print some good info for the log
     print("TensorFlow version:", tf.__version__)

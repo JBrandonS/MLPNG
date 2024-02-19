@@ -17,8 +17,8 @@ from numpy.random import randint, uniform
 from pixell import curvedsky, enmap, lensing, reproject
 from scipy.interpolate import CubicSpline
 from tqdm.auto import tqdm
-from utils import (SimConfig, load_data,
-                   save_data)
+
+from utils import SimConfig, load_data, save_data
 from utils.plots import plot_cl_map
 
 

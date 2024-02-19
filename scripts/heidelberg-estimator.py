@@ -30,8 +30,8 @@ def alm_loader(str_idx):
     base1 = f"data/heidelberg/alm_l_{idx}_v3.fits"
     base2 = f"data/heidelberg/alm_nl_{idx}_v3.fits"
 
-    alm_heidelberg_l = hp.read_alm(base1, hdu=1)
-    alm_heidelberg_nl = hp.read_alm(base2, hdu=1)
+    alm_heidelberg_l = np.array(hp.read_alm(base1, hdu=1))
+    alm_heidelberg_nl = np.array(hp.read_alm(base2, hdu=1))
 
     alm_h_l = remove_mono_dipole(alm_heidelberg_l)
     alm_h_nl = remove_mono_dipole(alm_heidelberg_nl)

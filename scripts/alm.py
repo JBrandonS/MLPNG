@@ -6,6 +6,8 @@ import time
 import numpy as np
 from healpy.sphtfunc import Alm
 
+from .dataloaders.tfds.almdataloader import AlmDataLoader
+
 # os.environ["NCCL_DEBUG"] = "INFO"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "false"
@@ -47,7 +49,7 @@ from utils.tf.plots import (
     plot_metrics,
     plot_predictions,
 )
-from dataloaders.tfds import AlmDataLoader
+from utils.data import AlmLoaderTFDS
 
 
 def alm_model(
@@ -224,7 +226,7 @@ if __name__ == "__main__":
 
     # Lets load our data
     tfds_filepath = s.alm_file_complete.replace(".hdf5", "split.tfds")
-    data_loader = AlmDataLoader(tfds_filepath, **data_loader_args)
+    data_loader = AlmLoaderTFDS(tfds_filepath, **data_loader_args)
     train_dataset, test_dataset, val_dataset = data_loader.get_split(0.8, 0.1, 0.1)
 
     pprint.PrettyPrinter(indent=2).pprint(model_settings | extra_info)

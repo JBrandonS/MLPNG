@@ -10,8 +10,6 @@ os.environ["XLA_FLAGS"] = f"--xla_gpu_cuda_data_dir={os.environ['CUDA_HOME']}"
 
 import numpy as np
 import tensorflow as tf
-from dataloaders import DataLoader
-from dataloaders.tfds import TFDSDataLoader
 from tensorflow.keras.callbacks import (EarlyStopping, ModelCheckpoint,
                                         ReduceLROnPlateau)
 from tensorflow.keras.layers import (Add, Attention, AveragePooling2D,
@@ -25,6 +23,7 @@ from tensorflow.keras.optimizers.legacy import Adam
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.regularizers import l2
 from utils import SimConfig, get_fisher
+from utils.data import DataLoader, TFDSDataLoader
 from utils.tf import TimedLoggingCallback, dice_coefficient_loss
 from utils.tf.layers import (ReflectionPadding2D, augmentation_layer,
                              create_context_module, create_convolution_block)

@@ -15,11 +15,11 @@ from tensorflow.keras.layers import (
 
 
 class PeriodicPadding2D(Layer):
-    def __init__(self, current_grid, **kwargs):
+    def __init__(self, grid_size, **kwargs):
         super(PeriodicPadding2D, self).__init__(**kwargs)
-        self.current_grid = current_grid
+        self.grid_size = grid_size
         self.indices = np.append(
-            np.insert(np.arange(self.current_grid), 0, self.current_grid - 1), 0
+            np.insert(np.arange(self.grid_size), 0, self.grid_size - 1), 0
         ).astype(np.int32)
 
     def call(self, x):
@@ -119,7 +119,6 @@ def create_convolution_block(
         layer = GroupNormalization(groups=n_filters)(layer)
     layer = Activation(activation=activation)(layer)
     return layer
-
 
 def rotation_layer():
     """

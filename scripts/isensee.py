@@ -29,20 +29,6 @@ from tensorflow import pad
 # from tensorflow_addons.layers import InstanceNormalization
 
 
-class PeriodicPadding2D(Layer):
-    def __init__(self, current_grid, **kwargs):
-        super(PeriodicPadding2D, self).__init__(**kwargs)
-        self.current_grid = current_grid
-        self.indices = np.append(
-            np.insert(np.arange(self.current_grid), 0, self.current_grid - 1), 0
-        ).astype(np.int32)
-
-    def call(self, x):
-        x = tf.gather(x, self.indices, axis=1)
-        x = tf.gather(x, self.indices, axis=2)
-        return x
-
-
 class ReflectionPadding2D(Layer):
     def __init__(self, padding=(1, 1), **kwargs):
         self.padding = tuple(padding)
@@ -223,70 +209,5 @@ def isensee_model(
             tf.keras.metrics.RootMeanSquaredError(),
             tf.keras.metrics.MeanAbsoluteError(),
         ],
-    )
-    return model
-
-
-def UNET(
-    image_size,
-    n_base_filters=16,
-    depth=5,
-    dropout_rate=0.3,
-    n_labels=1,
-    optimizer=Adam,
-    initial_learning_rate=5e-4,
-    loss_function=tf.keras.losses.mse,
-):
-
-    inputs = Input((image_size, image_size, 1), name="img")
-    x = inputs
-
-    level_output_layers = list()
-    level_filters = list()
-
-    current_grid = image_size
-
-    for level_number in range(depth):
-        n_level_filters = (2**level_number) * n_base_filters
-        level_filters.append(n_level_filters)
-
-        if x is inputs:
-            x = PeriodicPadding2D(current_grid)(x)
-            x = create_convolution_block(x, n_level_filters)
-        else:
-            x = PeriodicPadding2D(current_grid)(x)
-            x = create_convolution_block(x, n_level_filters, strides=(2, 2))
-            current_grid /= 2
-
-        previous_block = x
-        x = create_context_module(
-            x, current_grid, n_level_filters, dropout_rate=dropout_rate
-        )
-        x = Add()([previous_block, x])
-
-        level_output_layers.append(x)
-
-    for level_number in range(depth - 2, -1, -1):
-        current_grid *= 2
-        x = create_up_sampling_module(x, current_grid, level_filters[level_number])
-        x = Concatenate()([level_output_layers[level_number], x])
-        x = create_localization_module(x, current_grid, level_filters[level_number])
-
-    x = Conv2D(n_labels, (1, 1))(x)
-    x = PeriodicPadding2D(current_grid)(x)
-    x = Conv2D(n_labels, (3, 3), strides=(2, 2))(x)
-    x = PeriodicPadding2D(current_grid)(x)
-    x = Conv2D(n_labels, (3, 3), strides=(2, 2))(x)
-    x = PeriodicPadding2D(current_grid)(x)
-    x = Conv2D(n_labels, (3, 3), strides=(2, 2))(x)
-
-    x = Flatten()(x)
-    x = Dense(1)(x)
-    outputs = x
-    model = Model(inputs=inputs, outputs=outputs)
-    model.compile(
-        optimizer=optimizer(learning_rate=initial_learning_rate),
-        loss=loss_function,
-        metrics=tf.keras.metrics.RootMeanSquaredError(),
     )
     return model

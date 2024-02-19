@@ -22,8 +22,8 @@ def convert_hdf5_to_tfdata():
                 # Convert the .hdf5 file to .tfds
                 print('Converting', hdf5_file, 'to', tfds_dir)
                 with h5py.File(hdf5_file, 'r') as f:
-                    images = f['patches'][:]
-                    labels = f['fnls'][:]
+                    images = np.array(f['patches'][:])
+                    labels = np.array(f['fnls'][:])
 
                 nsims, npatchs, npol, ndup, nside, _ = images.shape
                 images = np.reshape(images, (-1, nside, nside, 1))

@@ -1,2 +1,2 @@
-from .simconfig import SimConfig
-from .utils import *
+from .config import Config
+from .h5data import *

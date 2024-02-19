@@ -9,11 +9,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from healpy.sphtfunc import Alm, alm2map
 
-# os.environ["NCCL_DEBUG"] = "INFO"
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
-os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
-os.environ["XLA_FLAGS"] = f"--xla_gpu_cuda_data_dir={os.environ['CUDA_HOME']}"
-
 import tensorflow as tf
 from tensorflow.keras import Input, Model
 from tensorflow.keras.callbacks import (EarlyStopping, ModelCheckpoint, ReduceLROnPlateau,
@@ -28,7 +23,7 @@ from utils import SimConfig
 from utils.tf import TimedLoggingCallback, dice_coefficient_loss
 from utils.tf.plots import plot_histogram, plot_metrics, plot_predictions
 
-from dataloaders.tfds import AlmDataLoader
+from utils.data import AlmLoaderTFDS
 
 import cvnn.layers as complex_layers
 
@@ -181,7 +176,7 @@ if __name__ == "__main__":
 
     # Lets load our data
     tfds_filepath = s.alm_file_complete.replace(".hdf5", ".tfds")
-    data_loader = AlmDataLoader(tfds_filepath, **data_loader_args)
+    data_loader = AlmLoaderTFDS(tfds_filepath, **data_loader_args)
     train_dataset, test_dataset, val_dataset = data_loader.get_split(0.8, 0.1, 0.1)
 
     pprint.PrettyPrinter(indent=2).pprint(model_settings | extra_info)

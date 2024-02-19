@@ -9,11 +9,10 @@ import pprint
 
 import logging
 
-logger = logging.getLogger(__name__)
-
-
-class SimConfig:
+class Config:
     def __init__(self, settings_file, print_settings=True):
+        logger = logging.getLogger(__name__)
+        
         with open(settings_file, "r") as f:
             self.settings = settings = json.load(f)
 
