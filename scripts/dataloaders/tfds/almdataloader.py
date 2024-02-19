@@ -51,9 +51,7 @@ class AlmDataLoader(Sequence):
         data = data.batch(self.batch_size, num_parallel_calls=tf.data.AUTOTUNE)
         return data.prefetch(tf.data.AUTOTUNE)
 
-    def get_split(
-        self, train_frac=0.8, test_frac=0.1, val_frac=0.1
-    ) -> Tuple[Dataset, Dataset, Optional[Dataset]]:
+    def get_split(self, train_frac=0.8, test_frac=0.1, val_frac=0.1):
         ds = Dataset.load(self.file_name)
 
         length = ds.cardinality().numpy()

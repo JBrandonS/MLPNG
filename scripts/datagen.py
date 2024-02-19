@@ -21,8 +21,6 @@ from utils import (SimConfig, load_data,
                    save_data)
 from utils.plots import plot_cl_map
 
-log = logging.getLogger(__name__)
-
 
 def get_alm(alm, bl_div_cl, alpha_l, r, dr):
     """This calculates the alms from the precalculated values"""
@@ -120,7 +118,7 @@ def generate_almngs():
     bl_div_cl = np.ascontiguousarray(bl_div_cl)
 
     # Each alm takes ~30Mb at 1024. This is fast enough we don't need to parallelize even for very large datasets
-    log.info("Starting gaussian A_lm generation")
+    logger.info("Starting gaussian A_lm generation")
     alms = np.array(
         [
             ksw_data.compute_alm_sim(s.lensing)
@@ -137,7 +135,7 @@ def generate_almngs():
         for j in range(s.npol):
             alms[i, j] = hp.almxfl(alms[i, j], beam_ell_2d[j] ** -1)
 
-    log.info("Starting non-gaussian A_lm generation")
+    logger.info("Starting non-gaussian A_lm generation")
     sim_data = np.zeros((s.nsims, s.npol, s.nelem), dtype=s.c_dtype)
     for i in tqdm(range(s.nsims), desc="almng progress"):
         for pol in range(s.npol):
@@ -157,7 +155,7 @@ def generate_almngs():
             for alm in alm_gen:
                 sim_data[i, pol] += alm
 
-    log.info("Done!")
+    logger.info("Done!")
 
     sdata = {}
     sdata["alm"] = alms
@@ -242,9 +240,9 @@ if __name__ == "__main__":
         datefmt="%d-%b-%y %H:%M:%S",
         handlers=[logging.StreamHandler(sys.stdout)],
     )
+    logger = logging.getLogger(__name__)
 
-    config_file = sys.argv[1] if len(sys.argv) > 1 else "settings/settings.json"
-    s = SimConfig(config_file)
+    s = SimConfig(sys.argv[1])
 
     # here we setup camb since it is needed for the sims in both the alm generation
     # and patch generation
@@ -269,19 +267,19 @@ if __name__ == "__main__":
     # here we load in the alms either from a complete, combined, file or individual
     # if neither are found we generate the alms
     if os.path.isfile(s.alm_file_complete) and not s.force_alm_gen:
-        log.info("Found completed alms file, skipping alm generation")
+        logger.info("Found completed alms file, skipping alm generation")
         ldata = load_data(s.alm_file_complete, ["alm", "almng"])
     elif os.path.isfile(s.alm_file_partial) and not s.force_alm_gen:
-        log.info(
+        logger.info(
             "Found partial alm file %s, skipping alm generation", s.alm_file_partial
         )
         ldata = load_data(s.alm_file_partial, ["alm", "almng"])
     else:
         if os.path.isfile(s.alm_file_nc):
-            log.info("Removing stale alm file: %s", s.alm_file_nc)
+            logger.info("Removing stale alm file: %s", s.alm_file_nc)
             os.remove(s.alm_file_nc)
 
-        log.info("Generating new alms")
+        logger.info("Generating new alms")
         ldata = generate_almngs()
         alm_file = s.alm_file_partial
 
@@ -346,8 +344,8 @@ if __name__ == "__main__":
 
     # remove the partial file if it exists
     if os.path.isfile(s.data_file_nc):
-        log.debug("Removing stale data file: %s", s.data_file_nc)
+        logger.debug("Removing stale data file: %s", s.data_file_nc)
         os.remove(s.data_file_nc)
 
     save_data(s.data_file_nc, sdata)
-    log.info("Done with Generation!")
+    logger.info("Done with Generation!")

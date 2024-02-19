@@ -64,7 +64,6 @@ if __name__ == "__main__":
         handlers=[logging.StreamHandler(sys.stdout)],
     )
     logger = logging.getLogger(__name__)
-    logger.name = f"estimator_{rank}"
 
     s = SimConfig(sys.argv[1], print_settings=(rank == 0))
 

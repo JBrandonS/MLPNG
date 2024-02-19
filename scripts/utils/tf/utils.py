@@ -1,10 +1,6 @@
 import tensorflow as tf
 from tensorflow.keras import backend as K
 
-import numpy as np
-
-import h5py
-
 
 @tf.function(jit_compile=True)
 def dice_coefficient(y_true, y_pred, smooth=1.0):

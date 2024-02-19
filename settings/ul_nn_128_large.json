@@ -37,10 +37,10 @@
     "force_alm_gen" : false, 
 
     "base_dir" : "data-shared",
-    "alm_cache_dir" : "data-shared/alm_cache",
-    "plot_dir" : "data-shared/plots",
-    "tb_dir" : "data-shared/tensorboard",
-    "model_dir" : "data-shared/models",
+    "alm_cache_dir" : "alm_cache",
+    "plot_dir" : "plots",
+    "tb_dir" : "tensorboard",
+    "model_dir" : "models",
 
     "noise_scale_tt" : 1,
     "noise_scale_ee" : 1.41421,

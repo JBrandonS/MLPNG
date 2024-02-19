@@ -8,51 +8,28 @@ from healpy.sphtfunc import Alm
 
 # os.environ["NCCL_DEBUG"] = "INFO"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
-os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "false"
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 # os.environ["XLA_FLAGS"] = f"--xla_gpu_cuda_data_dir={os.environ['CUDA_HOME']}"
 
 import tensorflow as tf
+from dataloaders import AlmLoader
 from tensorflow.keras import Input, Model
+from tensorflow.keras.callbacks import (EarlyStopping, ModelCheckpoint,
+                                        ReduceLROnPlateau, TensorBoard)
+from tensorflow.keras.layers import (Activation, AveragePooling1D,
+                                     BatchNormalization, Concatenate, Conv1D,
+                                     Conv2D, Dense, Dropout, Flatten,
+                                     GlobalAveragePooling1D, Lambda,
+                                     LayerNormalization, MaxPooling2D,
+                                     MultiHeadAttention, Multiply)
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.callbacks import (
-    EarlyStopping,
-    ModelCheckpoint,
-    ReduceLROnPlateau,
-    TensorBoard,
-)
-from tensorflow.keras.layers import (
-    Activation,
-    Concatenate,
-    Conv1D,
-    Dense,
-    Dropout,
-    Multiply,
-    Flatten,
-    Lambda,
-    AveragePooling1D,
-    GlobalAveragePooling1D,
-    BatchNormalization,
-    MultiHeadAttention,
-    LayerNormalization,
-    Conv2D,
-    MaxPooling2D,
-)
 from tensorflow.keras.optimizers.legacy import Adam
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.regularizers import l2
-
 from utils import SimConfig
-from utils.tf import (
-    TimedLoggingCallback,
-    dice_coefficient_loss,
-)
-
-from utils.tf.plots import (
-    plot_histogram,
-    plot_metrics,
-    plot_predictions,
-)
-from dataloaders import AlmLoader
+from utils.tf import TimedLoggingCallback, dice_coefficient_loss
+from utils.tf.layers import PeriodicPadding2D
+from utils.tf.plots import plot_histogram, plot_metrics, plot_predictions
 
 
 def alm_model(
@@ -62,29 +39,39 @@ def alm_model(
 ):
     input_layer = inputs
 
-    layer = MultiHeadAttention(num_heads=1, key_dim=32, dropout=dropout_rate, attention_axes=(3))(input_layer, input_layer)
-    layer = MultiHeadAttention(num_heads=1, key_dim=32, dropout=dropout_rate, attention_axes=(2))(input_layer, layer)
-    layer = MultiHeadAttention(num_heads=1, key_dim=32, dropout=dropout_rate, attention_axes=(1))(input_layer, layer)
+    layer = MultiHeadAttention(
+        num_heads=1, key_dim=32, dropout=dropout_rate, attention_axes=(3)
+    )(input_layer, input_layer)
+    layer = MultiHeadAttention(
+        num_heads=1, key_dim=32, dropout=dropout_rate, attention_axes=(2)
+    )(input_layer, layer)
+    layer = MultiHeadAttention(
+        num_heads=1, key_dim=32, dropout=dropout_rate, attention_axes=(1)
+    )(input_layer, layer)
 
     # layer = MultiHeadAttention(num_heads=1, key_dim=8, dropout=dropout_rate, attention_axes=(1, 3))(input_layer, layer)
     # layer = MultiHeadAttention(num_heads=1, key_dim=8, dropout=dropout_rate, attention_axes=(2, 3))(input_layer, layer)
 
-    x = Conv2D(1, (1, 1))(layer)
-    x = Conv2D(1, (3, 3), strides=(2, 2))(x)
-    x = Conv2D(1, (3, 3), strides=(2, 2))(x)
-    x = Conv2D(1, (3, 3), strides=(2, 2))(x)
-    x = Flatten()(x)
-    layer = Dense(1)(x)
+    layer = Conv2D(1, (1, 1))(layer)
+    layer = PeriodicPadding2D(layer.shape[1])(layer)
+    layer = Conv2D(1, (3, 3), strides=(2, 2))(layer)
+    layer = PeriodicPadding2D(layer.shape[1])(layer)
+    layer = Conv2D(1, (3, 3), strides=(2, 2))(layer)
+    layer = PeriodicPadding2D(layer.shape[1])(layer)
+    layer = Conv2D(1, (3, 3), strides=(2, 2))(layer)
+
+    layer = Flatten()(layer)
+    layer = Dense(1)(layer)
 
     return Model(inputs=inputs, outputs=layer, name=name)
 
 
 if __name__ == "__main__":
-    gpus = tf.config.experimental.list_physical_devices('GPU')
+    gpus = tf.config.experimental.list_physical_devices("GPU")
     print("TensorFlow version:", tf.__version__)
     print("CUDA version:", tf.sysconfig.get_build_info()["cuda_version"])
     print("cuDNN version:", tf.sysconfig.get_build_info()["cudnn_version"])
-    print(f'Number of GPUs Available: {len(gpus)}')
+    print(f"Number of GPUs Available: {len(gpus)}")
 
     s = SimConfig(sys.argv[1])
 
@@ -117,7 +104,9 @@ if __name__ == "__main__":
     }
 
     print("Model Settings:")
-    pprint.PrettyPrinter(indent=2).pprint(model_settings | extra_info | data_loader_args)
+    pprint.PrettyPrinter(indent=2).pprint(
+        model_settings | extra_info | data_loader_args
+    )
 
     # additional metrics we are intrested in
     metrics = ["mean_absolute_error"]
@@ -147,21 +136,20 @@ if __name__ == "__main__":
             save_best_only=True,
             mode="auto",
         ),
-        TimedLoggingCallback(
-            print_frequency=60
-        ),  # custom logger to work a little better with text logs
+        # custom logger to work a little better with text logs
+        TimedLoggingCallback(print_frequency=60),
         TensorBoard(log_dir=f"{s.tb_dir}/{model_settings['name']}", histogram_freq=1),
     ]
 
     # enable wandb, set to false if not using
-    if False:
+    if True:
         import wandb
         from wandb.keras import WandbMetricsLogger, WandbModelCheckpoint
 
         wandb.init(
             project="mlpng",
             notes=extra_info["comment"],
-            tags=["alm", "dev"],
+            tags=["attn-alm", "dev"],
             config=s.settings | model_settings | extra_info,
             dir="data",
             sync_tensorboard=True,
@@ -175,9 +163,9 @@ if __name__ == "__main__":
 
     strategy = tf.distribute.MirroredStrategy()
     with strategy.scope():
-        input = Input(data_loader.shape, dtype=tf.float32)
+        input = Input(data_loader.shape)
 
-        model = alm_model(input, **model_settings)
+        model = alm_model(input, name=model_settings["name"])
 
         opt = Adam(
             learning_rate=lr_schedule,
