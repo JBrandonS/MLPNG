@@ -11,7 +11,7 @@
 1. Load in your modules. On m3 I use
     - `module load spack conda gcc/11.2.0 gcc-11.2.0/intel-oneapi-mkl/2022.2.1-c4efjsy fftw/3.3.10-gz7qiki openmpi/4.1.6-a4ksrza`
 2. Create a python environment
-   - I have provided `conda-envs/datagen-m3.yml` which is the conda env I use on m3.
+   - I have provided `conda-envs/mlpng.yml` which is the conda env I use on m3.
 3. Clone, or download, and install [KSW](https://github.com/AdriJD/ksw) and [optweight](https://github.com/AdriJD/optweight)
    - `optweight` should be installed first, just need run `pip install -e .` in the root directory.
    - For `ksw` run `make && pip install -e . && make check` in the root.
