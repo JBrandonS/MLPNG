@@ -9,6 +9,36 @@ import healpy as hp
 from astropy import units as u
 
 
+def plot_patches(patches, n_plots, title="Patches", save_file=None):
+    nrows = int(np.ceil(n / float(n_plots)))
+    fig, axes = plt.subplots(nrows, n_plots, figsize=(20, 20))
+    patches = np.random.choice(patches, n_plots, replace=False)
+
+    for idx, patch in enumerate(patches):
+        row = idx // n_plots
+        col = idx % n_plots
+        if nrows == 1:
+            if n_plots == 1:
+                ax = axes
+            else:
+                ax = axes[col]
+        else:
+            ax = axes[row, col]
+        ax.imshow(patch)
+        ax.axis("off")
+
+    # Remove empty subplots
+    for idx in range(n, nrows * n_plots):
+        fig.delaxes(axes.flatten()[idx])
+
+    plt.title(title)
+    plt.tight_layout()
+    plt.show()
+
+    if save_file is not None:
+        plt.savefig(save_file)
+
+
 def plot_cl(
     cl,
     lmax,
