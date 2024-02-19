@@ -9,7 +9,7 @@ from astropy import units as u
 from ksw import KSW, Cosmology, Data, Shape
 from mpi4py import MPI
 
-from utils import SimConfig, load_data, load_single_data, save_data
+from utils import Config, load_data, load_single_data, save_data
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -31,7 +31,7 @@ def alm_loader(str_idx):
     almng = load_single_data(s.alm_file_complete, "almng", idx)[pol]
     fnl = load_single_data(s.data_file_nc, "fnls", idx)[dup_idx]
 
-    logging.info("idx: %s, dup_idx: %s, fnl: %s", idx, dup_idx, fnl)
+    logging.debug("idx: %s, dup_idx: %s, fnl: %s", idx, dup_idx, fnl)
 
     alm = remove_mono_dipole(alm)
     almng = remove_mono_dipole(almng)
@@ -65,7 +65,7 @@ if __name__ == "__main__":
     )
     logger = logging.getLogger(__name__)
 
-    s = SimConfig(sys.argv[1], print_settings=(rank == 0))
+    s = Config(sys.argv[1], print_settings=(rank == 0))
 
     # init camb and setup the reduced bispecturm to local
     logger.info("Running camb")

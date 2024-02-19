@@ -1,13 +1,12 @@
-import os
-import sys
 import glob
-import h5py
-import re
-from tqdm.auto import tqdm
-
-from utils import SimConfig
-
 import logging
+import os
+import re
+import sys
+
+import h5py
+from tqdm.auto import tqdm
+from utils import Config
 
 
 def extract_number(filename):
@@ -24,10 +23,9 @@ def combine_data(directory, base_name, ext, remove_files=True, finalize=False):
 
     if len(files_to_combine) == 0:
         logger.error("did not find any files to combine with %s", file_pattern)
-        return
+        exit(1)
 
     def recursive_copy(hf_source, hf_dest):
-        # print(f"Found keys {hf_source.keys()} to add to {hf_dest.keys()}")
         for key in hf_source.keys():
             if isinstance(hf_source[key], h5py.Group):
                 if key not in hf_dest:
@@ -66,8 +64,6 @@ def combine_data(directory, base_name, ext, remove_files=True, finalize=False):
             with h5py.File(file, "r") as hf:
                 recursive_copy(hf, hf_combined)
 
-        logger.debug("Final keys in file %s are %s", base_name + ext, hf_combined.keys())
-
     if finalize:
         os.replace(
             os.path.join(directory, base_name + ext + ".nc"),
@@ -80,15 +76,7 @@ def combine_data(directory, base_name, ext, remove_files=True, finalize=False):
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%d-%b-%y %H:%M:%S",
-        handlers=[logging.StreamHandler(sys.stdout)],
-    )
-    logger = logging.getLogger(__name__)
-
-    s = SimConfig(sys.argv[1])
+    s = Config(sys.argv[1])
 
     # check that we are not using a already completed file!
     if not os.path.isfile(s.alm_file_complete):

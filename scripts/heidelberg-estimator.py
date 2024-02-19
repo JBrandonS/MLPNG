@@ -9,7 +9,7 @@ from astropy import units as u
 from ksw import KSW, Cosmology, Data, Shape
 from mpi4py import MPI
 
-from utils import SimConfig, load_data, load_single_data, save_data
+from utils import Config, load_data, load_single_data, save_data
 from utils.plots import plot_ksw_predictions, plot_cl_alm
 
 comm = MPI.COMM_WORLD
@@ -88,7 +88,7 @@ if __name__ == "__main__":
     logger = logging.getLogger(__name__)
     logger.name = f"heidelberg_estimator_{rank}"
 
-    s = SimConfig("settings/heidelberg.json", print_settings=(rank == 0))
+    s = Config("settings/heidelberg.json", print_settings=(rank == 0))
 
     s.fnl_min = -50
     s.fnl_max = 50

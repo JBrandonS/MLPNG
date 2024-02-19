@@ -17,9 +17,8 @@ from numpy.random import randint, uniform
 from pixell import curvedsky, enmap, lensing, reproject
 from scipy.interpolate import CubicSpline
 from tqdm.auto import tqdm
-
-from utils import SimConfig, load_data, save_data
-from utils.plots import plot_cl_map
+from utils import Config, load_data, save_data
+from utils.plots import plot_cl_map, plot_cl_alm, plot_patches
 
 
 def get_alm(alm, bl_div_cl, alpha_l, r, dr):
@@ -77,10 +76,11 @@ def cutSqPatches_pixell(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, alm, fnl, al
 
     if s.save_fullsky and (s.job_array_index is None or s.job_array_index == 1):
         hp.mollview(car_map.to_healpix(), min=-650.0, max=650, title=f"fnl = {fnl}")
-        plt.savefig(s.plot_dir + "/" + s.base_name + "_" + str(fnl) + "_fullsky.png")
+        moll_path = os.join(s.plot_dir, s.base_name + f"_{fnl}_fullsky.png")
+        plt.savefig(moll_path)
 
-        #     This code seems to randomly crash within the curvedsky.map2alm call
-        plot_cl_map(car_map, fs_wcs, s, c_ells=c_ells, save_name=f"{s.name}-{fnl}-pfs")
+        map_path = os.join(s.plot_dir, s.base_name + f"_{fnl}_pfs.fits")
+        plot_cl_map(car_map, fs_wcs, plot_camb=True, c_ells=c_ells, save_file=map_path)
 
     patches = []
     for i in range(s.npatches):
@@ -95,7 +95,7 @@ def interpolate_ells(func, ells_sparse, ls, axis=1):
     return CubicSpline(ells_sparse, func, axis)(ls)
 
 
-def generate_almngs():
+def generate_almngs(plot=True):
     """This code completely calculates, and saves, the alms and almngs."""
     A = (3 / 5) ** 2 * 2 * np.pi**2 * s.cosmo_params["As"]
     delta_phi = (tr_k) ** ((s.cosmo_params["ns"] - 1)) / (tr_k**3)
@@ -162,6 +162,15 @@ def generate_almngs():
     sdata["almng"] = sim_data
     if s.job_array_index is None or s.job_array_index == 1:
         sdata["settings"] = s.settings
+
+        if plot:
+            i, j = np.random.randint(s.nsims), np.random.randint(s.npol)
+            alm_plot = os.path.join(s.plot_dir, s.base_name + f"_alm[{i},{j}].png")
+            almng_plot = os.path.join(s.plot_dir, s.base_name + f"_almng[{i},{j}].png")
+
+            plot_cl_alm(alms[i, j], save_file=alm_plot, plot_camb=True, c_ells=c_ells)
+            plot_cl_alm(sim_data[i, j], save_file=almng_plot, plot_camb=True, c_ells=c_ells)
+
 
     save_data(s.alm_file_nc, sdata)
     os.replace(s.alm_file_nc, s.alm_file_partial)
@@ -242,7 +251,7 @@ if __name__ == "__main__":
     )
     logger = logging.getLogger(__name__)
 
-    s = SimConfig(sys.argv[1])
+    s = Config(sys.argv[1])
 
     # here we setup camb since it is needed for the sims in both the alm generation
     # and patch generation
@@ -282,9 +291,6 @@ if __name__ == "__main__":
         logger.info("Generating new alms")
         ldata = generate_almngs()
         alm_file = s.alm_file_partial
-
-    # TODO remove this, it is just for testing
-    # exit()
 
     alms = ldata["alm"]
     almngs = ldata["almng"]
@@ -341,6 +347,11 @@ if __name__ == "__main__":
     # only save 1 copy of the settings
     if s.job_array_index is None or s.job_array_index == 1:
         sdata["settings"] = s.settings
+
+        plot_file = os.path.join(s.plot_dir, s.base_name + "_patches.png")
+        plot_patches(patches, 10, save_file=plot_file)
+
+
 
     # remove the partial file if it exists
     if os.path.isfile(s.data_file_nc):
