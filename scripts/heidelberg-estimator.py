@@ -9,21 +9,21 @@ from astropy import units as u
 from ksw import KSW, Cosmology, Data, Shape
 from mpi4py import MPI
 
-from utils import SimConfig, load_data, load_single_data, save_data 
+from utils import SimConfig, load_data, load_single_data, save_data
 from utils.plots import plot_ksw_predictions, plot_cl_alm
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
 # fix healpy logging because we will get a lot of info
-logging.getLogger('healpy').setLevel(logging.WARNING)
+logging.getLogger("healpy").setLevel(logging.WARNING)
 
 # remove astropy warning about verbose that I can't change
-logging.getLogger('astropy').setLevel(logging.ERROR)
-
-fnls = []
+logging.getLogger("astropy").setLevel(logging.ERROR)
 
 def alm_loader(str_idx):
+    global fnls
+
     idx = str_idx.zfill(4)
     t_scale = 2.7255 * 10 ** (6)
 
@@ -37,10 +37,9 @@ def alm_loader(str_idx):
     alm_h_nl = remove_mono_dipole(alm_heidelberg_nl)
 
     # rng = np.random.default_rng()
-    fnl = np.random.uniform(-50, 50)
-    fnls.append(fnl)
+    fnl = fnls[int(idx)]
     logging.info("sending fnl: %s", fnl)
-    return (alm_h_l + fnl * alm_h_nl)*t_scale
+    return (alm_h_l + fnl * alm_h_nl) * t_scale
 
     # """Loads in a single alm given a int in string form. Used inside the KSW code."""
     # idx = int(str_idx)
@@ -54,6 +53,12 @@ def alm_loader(str_idx):
 
     # return alm + fnl * almng
 
+
+def alm_step_loader(idx):
+    # needs a gaussian realization of signal + noise
+    return data.compute_alm_sim(s.lensing)
+
+
 def remove_mono_dipole(alm):
     """
     Remove the monopole and dipole terms from the alms.
@@ -64,13 +69,15 @@ def remove_mono_dipole(alm):
     alm[hp.Alm.getidx(lmax, 1, 1)] = 0.0  # Remove dipole
     return alm
 
+
 def compute_icov_ell(N, b):
     S_ell = cosmo._camb_data.get_cmb_power_spectra(
         cosmo.camb_params, s.lmax, ["total"], "muK", True
     )["total"][:, 0]
     b_inv = 1 / b
     return (1 / (S_ell + b_inv * N * b_inv))[None, :]
-    
+
+
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO if rank == 0 else logging.ERROR,
@@ -82,6 +89,10 @@ if __name__ == "__main__":
     logger.name = f"heidelberg_estimator_{rank}"
 
     s = SimConfig("settings/heidelberg.json", print_settings=(rank == 0))
+
+    s.fnl_min = -50
+    s.fnl_max = 50
+    fnls = np.random.uniform(s.fnl_min, s.fnl_max, s.total_sims)
 
     # init camb and setup the reduced bispecturm to local
     logger.info("Running camb")
@@ -102,6 +113,7 @@ if __name__ == "__main__":
 
     # generate our beam functioned based on noise
     beam_width_rad = 0 if s.disable_noise else s.beam_width.to_value(u.radian)
+
     def beam(alm):
         return hp.sphtfunc.smoothalm(alm, fwhm=beam_width_rad, inplace=False)
 
@@ -114,18 +126,12 @@ if __name__ == "__main__":
         precision="double" if s.double_precision else "single",
     )
 
-    # need a list of str arguments to pass into the alm_loader
     alm_strs = np.arange(1, s.total_sims).astype(str)
-    # we dont need to step through all the alms if we have more than 100
-    alm_strs_i = np.arange(1, 1000) if s.total_sims > 1000 else alm_strs
+    alm_step_strs = np.arange(1, 100) if s.total_sims > 100 else alm_strs
 
-    def alm_step_loader(idx):
-        # needs a gaussian realization of signal + noise
-        return data.compute_alm_sim(s.lensing)
-
-    logger.debug("Running KSW step")
-    ksw.step_batch(alm_step_loader, alm_strs_i, comm, (rank == 0))
-    logger.debug("Done with KSW step")
+    logger.info("Running KSW step")
+    ksw.step_batch(alm_step_loader, alm_step_strs, comm)
+    logger.info("Done with KSW step")
 
     logger.info("Computing estimates")
     fisher = ksw.compute_fisher()
@@ -140,5 +146,20 @@ if __name__ == "__main__":
 
     logger.info("Finished %s!", rank)
 
-    plot_ksw_predictions(fnls, estimates, fisher, os.path.join(s.plot_dir, "ksw_predictions.png"))
-    plot_cl_alm(alm_loader(1), s, save_name="heidelberg_alm", save=True)
+    if rank == 0:
+        fnls = np.array(fnls[alm_strs.astype(int)])
+
+        pred_file = os.path.join(s.plot_dir, "ksw_heidelberg_predictions.png")
+        plot_ksw_predictions(fnls, estimates, fisher, save_file=pred_file)
+
+        cl_file = os.path.join(s.plot_dir, "heidelberg_cl.png")
+        c_ells = data.cosmology.c_ell["unlensed_scalar"]
+        plot_cl_alm(
+            alm_loader("1"),
+            save_file=cl_file,
+            plot_camb=True,
+            c_ells=c_ells,
+            plot_camb_noise=True,
+            noise_scale_tt=s.noise_scale_tt,
+            beam_width=s.beam_width
+        )

@@ -4,52 +4,55 @@ import seaborn as sns
 import pandas as pd
 
 from sklearn.metrics import r2_score
+import healpy as hp
 
-
-def save_plt(plot_dir, name):
-    file = f"{plot_dir}/{name}.png"
-    plt.savefig(file)
+from astropy import units as u
 
 
 def plot_cl(
     cl,
-    settings,
-    plt_func=plt.semilogy,
-    plt_camb=True,
-    plot_noise=True,
-    c_ells=None,
+    lmax,
     title="Angular power spectrum from cl",
-    save_name=None,
-    save=True,
+    save_file=None,
+    plot_func=plt.semilogy,
+    plot_camb=False,
+    c_ells=None,
+    plot_camb_noise=False,
+    noise_scale_tt=None,
+    beam_width=None,
 ):
-    from astropy import units as u
-
-    lmax = settings.lmax
-    ells = settings.ells[2:lmax]
+    ells = np.arange(2, lmax)
     scale = ells * (ells + 1) / 2 / np.pi
 
-    plt.figure()
-    plt_func(ells, scale * cl[2:lmax], label="data")
+    plot_func(ells, scale * cl[2:lmax], label="data")
 
-    if plt_camb:
+    if plot_camb:
+        if c_ells is None:
+            raise ValueError("Need to provide c_ells if plt_camb is True.")
+
         camb_cl = c_ells["c_ell"][2:lmax][:, 0]
 
-        if plot_noise:
-            nstt = settings.noise_scale_tt.to_value(u.radian)
-            bwr = settings.beam_width.to_value(u.radian)
+        if plot_camb_noise:
+            if noise_scale_tt is None or beam_width is None:
+                raise ValueError(
+                    "Need to provide noise_scale_tt and beam_width if plt_camb_noise is True."
+                )
+
+            nstt = noise_scale_tt.to_value(u.radian)
+            bwr = beam_width.to_value(u.radian)
             noise_ell_b = np.array(
                 [
                     nstt**2 * np.exp((l * (l + 1) * bwr**2) / (8 * np.log(2)))
-                    for l in range(settings.nell)
+                    for l in range(len(ells) + 1)
                 ]
             )
 
             camb_cls_n = camb_cl + noise_ell_b[2:lmax]
             camb_n_inner_plt = scale * camb_cls_n
-            plt_func(ells, camb_n_inner_plt, label="camb + noise")
+            plot_func(ells, camb_n_inner_plt, label="camb + noise")
 
         camb_inner_plt = scale * camb_cl
-        plt_func(ells, camb_inner_plt, label="camb")
+        plot_func(ells, camb_inner_plt, label="camb")
 
     plt.xlabel(r"$\ell$")
     plt.ylabel(r"$\ell(\ell+1)/2\pi\;C_{\ell}$")
@@ -57,53 +60,78 @@ def plot_cl(
     plt.legend()
     plt.grid()
 
-    if save:
-        save_plt(settings.plot_dir, save_name)
-
-    plt.show()
-    plt.close()
+    if save_file is not None:
+        plt.savefig(save_file)
 
 
 def plot_cl_alm(
     alm,
-    settings,
-    plt_func=plt.semilogy,
-    plt_camb=True,
-    plt_noise=True,
-    c_ells=None,
     title="Angular power spectrum from alm",
-    save_name="alm",
-    save=True,
+    save_file=None,
+    plot_func=plt.semilogy,
+    plot_camb=False,
+    c_ells=None,
+    plot_camb_noise=False,
+    noise_scale_tt=None,
+    beam_width=None,
 ):
     from pixell import curvedsky
 
     cl = curvedsky.alm2cl(alm)
-    plot_cl(cl, settings, plt_func, plt_camb, plt_noise, c_ells, title, save_name, save)
+    lmax = hp.Alm.getlmax(len(alm))
+    plot_cl(
+        cl,
+        lmax,
+        title,
+        save_file,
+        plot_func,
+        plot_camb,
+        c_ells,
+        plot_camb_noise,
+        noise_scale_tt,
+        beam_width,
+    )
 
 
 def plot_cl_map(
     map,
     wcs,
-    settings,
-    plt_func=plt.semilogy,
-    plt_camb=True,
-    plt_noise=True,
-    c_ells=None,
     title="Angular power spectrum from map",
-    save_name="cl",
-    save=True,
+    save_file=None,
+    plot_func=plt.semilogy,
+    plot_camb=False,
+    c_ells=None,
+    plot_camb_noise=False,
+    noise_scale_tt=None,
+    beam_width=None,
 ):
     from pixell import enmap, curvedsky
 
     tmap = enmap.ndmap(map, wcs)
-    almsd = curvedsky.map2alm(tmap, lmax=settings.lmax)
-    cl = curvedsky.alm2cl(almsd)
+    lmax = tmap.lmax()
+    alm = curvedsky.map2alm(tmap, lmax=lmax)
+    cl = curvedsky.alm2cl(alm)
 
-    plot_cl(cl, settings, plt_func, plt_camb, plt_noise, c_ells, title, save_name, save)
+    plot_cl(
+        cl,
+        lmax,
+        title,
+        save_file,
+        plot_func,
+        plot_camb,
+        c_ells,
+        plot_camb_noise,
+        noise_scale_tt,
+        beam_width,
+    )
 
-def plot_ksw_predictions(fnls, preds, save_file=None, fisher=None):
+
+def plot_ksw_predictions(fnls, preds, fisher=None, save_file=None):
     df = pd.DataFrame(
-        {"True Labels": fnls.flatten(), "Predicted Labels": preds.flatten()}
+        {
+            "True Labels": np.array(fnls).flatten(),
+            "Predicted Labels": np.array(preds).flatten(),
+        }
     )
 
     # Create a scatter plot with seaborn
