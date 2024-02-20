@@ -126,7 +126,7 @@ if __name__ == "__main__":
         precision="double" if s.double_precision else "single",
     )
 
-    alm_strs = np.arange(1, s.total_sims).astype(str)
+    alm_strs = np.arange(1, s.total_sims+1).astype(str)
     alm_step_strs = np.arange(1, 100) if s.total_sims > 100 else alm_strs
 
     logger.info("Running KSW step")
