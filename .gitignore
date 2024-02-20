@@ -1,13 +1,12 @@
 # Dirs
 __pycache__/
+
 data
 data-shared
-.*/
-logs/
-wandb/
-scraped/
+logs
 
-# Files
-*.prof
+.*
+
+# compiled files
 *.out
-*.hdf5
+*.pyc

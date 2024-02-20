@@ -73,7 +73,6 @@ class PatchLoader(Sequence):
         dataset=None,
         shape=(None,),
         length=0,
-        assert_cardinality=True,
         num_replicas="auto",
     ):
         # setup some attrributes
@@ -84,7 +83,6 @@ class PatchLoader(Sequence):
         self.shuffle_buffer = shuffle_buffer
         self.cache = cache
         self.normalize = normalize
-        self.assert_cardinality = assert_cardinality
         self.seed = seed if seed is not None else default_rng().integers(0, 2**32 - 1)
         self.dtype = dtype
         self.shape = shape
@@ -175,8 +173,7 @@ class PatchLoader(Sequence):
         tf.data.Dataset: The processed subset of the dataset, ready for training or evaluation.
         """
         data = self._ds.skip(start).take(step)
-        # if self.assert_cardinality:
-        #     data = data.apply(assert_cardinality(step))
+        data = data.apply(assert_cardinality(step))
         if self.normalize:
             data = data.map(self._normalize, num_parallel_calls=AUTOTUNE)
         if self.cache:
@@ -293,6 +290,17 @@ class AlmLoader(PatchLoader):
         data = np.zeros(self.shape, dtype=self.dtype)
         data[:, :, 0] = np.real(alm_complete[self.idx_map]) + self.pos_enc
         data[:, :, 1] = np.imag(alm_complete[self.idx_map]) + self.pos_enc
+
+        # # trying sparse tensor
+        # # Find the indices where the tensor is not zero
+        # indices = tf.where(tf.not_equal(data, 0))
+        # # Gather the non-zero values
+        # values = tf.gather_nd(data, indices)
+        # # Get the shape of the original tensor
+        # shape = tf.shape(data, out_type=tf.int64)
+        # # Create the sparse tensor
+        # data = tf.SparseTensor(indices, values, shape)
+
         return data, fnl
 
 

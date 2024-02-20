@@ -1,6 +1,8 @@
 import time
+from sympy import I
 
 import tensorflow as tf
+from tensorflow.config import list_physical_devices
 from tensorflow.keras.callbacks import Callback
 from tensorflow.keras.optimizers.schedules import LearningRateSchedule
 
@@ -53,11 +55,10 @@ class WarmupLearningRate(LearningRateSchedule):
         warmup_steps (int): The number of steps over which the learning rate increases.
         warmup_scale (float): The scale factor for the learning rate increase during the warm-up period.
         warmup_scale_steps (int): The number of steps over which the warm-up scale is applied.
-        base_learning_rate (float): The base learning rate after the warm-up period.
+        warmed_learning_rate (float): The learning rate after the warm-up period.
         decay_steps (int): The number of steps over which the learning rate decays.
         decay_rate (float): The decay rate for the learning rate after the warm-up period.
         staircase (bool): If True, the learning rate changes in discrete steps, otherwise, it changes smoothly.
-        dtype (tf.DType): The data type for the learning rate and steps.
 
     Methods:
         __call__(step): Returns the learning rate for the given step.
@@ -70,46 +71,50 @@ class WarmupLearningRate(LearningRateSchedule):
         warmup_steps,
         warmup_scale,
         warmup_scale_steps,
-        base_learning_rate,
+        warmed_learning_rate,
         decay_steps,
         decay_rate,
         staircase=True,
-        dtype=tf.float32,
     ):
-        self.warmup_learning_rate = warmup_learning_rate
-        self.warmup_steps = int(warmup_steps)
-        self.warmup_scale = warmup_scale
-        self.warmup_scale_steps = warmup_scale_steps
+        # casting everything because tf was yelling about it
+        self.warmup_learning_rate = tf.cast(warmup_learning_rate, tf.float64)
+        self.warmup_steps = tf.cast(warmup_steps, tf.int64)
+        self.warmup_scale = tf.cast(warmup_scale, tf.float64)
+        self.warmup_scale_steps = tf.cast(warmup_scale_steps, tf.int64)
 
         # these should follow the ExponentialDecay function
-        self.base_learning_rate = base_learning_rate
-        self.decay_steps = int(decay_steps)
-        self.decay_rate = decay_rate
+        self.warmed_learning_rate = tf.cast(warmed_learning_rate, tf.float64)
+        self.decay_steps = tf.cast(decay_steps, tf.int64)
+        self.decay_rate = tf.cast(decay_rate, tf.float64)
         self.staircase = staircase
 
-        self.dtype = dtype
+        max_warmup = warmup_learning_rate * (
+            1 + warmup_scale * (warmup_steps / warmup_scale_steps)
+        )
+        tf.get_logger().info(
+            f"WarmupLearningRate: Warmup Range: {warmup_learning_rate} -> {max_warmup}"
+        )
 
     @tf.function
     def __call__(self, step):
         def warmup_fn():
             """Applies warm-up to the learning rate."""
-            p = 1 + step / self.warmup_scale_steps
-            p = tf.cast(p, self.dtype)
+            p = step / self.warmup_scale_steps
+            # p = tf.cast(p, self.dtype)
             if self.staircase:
                 p = tf.floor(p)
             scale = tf.multiply(self.warmup_scale, p)
-            return tf.multiply(self.warmup_learning_rate, 1 + scale)
+            return tf.multiply(self.warmup_learning_rate, 1.0 + scale)
 
         def decay_fn():
             """Applies exponential decay to the learning rate."""
             p = (step - self.warmup_steps) / (self.decay_steps)
-            p = tf.cast(p, self.dtype)
+            # p = tf.cast(p, self.dtype)
             if self.staircase:
                 p = tf.floor(p)
             scale = tf.pow(self.decay_rate, p)
-            return tf.multiply(self.base_learning_rate, scale)
-        
-        # tf.print("LR Rate:", step, "<", self.warmup_steps, "(", warmup_fn(), " ", decay_fn(), ")")
+            return tf.multiply(self.warmed_learning_rate, scale)
+
         return tf.cond(step < self.warmup_steps, warmup_fn, decay_fn)
 
     def get_config(self):
@@ -118,11 +123,10 @@ class WarmupLearningRate(LearningRateSchedule):
             "warmup_steps": self.warmup_steps,
             "warmup_scale": self.warmup_scale,
             "warmup_scale_steps": self.warmup_scale_steps,
-            "base_learning_rate": self.base_learning_rate,
+            "warmed_learning_rate": self.warmed_learning_rate,
             "decay_steps": self.decay_steps,
             "decay_rate": self.decay_rate,
             "staircase": self.staircase,
-            "dtype": self.dtype.name,
         }
 
 
@@ -164,9 +168,9 @@ class TimedLoggingCallback(Callback):
         hours, minutes = divmod(minutes, 60)
 
         if hours > 0:
-            return f"{hours:>2}:{minutes:02}:{seconds:02}"
+            return f"{hours}:{minutes:02}:{seconds:02}"
         elif minutes > 0:
-            return f"{minutes:>2}:{seconds:02}"
+            return f"{minutes}:{seconds:02}"
         else:
             return f"{seconds:>2}s"
 
@@ -179,9 +183,7 @@ class TimedLoggingCallback(Callback):
     def on_train_begin(self, logs=None):
         tf.print("Starting training...")
         self.last_print_time = time.time()
-        self.num_replicas = (
-            len(tf.config.experimental.list_physical_devices("GPU")) or 1
-        )
+        self.num_replicas = len(list_physical_devices("GPU")) or 1
 
     def on_train_end(self, logs=None):
         tf.print("Training complete.")
@@ -190,9 +192,9 @@ class TimedLoggingCallback(Callback):
         self.batch_start_time = time.time()
 
     def on_train_batch_end(self, batch, logs=None):
-        if batch == 0: # skip the first batch
+        if batch == 0:  # skip the first batch
             return
-        
+
         current_time = time.time()
         if current_time - self.last_print_time >= self.print_frequency:
             steps = self.params["steps"]
@@ -216,10 +218,10 @@ class TimedLoggingCallback(Callback):
             self.last_print_time = current_time
 
     def on_epoch_begin(self, epoch, logs=None):
-        self.epoch_start_time = time.time()
+        self.last_print_time = self.epoch_start_time = time.time()
 
     def on_epoch_end(self, epoch, logs=None):
-        self.last_print_time = current_time = time.time()
+        current_time = time.time()
         elapsed_time = current_time - self.epoch_start_time
         elapsed_time = self._get_time_str(elapsed_time)
         metrics_log = self._get_log_line(logs)
