@@ -10,9 +10,11 @@ from astropy import units as u
 
 
 def plot_patches(patches, n_plots, title="Patches", save_file=None):
-    nrows = int(np.ceil(n / float(n_plots)))
-    fig, axes = plt.subplots(nrows, n_plots, figsize=(20, 20))
     patches = np.random.choice(patches, n_plots, replace=False)
+
+    nrows = int(np.ceil(n_plots / 4))
+    ncols = min(n_plots, 4) 
+    fig, axes = plt.subplots(nrows, n_plots, figsize=(20, 20))
 
     for idx, patch in enumerate(patches):
         row = idx // n_plots
@@ -28,7 +30,7 @@ def plot_patches(patches, n_plots, title="Patches", save_file=None):
         ax.axis("off")
 
     # Remove empty subplots
-    for idx in range(n, nrows * n_plots):
+    for idx in range(0, nrows * ncols):
         fig.delaxes(axes.flatten()[idx])
 
     plt.title(title)
@@ -73,11 +75,11 @@ def plot_cl(
             noise_ell_b = np.array(
                 [
                     nstt**2 * np.exp((l * (l + 1) * bwr**2) / (8 * np.log(2)))
-                    for l in range(len(ells) + 1)
+                    for l in range(2, lmax + 1)
                 ]
             )
 
-            camb_cls_n = camb_cl + noise_ell_b[2:lmax]
+            camb_cls_n = camb_cl + noise_ell_b
             camb_n_inner_plt = scale * camb_cls_n
             plot_func(ells, camb_n_inner_plt, label="camb + noise")
 

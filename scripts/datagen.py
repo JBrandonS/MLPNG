@@ -95,7 +95,7 @@ def interpolate_ells(func, ells_sparse, ls, axis=1):
     return CubicSpline(ells_sparse, func, axis)(ls)
 
 
-def generate_almngs(plot=True):
+def generate_almngs(plot=False):
     """This code completely calculates, and saves, the alms and almngs."""
     A = (3 / 5) ** 2 * 2 * np.pi**2 * s.cosmo_params["As"]
     delta_phi = (tr_k) ** ((s.cosmo_params["ns"] - 1)) / (tr_k**3)
@@ -168,9 +168,10 @@ def generate_almngs(plot=True):
             alm_plot = os.path.join(s.plot_dir, s.base_name + f"_alm[{i},{j}].png")
             almng_plot = os.path.join(s.plot_dir, s.base_name + f"_almng[{i},{j}].png")
 
+            logger.info("Plotting alm and almng")
             plot_cl_alm(alms[i, j], save_file=alm_plot, plot_camb=True, c_ells=c_ells)
-            plot_cl_alm(sim_data[i, j], save_file=almng_plot, plot_camb=True, c_ells=c_ells)
-
+            # Don't add camb to the ng plots since they are a much small scale
+            plot_cl_alm(sim_data[i, j], save_file=almng_plot, plot_camb=False)
 
     save_data(s.alm_file_nc, sdata)
     os.replace(s.alm_file_nc, s.alm_file_partial)
@@ -243,8 +244,9 @@ if __name__ == "__main__":
     # ---
 
     # %%
+
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         datefmt="%d-%b-%y %H:%M:%S",
         handlers=[logging.StreamHandler(sys.stdout)],
@@ -289,7 +291,7 @@ if __name__ == "__main__":
             os.remove(s.alm_file_nc)
 
         logger.info("Generating new alms")
-        ldata = generate_almngs()
+        ldata = generate_almngs(plot=True if s.job_array_index == 1 else False)
         alm_file = s.alm_file_partial
 
     alms = ldata["alm"]
@@ -345,13 +347,11 @@ if __name__ == "__main__":
     sdata["patches"] = np.array(patches)
 
     # only save 1 copy of the settings
-    if s.job_array_index is None or s.job_array_index == 1:
+    if main_run:
         sdata["settings"] = s.settings
 
         plot_file = os.path.join(s.plot_dir, s.base_name + "_patches.png")
         plot_patches(patches, 10, save_file=plot_file)
-
-
 
     # remove the partial file if it exists
     if os.path.isfile(s.data_file_nc):
