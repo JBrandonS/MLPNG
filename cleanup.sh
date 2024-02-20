@@ -16,8 +16,8 @@ if [[ "$1" == "--clean-incomplete" ]]; then
     CLEAN_INCOMPLETE=1
 fi
 
-if [[ ! $(squeue --me -h -n VSC-jupyter) && -f .VSC-jupyter.out ]]; then
-    rm .VSC-jupyter.out
+if [[ ! $(squeue --me -h -n jupyter) && -f .vscj.out ]]; then
+    rm .vscj.out
 fi
 
 rm -rvf logs/datagen/*
