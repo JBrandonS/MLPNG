@@ -45,7 +45,7 @@ class BurnInLearningRate(LearningRateSchedule):
 
 class WarmupLearningRate(LearningRateSchedule):
     """
-    A learning rate schedule that starts with a warm-up period where the learning rate increases, 
+    A learning rate schedule that starts with a warm-up period where the learning rate increases,
     followed by a period where the learning rate decays.
 
     Attributes:
@@ -63,6 +63,7 @@ class WarmupLearningRate(LearningRateSchedule):
         __call__(step): Returns the learning rate for the given step.
         get_config(): Returns a dictionary containing the configuration of the learning rate schedule.
     """
+
     def __init__(
         self,
         warmup_learning_rate,
@@ -88,6 +89,7 @@ class WarmupLearningRate(LearningRateSchedule):
 
         self.dtype = dtype
 
+    @tf.function
     def __call__(self, step):
         def warmup_fn():
             """Applies warm-up to the learning rate."""
@@ -106,7 +108,8 @@ class WarmupLearningRate(LearningRateSchedule):
                 p = tf.floor(p)
             scale = tf.pow(self.decay_rate, p)
             return tf.multiply(self.base_learning_rate, scale)
-
+        
+        # tf.print("LR Rate:", step, "<", self.warmup_steps, "(", warmup_fn(), " ", decay_fn(), ")")
         return tf.cond(step < self.warmup_steps, warmup_fn, decay_fn)
 
     def get_config(self):
@@ -160,17 +163,12 @@ class TimedLoggingCallback(Callback):
         minutes, seconds = divmod(int(seconds), 60)
         hours, minutes = divmod(minutes, 60)
 
-        depth = 2 if hours > 0 else 1 if minutes > 0 else 0
-        if depth > self.time_depth:
-            self.time_depth = depth
-
-        if self.time_depth == 0:
-            ret_str = f"{seconds}s"
-        elif self.time_depth == 1:
-            ret_str = f"{minutes:02}:{seconds:02}"
-        elif self.time_depth == 2:
-            ret_str = f"{hours:02}:{minutes:02}:{seconds:02}"
-        return ret_str
+        if hours > 0:
+            return f"{hours:>2}:{minutes:02}:{seconds:02}"
+        elif minutes > 0:
+            return f"{minutes:>2}:{seconds:02}"
+        else:
+            return f"{seconds:>2}s"
 
     @staticmethod
     def _get_log_line(logs=None):
@@ -192,11 +190,18 @@ class TimedLoggingCallback(Callback):
         self.batch_start_time = time.time()
 
     def on_train_batch_end(self, batch, logs=None):
+        if batch == 0: # skip the first batch
+            return
+        
         current_time = time.time()
         if current_time - self.last_print_time >= self.print_frequency:
             steps = self.params["steps"]
 
-            eta = (steps - batch) * (current_time - self.batch_start_time)
+            eta = (
+                (steps - batch)
+                * (current_time - self.batch_start_time)
+                / self.num_replicas
+            )
             eta = self._get_time_str(eta)
 
             progress = batch / steps
@@ -212,9 +217,6 @@ class TimedLoggingCallback(Callback):
 
     def on_epoch_begin(self, epoch, logs=None):
         self.epoch_start_time = time.time()
-
-        # reset the time depth for the new epoch
-        self.time_depth = 0
 
     def on_epoch_end(self, epoch, logs=None):
         self.last_print_time = current_time = time.time()

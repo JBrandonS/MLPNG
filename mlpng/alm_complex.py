@@ -11,21 +11,34 @@ from healpy.sphtfunc import Alm, alm2map
 
 import tensorflow as tf
 from tensorflow.keras import Input, Model
-from tensorflow.keras.callbacks import (EarlyStopping, ModelCheckpoint, ReduceLROnPlateau,
-                             TensorBoard)
-from tensorflow.keras.layers import (Activation, Concatenate, Conv1D, Dense, Dropout,
-                          Flatten, Lambda)
+from tensorflow.keras.callbacks import (
+    EarlyStopping,
+    ModelCheckpoint,
+    ReduceLROnPlateau,
+    TensorBoard,
+)
+from tensorflow.keras.layers import (
+    Activation,
+    Concatenate,
+    Conv1D,
+    Dense,
+    Dropout,
+    Flatten,
+    Lambda,
+)
 from tensorflow.keras.optimizers.legacy import Adam
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.regularizers import l2
 
-from utils import SimConfig
-from utils.tf import TimedLoggingCallback, dice_coefficient_loss
+from utils import Config
+from utils.tf import dice_coefficient_loss
+from utils.tf.callbacks import TimedLoggingCallback
 from utils.tf.plots import plot_histogram, plot_metrics, plot_predictions
 
 from utils.data import AlmLoaderTFDS
 
 import cvnn.layers as complex_layers
+
 
 def alm_model(
     inputs,
@@ -49,16 +62,27 @@ def alm_model(
     # imag_layer = Activation('relu')(imag_layer)
     # imag_out_layer = Dropout(dropout_rate)(imag_layer)
 
-    layer = complex_layers.ComplexConv1D(16, 9, padding='valid', activation='cart_relu')(inputs)
-    layer = complex_layers.ComplexConv1D(32, 9, padding='valid', activation='cart_relu')(layer)
-    layer = complex_layers.ComplexConv1D(64, 9, padding='valid', activation='cart_relu')(layer)
+    layer = complex_layers.ComplexConv1D(
+        16, 9, padding="valid", activation="cart_relu"
+    )(inputs)
+    layer = complex_layers.ComplexConv1D(
+        32, 9, padding="valid", activation="cart_relu"
+    )(layer)
+    layer = complex_layers.ComplexConv1D(
+        64, 9, padding="valid", activation="cart_relu"
+    )(layer)
     layer = complex_layers.ComplexAvgPooling1D(2)(layer)
 
-    layer = complex_layers.ComplexConv1D(128, 9, padding='valid', activation='cart_relu')(layer)
-    layer = complex_layers.ComplexConv1D(64, 9, padding='valid', activation='cart_relu')(layer)
-    layer = complex_layers.ComplexConv1D(32, 9, padding='valid', activation='cart_relu')(layer)
+    layer = complex_layers.ComplexConv1D(
+        128, 9, padding="valid", activation="cart_relu"
+    )(layer)
+    layer = complex_layers.ComplexConv1D(
+        64, 9, padding="valid", activation="cart_relu"
+    )(layer)
+    layer = complex_layers.ComplexConv1D(
+        32, 9, padding="valid", activation="cart_relu"
+    )(layer)
     layer = complex_layers.ComplexAvgPooling1D(2)(layer)
-
 
     # Concatenate the real and imaginary parts
     # out_layer = Concatenate()([real_out_layer, imag_out_layer])
@@ -66,7 +90,7 @@ def alm_model(
     layer = complex_layers.ComplexFlatten()(layer)
     layer = complex_layers.ComplexDense(512)(layer)
     layer = complex_layers.ComplexDense(256)(layer)
-    layer = complex_layers.ComplexDense(1, activation='convert_to_real_with_abs')(layer)
+    layer = complex_layers.ComplexDense(1, activation="convert_to_real_with_abs")(layer)
 
     model = Model(inputs=inputs, outputs=layer, name=name)
 
@@ -82,7 +106,7 @@ def alm_model(
 
 if __name__ == "__main__":
     config_file = sys.argv[1]
-    s = SimConfig(config_file)
+    s = Config(config_file)
 
     MAX_EPOCHS = 300
     BATCH_SIZE = 32
@@ -170,9 +194,7 @@ if __name__ == "__main__":
             # learning_rate=model_settings["initial_learning_rate"],
         )
 
-        model = alm_model(
-            input, opt, metrics, **model_settings
-        )
+        model = alm_model(input, opt, metrics, **model_settings)
 
     # Lets load our data
     tfds_filepath = s.alm_file_complete.replace(".hdf5", ".tfds")
@@ -189,7 +211,7 @@ if __name__ == "__main__":
         validation_data=val_dataset,
         epochs=MAX_EPOCHS,
         callbacks=callbacks,
-        verbose=1, # since we are using the custom logger
+        verbose=1,  # since we are using the custom logger
     )
 
     # Lets plot the predictions from the unseen test set
@@ -197,6 +219,12 @@ if __name__ == "__main__":
     y_test = np.concatenate([y.numpy() for _, y in test_dataset])
 
     # Plot the loss curves and metrics
-    plot_metrics(history, f"{s.plot_dir}/{model_settings['name']}-metrics.png", metrics=["loss"] + metrics)
+    plot_metrics(
+        history,
+        f"{s.plot_dir}/{model_settings['name']}-metrics.png",
+        metrics=["loss"] + metrics,
+    )
     plot_predictions(y_test, y_pred, f"{s.plot_dir}/{model_settings['name']}-preds.png")
-    plot_histogram(y_test, y_pred, f"{s.plot_dir}/{model_settings['name']}-histogram.png")
+    plot_histogram(
+        y_test, y_pred, f"{s.plot_dir}/{model_settings['name']}-histogram.png"
+    )

@@ -4,29 +4,39 @@ import pprint
 import sys
 import time
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
-os.environ["XLA_FLAGS"] = f"--xla_gpu_cuda_data_dir={os.environ['CUDA_HOME']}"
-
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.callbacks import (EarlyStopping, ModelCheckpoint,
-                                        ReduceLROnPlateau)
-from tensorflow.keras.layers import (Add, Attention, AveragePooling2D,
-                                     BatchNormalization, Concatenate, Conv2D,
-                                     Dense, Dropout, Flatten,
-                                     GlobalAveragePooling2D, Input,
-                                     MaxPooling2D, Multiply, RandomFlip,
-                                     SpatialDropout2D)
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+from tensorflow.keras.layers import (
+    Add,
+    Attention,
+    AveragePooling2D,
+    BatchNormalization,
+    Concatenate,
+    Conv2D,
+    Dense,
+    Dropout,
+    Flatten,
+    GlobalAveragePooling2D,
+    Input,
+    MaxPooling2D,
+    Multiply,
+    RandomFlip,
+    SpatialDropout2D,
+)
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers.legacy import Adam
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.regularizers import l2
-from utils import SimConfig, get_fisher
-from utils.data import DataLoader, TFDSDataLoader
-from utils.tf import TimedLoggingCallback, dice_coefficient_loss
-from utils.tf.layers import (ReflectionPadding2D, augmentation_layer,
-                             create_context_module, create_convolution_block)
+from utils import Config, get_fisher
+from utils.data import PatchLoader, TFDSLoader
+from utils.tf.callbacks import TimedLoggingCallback
+from utils.tf.layers import (
+    ReflectionPadding2D,
+    augmentation_layer,
+    create_context_module,
+    create_convolution_block,
+)
 from utils.tf.plots import plot_histogram, plot_metrics, plot_predictions
 
 
@@ -105,7 +115,7 @@ def dcnn_model(
         layer = SpatialDropout2D(dropout_rate)(layer)
 
     # FF network
-    
+
     # out_layer = GlobalAveragePooling2D()(layer)
     out_layer = Flatten()(layer)
     out_layer = Dense(1)(out_layer)
@@ -152,7 +162,7 @@ if __name__ == "__main__":
     # Get the config file from the command line
     # you can manually set it here if you want
     config_file = sys.argv[1]
-    s = SimConfig(config_file)
+    s = Config(config_file)
 
     MAX_EPOCHS = 300
 
@@ -264,12 +274,12 @@ if __name__ == "__main__":
     if os.path.exists(tfds_filepath):
         # This might have a small speedup, but it also might not
         # This WILL let us run on multinode which the hdf5 loader does not
-        data_loader = TFDSDataLoader(tfds_filepath, **data_loader_args)
+        data_loader = TFDSLoader(tfds_filepath, **data_loader_args)
     else:
         # load data as a python generator, directly from hdf5
         # This requires everything to be in the same python environment
         # aka, no multinode
-        data_loader = DataLoader(s.data_file_complete, **data_loader_args)
+        data_loader = PatchLoader(s.data_file_complete, **data_loader_args)
 
     # Just print some good info for the log
     print("TensorFlow version:", tf.__version__)

@@ -30,9 +30,9 @@ from keras.optimizers import Adam
 
 from tensorflow import pad
 
-from utils import SimConfig
+from utils import Config
 from utils.tf import TimedLoggingCallback
-from scripts.utils.data import PatchLoader
+from mlpng.utils.data import PatchLoader
 from utils.plots import plot_histogram, plot_metrics, plot_predictions
 
 from tensorflow.keras.callbacks import (
@@ -182,7 +182,7 @@ def UNET(
 
 
 if __name__ == "__main__":
-    s = SimConfig(sys.argv[1])
+    s = Config(sys.argv[1])
 
     MAX_EPOCHS = 100
     BATCH_SIZE = 32
@@ -247,7 +247,7 @@ if __name__ == "__main__":
     ]
 
     # enable wandb, set to false if not using
-    if True:
+    if False:
         import wandb
         from wandb.keras import WandbMetricsLogger, WandbModelCheckpoint
 
@@ -275,7 +275,7 @@ if __name__ == "__main__":
 
     pprint.PrettyPrinter(indent=2).pprint(model_settings | extra_info)
     model.summary()
-    
+
     # Finally, lets fit our model
     # we use the train and val sets here, so the model will not see the test set
     history = model.fit(

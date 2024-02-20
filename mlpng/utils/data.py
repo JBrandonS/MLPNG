@@ -175,8 +175,8 @@ class PatchLoader(Sequence):
         tf.data.Dataset: The processed subset of the dataset, ready for training or evaluation.
         """
         data = self._ds.skip(start).take(step)
-        if self.assert_cardinality:
-            data = data.apply(assert_cardinality(step))
+        # if self.assert_cardinality:
+        #     data = data.apply(assert_cardinality(step))
         if self.normalize:
             data = data.map(self._normalize, num_parallel_calls=AUTOTUNE)
         if self.cache:

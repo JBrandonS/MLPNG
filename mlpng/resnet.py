@@ -12,35 +12,55 @@ import pandas as pd
 import seaborn as sns
 import tensorflow as tf
 
-# os.environ["NCCL_DEBUG"] = "INFO"
-os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
-
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
-os.environ["XLA_FLAGS"] = f"--xla_gpu_cuda_data_dir={os.environ['CUDA_HOME']}"
-
 import numpy as np
 import tensorflow as tf
 from dataloaders import DataLoader
 from dataloaders.tfds import TFDSDataLoader
 from tensorflow.keras import Input, Model
 from tensorflow.keras.applications import ResNet50
-from tensorflow.keras.callbacks import (EarlyStopping, ModelCheckpoint, ReduceLROnPlateau,
-                             TensorBoard)
-from tensorflow.keras.layers import (Add, Attention, AveragePooling2D, BatchNormalization,
-                          Concatenate, Conv2D, Dense, Dropout, Flatten,
-                          GroupNormalization, Lambda, MaxPooling2D,
-                          MultiHeadAttention, Multiply, RandomFlip,
-                          RandomRotation, SeparableConv2D, SpatialDropout2D)
+from tensorflow.keras.callbacks import (
+    EarlyStopping,
+    ModelCheckpoint,
+    ReduceLROnPlateau,
+    TensorBoard,
+)
+from tensorflow.keras.layers import (
+    Add,
+    Attention,
+    AveragePooling2D,
+    BatchNormalization,
+    Concatenate,
+    Conv2D,
+    Dense,
+    Dropout,
+    Flatten,
+    GroupNormalization,
+    Lambda,
+    MaxPooling2D,
+    MultiHeadAttention,
+    Multiply,
+    RandomFlip,
+    RandomRotation,
+    SeparableConv2D,
+    SpatialDropout2D,
+)
 from tensorflow.keras.metrics import KLDivergence, RootMeanSquaredError
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import SGD, Adam
 from tensorflow.keras.optimizers.legacy import Adam
 from tensorflow.keras.optimizers.schedules import ExponentialDecay, LearningRateSchedule
 from tensorflow.keras.regularizers import l2
-from utils import SimConfig, get_fisher
-from utils.tf import TimedLoggingCallback, dice_coefficient_loss 
+from utils import Config, get_fisher
+from utils.tf import dice_coefficient_loss
+from utils.tf.callbacks import TimedLoggingCallback
+from utils.tf.layers import (
+    ReflectionPadding2D,
+    augmentation_layer,
+    create_context_module,
+    create_convolution_block,
+    rotation_layer,
+)
 from utils.tf.plots import plot_histogram, plot_metrics, plot_predictions
-from utils.tf.layers import (ReflectionPadding2D, create_context_module, create_convolution_block, rotation_layer, augmentation_layer)
 
 
 def resnet_model(
@@ -68,9 +88,11 @@ def resnet_model(
     depth = min(depth, int(max_depth))
 
     input_layer = augmentation_layer(flip, rotate, add_powers)(input_layer)
-    
+
     input_layer_rgb = Concatenate()([input_layer, input_layer, input_layer])
-    base_model = ResNet50(weights='imagenet', include_top=False, input_tensor=input_layer_rgb)
+    base_model = ResNet50(
+        weights="imagenet", include_top=False, input_tensor=input_layer_rgb
+    )
 
     # Make sure that the base_model is not trainable
     base_model.trainable = False
@@ -88,7 +110,7 @@ def resnet_model(
 
         if n_neurons < 64:
             # create last layer with 1 neuron, and no activation then stop
-            out_layer = Dense(1, activation='sigmoid')(out_layer)
+            out_layer = Dense(1, activation="sigmoid")(out_layer)
             break
         else:
             out_layer = Dense(
@@ -121,7 +143,7 @@ if __name__ == "__main__":
     # Get the config file from the command line
     # you can manually set it here if you want
     config_file = sys.argv[1]
-    s = SimConfig(config_file)
+    s = Config(config_file)
 
     MAX_EPOCHS = 300
 
@@ -196,11 +218,11 @@ if __name__ == "__main__":
             save_best_only=True,
             mode="auto",
         ),
-        TimedLoggingCallback(), # custom logger to work a little better with text logs
+        TimedLoggingCallback(),  # custom logger to work a little better with text logs
     ]
 
     # enable wandb, set to false if not using
-    if True:
+    if False:
         import wandb
         from wandb.keras import WandbMetricsLogger, WandbModelCheckpoint
 
@@ -228,9 +250,7 @@ if __name__ == "__main__":
             learning_rate=model_settings["initial_learning_rate"],
         )
 
-        model = resnet_model(
-            input_img, opt, metrics, **model_settings
-        )
+        model = resnet_model(input_img, opt, metrics, **model_settings)
 
     # Lets load our data
     tfds_filepath = s.data_file_complete.replace(".hdf5", ".tfds")
@@ -267,7 +287,7 @@ if __name__ == "__main__":
         validation_data=val_dataset,
         epochs=MAX_EPOCHS,
         callbacks=callbacks,
-        verbose=0, # since we are using the custom logger
+        verbose=0,  # since we are using the custom logger
     )
 
     # Lets plot the predictions from the unseen test set
@@ -282,9 +302,21 @@ if __name__ == "__main__":
     scaled_variance = np.sqrt(1 / (f_sky * fisher))
 
     # Plot the loss curves and metrics
-    plot_metrics(history, f"{s.plot_dir}/{model_settings['name']}-metrics.png", metrics=["loss"] + metrics)
-    plot_predictions(y_test, y_pred, f"{s.plot_dir}/{model_settings['name']}-preds.png", fisher, scaled_variance)
-    plot_histogram(y_test, y_pred, f"{s.plot_dir}/{model_settings['name']}-histogram.png")
+    plot_metrics(
+        history,
+        f"{s.plot_dir}/{model_settings['name']}-metrics.png",
+        metrics=["loss"] + metrics,
+    )
+    plot_predictions(
+        y_test,
+        y_pred,
+        f"{s.plot_dir}/{model_settings['name']}-preds.png",
+        fisher,
+        scaled_variance,
+    )
+    plot_histogram(
+        y_test, y_pred, f"{s.plot_dir}/{model_settings['name']}-histogram.png"
+    )
 
     # Plot the activation layers, doing it this way to make it optional
     # print("Plotting activations")
