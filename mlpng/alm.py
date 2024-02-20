@@ -6,13 +6,6 @@ import time
 import numpy as np
 from healpy.sphtfunc import Alm
 
-from .dataloaders.tfds.almdataloader import AlmDataLoader
-
-# os.environ["NCCL_DEBUG"] = "INFO"
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
-os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "false"
-os.environ["XLA_FLAGS"] = f"--xla_gpu_cuda_data_dir={os.environ['CUDA_HOME']}"
-
 import tensorflow as tf
 from tensorflow.keras import Input, Model
 from tensorflow.keras.models import Sequential
@@ -38,18 +31,15 @@ from tensorflow.keras.optimizers.legacy import Adam
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.regularizers import l2
 
-from utils import SimConfig
-from utils.tf import (
-    TimedLoggingCallback,
-    dice_coefficient_loss,
-)
+from utils import Config
+from utils.tf.callbacks import TimedLoggingCallback
 
 from utils.tf.plots import (
     plot_histogram,
     plot_metrics,
     plot_predictions,
 )
-from utils.data import AlmLoaderTFDS
+from utils.data import TFDSLoader
 
 
 def alm_model(
@@ -61,9 +51,8 @@ def alm_model(
     loss_function="mse",
     name="",
 ):
-    comp_input = inputs[:, :, 0, :]
-    real_input = inputs[:, :, 0, 0]
-    imag_input = inputs[:, :, 0, 1]
+    real_input = tf.math.real(inputs[:, 0, 0])[:, None, :]
+    imag_input = tf.math.imag(inputs[:, 0, 1])[:, None, :]
 
     # Process the real and imaginary parts separately
     padding = "causal"
@@ -133,10 +122,9 @@ def alm_model(
 
 
 if __name__ == "__main__":
-    config_file = sys.argv[1]
-    s = SimConfig(config_file)
+    s = Config(sys.argv[1])
 
-    MAX_EPOCHS = 10
+    MAX_EPOCHS = 100
     BATCH_SIZE = 32
 
     # just some info for the model name
@@ -178,20 +166,20 @@ if __name__ == "__main__":
     # callbacks to use during training
     callbacks = [
         # # We use earlystoping to prevent overfitting
-        # EarlyStopping(
-        #     monitor="val_loss",
-        #     patience=10,
-        #     verbose=1,
-        #     restore_best_weights=True,
-        #     start_from_epoch=0,
-        # ),
+        EarlyStopping(
+            monitor="val_loss",
+            patience=10,
+            verbose=1,
+            restore_best_weights=True,
+            start_from_epoch=0,
+        ),
         # model checkpoining to save the best model
-        # ModelCheckpoint(
-        #     f"{s.model_dir}/{model_settings['name']}" + "-{epoch:03d}.tf",
-        #     monitor="val_loss",
-        #     save_best_only=True,
-        #     mode="auto",
-        # ),
+        ModelCheckpoint(
+            f"{s.model_dir}/{model_settings['name']}" + "-{epoch:03d}.tf",
+            monitor="val_loss",
+            save_best_only=True,
+            mode="auto",
+        ),
         TimedLoggingCallback(print_frequency=60),  # custom logger to work a little better with text logs
         # TensorBoard(log_dir=f"{s.tb_dir}/{model_settings['name']}", histogram_freq=1),
     ]
@@ -215,7 +203,13 @@ if __name__ == "__main__":
 
     strategy = tf.distribute.MirroredStrategy()
     with strategy.scope():
-        input = Input((Alm.getsize(s.lmax), 1, 2), name="complex_split_input")
+        # Lets load our data
+        tfds_filepath = s.alm_file_complete.replace(".hdf5", "split.tfds")
+        data_loader = TFDSLoader(tfds_filepath, **data_loader_args)
+        print(data_loader.shape, data_loader.dtype, data_loader.num_replicas, flush=True)
+        train_dataset, test_dataset, val_dataset = data_loader.get_split(0.8, 0.1, 0.1)
+
+        input = Input(data_loader.shape, name="complex_split_input")
 
         opt = Adam(
             learning_rate=lr_schedule,
@@ -224,10 +218,6 @@ if __name__ == "__main__":
 
         model = alm_model(input, opt, metrics, **model_settings)
 
-    # Lets load our data
-    tfds_filepath = s.alm_file_complete.replace(".hdf5", "split.tfds")
-    data_loader = AlmLoaderTFDS(tfds_filepath, **data_loader_args)
-    train_dataset, test_dataset, val_dataset = data_loader.get_split(0.8, 0.1, 0.1)
 
     pprint.PrettyPrinter(indent=2).pprint(model_settings | extra_info)
     model.summary()

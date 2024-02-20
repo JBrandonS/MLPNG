@@ -4,10 +4,6 @@ import time
 import pprint
 import numpy as np
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
-os.environ["XLA_FLAGS"] = f"--xla_gpu_cuda_data_dir={os.environ['CUDA_HOME']}"
-
 import tensorflow as tf
 from tensorflow.keras.callbacks import (
     EarlyStopping,
@@ -40,10 +36,8 @@ from tensorflow.keras.optimizers.legacy import Adam
 
 from utils import get_fisher
 
-from utils.tf import (
-    TimedLoggingCallback,
-    dice_coefficient_loss,
-)
+from utils.tf.callbacks import TimedLoggingCallback
+from utils.tf.losses import dice_coefficient_loss
 
 from utils.tf.layers import (
     ReflectionPadding2D,
@@ -60,8 +54,8 @@ from utils.tf.plots import (
     plot_histogram,
 )
 
-from utils.data import PatchLoader, PatchLoaderTFDS
-from utils import SimConfig
+from utils.data import PatchLoader, TFDSLoader
+from utils import Config
 
 
 def isensee_attn(
@@ -98,7 +92,6 @@ def isensee_attn(
     :param activation_name:
     :return:
     """
-
 
     input_layer = augmentation_layer(flip, rotate, add_powers)(inputs)
 
@@ -155,7 +148,7 @@ def isensee_attn(
         current_layer = localization_output
         if level_number < n_segmentation_levels:
             segmentation_layers.insert(
-                0, Conv2D(level_filters[level_number+1], (1, 1))(current_layer)
+                0, Conv2D(level_filters[level_number + 1], (1, 1))(current_layer)
             )
 
     output_layer = None
@@ -170,8 +163,9 @@ def isensee_attn(
             # output_layer = UpSampling2D(size=(2, 2), interpolation=interpolation)(
             #     output_layer
             # )
-            output_layer = Conv2DTranspose(level_filters[level_number], kernel_size=(2, 2), strides=(2, 2))(output_layer)
-
+            output_layer = Conv2DTranspose(
+                level_filters[level_number], kernel_size=(2, 2), strides=(2, 2)
+            )(output_layer)
 
     out_layer = Flatten()(output_layer)
     out_layer = Dropout(dropout_rate)(out_layer)
@@ -192,10 +186,7 @@ def isensee_attn(
 
 
 if __name__ == "__main__":
-    # Get the config file from the command line
-    # you can manually set it here if you want
-    config_file = sys.argv[1]
-    s = SimConfig(config_file)
+    s = Config(sys.argv[1])
 
     MAX_EPOCHS = 30
 
@@ -320,7 +311,7 @@ if __name__ == "__main__":
     if os.path.exists(tfds_filepath):
         # This might have a small speedup, but it also might not
         # This WILL let us run on multinode which the hdf5 loader does not
-        data_loader = PatchLoaderTFDS(tfds_filepath, **data_loader_args)
+        data_loader = TFDSLoader(tfds_filepath, **data_loader_args)
     else:
         # load data as a python generator, directly from hdf5
         # This requires everything to be in the same python environment

@@ -21,8 +21,8 @@ do
     SETTINGSFILE="$SETTINGS_DIR$x"
     
     # Submit the first job and capture the job ID
-    # JOB1_ID=$(sbatch $JOB1 "scripts/isensee_attn.py" "$SETTINGSFILE" | awk '{print $4}')
-    # JOB2_ID=$(sbatch $JOB1 "scripts/dcnn.py" "$SETTINGSFILE" | awk '{print $4}')
-    # JOB3_ID=$(sbatch $JOB1 "scripts/alm.py" "$SETTINGSFILE" | awk '{print $4}')
-    JOB3_ID=$(sbatch $JOB1 "scripts/attn_alm.py" "$SETTINGSFILE" | awk '{print $4}')
+    # JOB1_ID=$(sbatch $JOB1 "mlpng/isensee_attn.py" "$SETTINGSFILE" | awk '{print $4}')
+    # JOB2_ID=$(sbatch $JOB1 "mlpng/dcnn.py" "$SETTINGSFILE" | awk '{print $4}')
+    # JOB3_ID=$(sbatch $JOB1 "mlpng/alm.py" "$SETTINGSFILE" | awk '{print $4}')
+    JOB3_ID=$(sbatch $JOB1 "mlpng/attn_alm.py" "$SETTINGSFILE" | awk '{print $4}')
 done

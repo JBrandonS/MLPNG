@@ -19,6 +19,7 @@ class Config:
         if print_settings:
             logger.info(f"Loading settings from file {settings_file}:")
             pprint.PrettyPrinter(indent=2).pprint(settings)
+            print("", flush=True)
 
         # get the settings
         self.save_fullsky = settings.get("save_fullsky", False)
