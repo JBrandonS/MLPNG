@@ -2,11 +2,10 @@
 #SBATCH --job-name=combiner
 #SBATCH --partition=standard-s
 #SBATCH --ntasks=1
-#SBATCH --mem=500G  # per node
+#SBATCH --mem=500G
 #SBATCH --cpus-per-task=10
 #SBATCH --output=logs/combiner/%j.log
-#SBATCH --error=logs/combiner/%j.log
-#SBATCH --time=12:00:00
+#SBATCH --time=8:00:00
 
 module purge
 module load spack conda

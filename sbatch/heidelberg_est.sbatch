@@ -1,12 +1,11 @@
 #! /bin/bash
-#SBATCH --job-name=estimator
-#SBATCH --partition=standard-s
-#SBATCH --ntasks=4
+#SBATCH --job-name=hei-est-test
+#SBATCH --partition=dev
+#SBATCH --ntasks=1
 #SBATCH --mem-per-cpu=40G
 #SBATCH --cpus-per-task=1
 #SBATCH --output=logs/estimator/%j.log
-#SBATCH --error=logs/estimator/%j.log
-#SBATCH --time=24:00:00
+#SBATCH --time=2:00:00
 
 module purge
 module load spack conda 

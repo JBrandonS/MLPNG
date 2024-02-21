@@ -2,11 +2,10 @@
 #SBATCH --job-name=training
 #SBATCH --partition=batch
 #SBATCH --ntasks=1
-#SBATCH --mem=1024G  # per node
+#SBATCH --mem=1024G
 #SBATCH --cpus-per-task=64
 #SBATCH --gpus-per-task=8
 #SBATCH --output=logs/training/%j.log
-#SBATCH --error=logs/training/%j.log
 #SBATCH --time=2-00:00:00
 
 module purge
