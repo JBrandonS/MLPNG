@@ -1,23 +1,38 @@
 import json
 import logging
 import os
+import sys
 
 import h5py
 import numpy as np
 
-logger = logging.getLogger(__name__)
+
+def setup_logging(
+    name=__name__,
+    level=logging.INFO,
+    handlers=[logging.StreamHandler(sys.stdout)],
+):
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%d-%b-%y %H:%M:%S",
+        handlers=handlers,
+    )
+    return logging.getLogger(name)
+
+_logger = setup_logging(__name__)
 
 def safe_makedir(dir):
     "Create a directory if it does not exist. Handles a race condition"
     if not os.path.exists(dir):
         try:
             os.makedirs(dir)
-            logger.debug("Created directory %s", dir)
+            _logger.debug("Created directory %s", dir)
         except FileExistsError:
             pass
 
 def save_data(file_path, data_dict):
-    logger.debug("Saving data to %s", file_path)
+    _logger.debug("Saving data to %s", file_path)
 
     with h5py.File(file_path, "a") as hf:
         for key, value in data_dict.items():
@@ -36,7 +51,7 @@ def save_data(file_path, data_dict):
             else:
                 # Create a new dataset for this key
                 hf.create_dataset(key, data=value, maxshape=(None,) + value.shape[1:])
-    logger.debug("done")
+    _logger.debug("done")
 
 
 def load_data(data_file, keys, start_index=None, end_index=None):
@@ -46,7 +61,7 @@ def load_data(data_file, keys, start_index=None, end_index=None):
     data = {}
     with h5py.File(data_file, "r", swmr=True, locking=False) as hdf:
         for key in keys:
-            logger.debug("Loading key %s from %s", key, data_file)
+            _logger.debug("Loading key %s from %s", key, data_file)
             kv = hdf.get(key, None)
             if kv is None:
                 raise ValueError(f"Key {key} not found in {data_file}")
@@ -55,7 +70,7 @@ def load_data(data_file, keys, start_index=None, end_index=None):
                 data[key] = np.array(kv[start_index:end_index])  # type: ignore
             else:
                 data[key] = np.array(kv[()]) # type: ignore
-    logger.debug("Finished loading data from %s", data_file)
+    _logger.debug("Finished loading data from %s", data_file)
     return data
 
 

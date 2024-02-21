@@ -25,7 +25,7 @@
     },
 
     "name" : "heidelberg",
-    "nsims" : 100,
+    "nsims" : 1000,
     "narray": 1,                   
     "npatches" : 10,
     "lensing" : false,
