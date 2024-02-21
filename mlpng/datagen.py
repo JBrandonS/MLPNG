@@ -169,8 +169,9 @@ def generate_almngs(plot=True):
             almng_plot = os.path.join(s.plot_dir, s.base_name + f"_almng[{i},{j}].png")
 
             plot_cl_alm(alms[i, j], save_file=alm_plot, plot_camb=True, c_ells=c_ells)
-            plot_cl_alm(sim_data[i, j], save_file=almng_plot, plot_camb=True, c_ells=c_ells)
-
+            plot_cl_alm(
+                sim_data[i, j], save_file=almng_plot, plot_camb=True, c_ells=c_ells
+            )
 
     save_data(s.alm_file_nc, sdata)
     os.replace(s.alm_file_nc, s.alm_file_partial)
@@ -350,8 +351,6 @@ if __name__ == "__main__":
 
         plot_file = os.path.join(s.plot_dir, s.base_name + "_patches.png")
         plot_patches(patches, 10, save_file=plot_file)
-
-
 
     # remove the partial file if it exists
     if os.path.isfile(s.data_file_nc):
