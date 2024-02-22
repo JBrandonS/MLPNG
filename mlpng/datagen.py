@@ -17,7 +17,7 @@ from numpy.random import randint, uniform
 from pixell import curvedsky, enmap, lensing, reproject
 from scipy.interpolate import CubicSpline
 from tqdm.auto import tqdm
-from utils import Config, load_data, save_data
+from utils import Config, load_data, save_data, setup_logging
 from utils.plots import plot_cl_map, plot_cl_alm, plot_patches
 
 
@@ -208,52 +208,31 @@ def process_patch(i, j, pol):
 
 
 if __name__ == "__main__":
-    # %% [markdown]
-    # # Data Generator
-    #
     # This code primarily generates non-gaussian cmb maps. These get stored in a data file with the fnls, and patches.
-    #
     # The full-sky maps are generated using the method discussed in [CMB lensing and primordial non-gaussianity](https://arxiv.org/abs/0905.4732), where we find (eq. 6)
     # $$
     # a_{\ell m} = a_{\ell m}^{{G}} + f_{NL}^X a_{\ell m}^{NG}
     # $$
     # and generated the full sky map from the $a_{\ell m}$.
-    #
     # Most of this code is to calculate the term (eq. 27)
-    #
     # $$
     # a_{\ell m}^{NG,loc'} = \int dr r^2 \left[ \alpha_\ell(r)\left(\int d^2 \hat{n} Y_{\ell m}^\star (\hat{n}) B(r,\hat{n})^2 \right)\right]
     # $$
-    #
     # and
-    #
     # $$
     # \alpha_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^2 \Delta_\ell^T(k) j_\ell(k r)
     # $$
-    #
     # $$
     # \beta_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^{-1} \Delta_\phi \Delta_\ell^T(k) j_\ell(k r)
     # $$
-    #
     # $$
     # B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}
     # $$
-    #
     # where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
-    #
-    # ---
 
-    # %%
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%d-%b-%y %H:%M:%S",
-        handlers=[logging.StreamHandler(sys.stdout)],
-    )
-    logger = logging.getLogger(__name__)
-
+    logger = setup_logging()
     s = Config(sys.argv[1])
+    is_main = True if s.job_array_index is not None and s.job_array_index == 1 else False
 
     # here we setup camb since it is needed for the sims in both the alm generation
     # and patch generation
@@ -291,7 +270,7 @@ if __name__ == "__main__":
             os.remove(s.alm_file_nc)
 
         logger.info("Generating new alms")
-        ldata = generate_almngs(plot=True if s.job_array_index == 1 else False)
+        ldata = generate_almngs(plot=is_main)
         alm_file = s.alm_file_partial
 
     alms = ldata["alm"]
@@ -347,7 +326,7 @@ if __name__ == "__main__":
     sdata["patches"] = np.array(patches)
 
     # only save 1 copy of the settings
-    if main_run:
+    if is_main:
         sdata["settings"] = s.settings
 
         plot_file = os.path.join(s.plot_dir, s.base_name + "_patches.png")

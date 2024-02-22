@@ -6,7 +6,7 @@ import sys
 
 import h5py
 from tqdm.auto import tqdm
-from utils import Config
+from utils import Config, setup_logging
 
 
 def extract_number(filename):
@@ -76,6 +76,7 @@ def combine_data(directory, base_name, ext, remove_files=True, finalize=False):
 
 
 if __name__ == "__main__":
+    logger = setup_logging()
     s = Config(sys.argv[1])
 
     # check that we are not using a already completed file!

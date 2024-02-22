@@ -7,11 +7,11 @@ from astropy import units as u
 
 import pprint
 
-import logging
+from utils import setup_logging
 
 class Config:
     def __init__(self, settings_file, print_settings=True):
-        logger = logging.getLogger(__name__)
+        logger = setup_logging()
         
         with open(settings_file, "r") as f:
             self.settings = settings = json.load(f)
