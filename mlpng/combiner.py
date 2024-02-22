@@ -6,7 +6,7 @@ import sys
 
 import h5py
 from tqdm.auto import tqdm
-from utils import Config
+from utils import Config, setup_logging
 
 
 def extract_number(filename):
@@ -22,8 +22,8 @@ def combine_data(directory, base_name, ext, remove_files=True, finalize=False):
     files_to_combine = sorted(files_to_combine, key=extract_number)
 
     if len(files_to_combine) == 0:
-        logger.error("did not find any files to combine with %s", file_pattern)
-        exit(1)
+        logger.warning("did not find any files to combine with %s", file_pattern)
+        return
 
     def recursive_copy(hf_source, hf_dest):
         for key in hf_source.keys():
@@ -60,7 +60,7 @@ def combine_data(directory, base_name, ext, remove_files=True, finalize=False):
     with h5py.File(
         os.path.join(directory, base_name + ext + ".nc"), "w"
     ) as hf_combined:
-        for file in tqdm(files_to_combine, desc="processing files"):
+        for file in tqdm(files_to_combine, desc="processing files", miniters=10):
             with h5py.File(file, "r") as hf:
                 recursive_copy(hf, hf_combined)
 
@@ -71,15 +71,18 @@ def combine_data(directory, base_name, ext, remove_files=True, finalize=False):
         )
 
     if remove_files:
-        for file in tqdm(files_to_combine, desc="removing partial files"):
+        for file in tqdm(files_to_combine, desc="removing partial files", miniters=10):
             os.remove(file)
 
 
 if __name__ == "__main__":
+    logger = setup_logging(logging.INFO)
     s = Config(sys.argv[1])
 
     # check that we are not using a already completed file!
     if not os.path.isfile(s.alm_file_complete):
+        logger.info(f"Combining alm files {s.alm_str} in {s.alm_cache_dir}")
         combine_data(s.alm_cache_dir, s.alm_str, ".alms.hdf5", finalize=True)
 
+    logger.info(f"Combining data files {s.data_str} in {s.data_dir}")
     combine_data(s.data_dir, s.data_str, ".hdf5")
