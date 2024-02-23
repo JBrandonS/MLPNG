@@ -39,6 +39,7 @@ def plot_patches(patches, n_plots, title="Patches", save_file=None):
 
     if save_file is not None:
         plt.savefig(save_file)
+        plt.close()
 
 
 def plot_cl(
@@ -94,6 +95,7 @@ def plot_cl(
 
     if save_file is not None:
         plt.savefig(save_file)
+        plt.close()
 
 
 def plot_cl_alm(
@@ -199,3 +201,4 @@ def plot_ksw_predictions(fnls, preds, fisher=None, save_file=None):
 
     if save_file is not None:
         plt.savefig(save_file)
+        plt.close()
