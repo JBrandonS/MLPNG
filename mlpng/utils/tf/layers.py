@@ -120,6 +120,7 @@ def create_convolution_block(
     layer = Activation(activation=activation)(layer)
     return layer
 
+
 def rotation_layer():
     """
     rotates each image by a random number of 90 degree turns
@@ -132,7 +133,7 @@ def rotation_layer():
     return Lambda(lambda x: _work(x), name="rotation_layer")
 
 
-def augmentation_layer(flip=True, rotate=True, add_powers=0):
+def augmentation_layer(flip=True, rotate=True, add_powers=0, name="augmentations"):
     layers = []
 
     if flip:
@@ -150,4 +151,4 @@ def augmentation_layer(flip=True, rotate=True, add_powers=0):
         # If no layers are added, create a dummy layer that does nothing
         layers.append(Lambda(lambda x: x))
 
-    return Sequential(layers, name="augmentations")
+    return Sequential(layers, name="name")

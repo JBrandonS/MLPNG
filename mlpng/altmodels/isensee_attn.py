@@ -54,7 +54,7 @@ from utils.tf.plots import (
     plot_histogram,
 )
 
-from utils.data import PatchLoader, TFDSLoader
+from utils.tf.dataloaders import PatchLoader, TFDSLoader
 from utils import Config
 
 

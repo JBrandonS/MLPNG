@@ -36,7 +36,7 @@
 
     "force_alm_gen" : false, 
 
-    "base_dir" : "data",
+    "base_dir" : "data-shared",
     "alm_cache_dir" : "alm_cache",
     "plot_dir" : "plots",
     "tb_dir" : "tensorboard",

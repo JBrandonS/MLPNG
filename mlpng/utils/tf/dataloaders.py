@@ -1,18 +1,14 @@
 import json
-import math
 
 import h5py
 import numpy as np
 import tensorflow as tf
-
+from healpy.sphtfunc import Alm
 from numpy import unravel_index
 from numpy.random import default_rng
-
 from tensorflow.data import AUTOTUNE, Dataset
 from tensorflow.data.experimental import assert_cardinality
 from tensorflow.keras.utils import Sequence
-
-from healpy.sphtfunc import Alm
 
 
 class PatchLoader(Sequence):
@@ -64,12 +60,12 @@ class PatchLoader(Sequence):
         file_path,
         name="PatchLoader",
         batch_size=16,
-        shuffle=False,
+        shuffle=True,
         shuffle_buffer=1000,
         normalize=False,
         cache=True,
         seed=None,
-        dtype=np.float32,
+        dtype=np.float64,
         dataset=None,
         shape=(None,),
         length=0,
@@ -93,7 +89,7 @@ class PatchLoader(Sequence):
             self.num_replicas = len(tf.config.list_physical_devices("GPU")) or 1
         else:
             # make sure num_replicas is >= 1
-            self.num_replicas = int(num_replicas) if int(num_replicas) > 1 else 1
+            self.num_replicas = int(num_replicas) if int(num_replicas) > 0 else 1
 
         if dataset is None:
             self._init_ds()
@@ -101,7 +97,7 @@ class PatchLoader(Sequence):
             self._ds = dataset
 
     def __len__(self):
-        return math.ceil(self.length / self.batch_size)
+        return self.length
 
     def __getitem__(self, index):
         # Convert the flat index to a multidimensional index
@@ -187,6 +183,7 @@ class PatchLoader(Sequence):
             self.batch_size * self.num_replicas,
             drop_remainder=True,
             num_parallel_calls=AUTOTUNE,
+            deterministic=False,
         )
         return data.prefetch(AUTOTUNE)
 
@@ -233,13 +230,20 @@ class AlmLoader(PatchLoader):
             raise ValueError("Dataset already initialized")
 
         self._file = h5py.File(self.file_path, mode="r", swmr=True, locking=False)
-
         (self._nsims, self._npol, self._ndata) = self._file["alm"].shape
 
-        # get the shape that our dataset will be in
+        # get the shape and length that our dataset will be in
         lmax = Alm.getlmax(self._ndata)
-        self.shape = (lmax + 1, lmax + 1, 2)
         self.length = self._nsims * self._npol
+        self.shape = (2, lmax, lmax)
+
+        # creates the index map for the data conversion from alm(i) -> alm(l, m)
+        self.idx_map = np.fromfunction(
+            lambda l, m: Alm.getidx(lmax, l, m), (lmax, lmax), dtype=np.int64
+        )
+
+        # creates our positional encoding to give the model some sense of the position of the data
+        self.pos_enc = self.idx_map / self._ndata / 1000
 
         # Loads in the fnl from the data
         # This will be in a dataset=array(bytestring) format, [b'[-100, 100]'], so grab the first element and decode it
@@ -252,16 +256,6 @@ class AlmLoader(PatchLoader):
         self.fnls = default_rng(self.seed).uniform(
             fnl_range[0], fnl_range[1] + 1, (self._nsims, self._npol)
         )
-
-        # create the index map for our transformation
-        self.idx_map = np.fromfunction(
-            lambda l, m: Alm.getidx(lmax, l, m),
-            (self.shape[0], self.shape[1]),
-            dtype=np.int32,
-        )
-
-        # create the position encoding
-        self.pos_enc = self.idx_map / self._ndata / 100
 
         # now create our dataset from generator
         self._ds = Dataset.from_generator(
@@ -288,19 +282,8 @@ class AlmLoader(PatchLoader):
 
         # converts data(i) -> data(l, m), also splits the real and imaginary parts and adds the index map
         data = np.zeros(self.shape, dtype=self.dtype)
-        data[:, :, 0] = np.real(alm_complete[self.idx_map]) + self.pos_enc
-        data[:, :, 1] = np.imag(alm_complete[self.idx_map]) + self.pos_enc
-
-        # # trying sparse tensor
-        # # Find the indices where the tensor is not zero
-        # indices = tf.where(tf.not_equal(data, 0))
-        # # Gather the non-zero values
-        # values = tf.gather_nd(data, indices)
-        # # Get the shape of the original tensor
-        # shape = tf.shape(data, out_type=tf.int64)
-        # # Create the sparse tensor
-        # data = tf.SparseTensor(indices, values, shape)
-
+        data[0, ...] = np.real(alm_complete[self.idx_map]) + self.pos_enc
+        data[1, ...] = np.imag(alm_complete[self.idx_map]) + self.pos_enc
         return data, fnl
 
 

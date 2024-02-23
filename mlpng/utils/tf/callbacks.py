@@ -7,44 +7,6 @@ from tensorflow.keras.callbacks import Callback
 from tensorflow.keras.optimizers.schedules import LearningRateSchedule
 
 
-class BurnInLearningRate(LearningRateSchedule):
-    """I wanted to start with a very high lr and then drop it down to a lower one"""
-
-    # might be good to convert this to full class and TF like the lr_schedule
-    def __init__(self, initial_learning_rate):
-        self.burnin_learning_rate = 0.01  # specify initial learning rate
-        self.burnin_epochs = 1  # specify the number of epochs for the burnin
-
-        # these should follow the ExponentialDecay function
-        self.learning_rate = initial_learning_rate  # specify secondary learning rate
-        self.decay_steps = 5  # specify the number of epochs for decaying
-        self.decay_rate = 0.96  # specify the decay rate
-        self.staircase = True
-
-    @tf.function
-    def __call__(self, step):
-        p = (step - self.burnin_epochs) / (self.decay_steps)
-        if self.staircase:
-            p = tf.floor(p)
-        p = tf.cast(p, tf.float32)
-
-        return tf.cond(
-            step < self.burnin_epochs,
-            lambda: self.burnin_learning_rate,
-            lambda: tf.multiply(self.learning_rate, tf.pow(self.decay_rate, p)),
-        )
-
-    def get_config(self):
-        return {
-            "burnin_learning_rate": self.burnin_learning_rate,
-            "burnin_epochs": self.burnin_epochs,
-            "learning_rate": self.learning_rate,
-            "decay_steps": self.decay_steps,
-            "decay_rate": self.decay_rate,
-            "staircase": self.staircase,
-        }
-
-
 class WarmupLearningRate(LearningRateSchedule):
     """
     A learning rate schedule that starts with a warm-up period where the learning rate increases,
@@ -91,41 +53,41 @@ class WarmupLearningRate(LearningRateSchedule):
         max_warmup = warmup_learning_rate * (
             1 + warmup_scale * (warmup_steps / warmup_scale_steps)
         )
-        tf.get_logger().info(
+        tf.print(
             f"WarmupLearningRate: Warmup Range: {warmup_learning_rate} -> {max_warmup}"
         )
-
+    
     @tf.function
     def __call__(self, step):
+        @tf.function
         def warmup_fn():
             """Applies warm-up to the learning rate."""
             p = step / self.warmup_scale_steps
-            # p = tf.cast(p, self.dtype)
             if self.staircase:
                 p = tf.floor(p)
             scale = tf.multiply(self.warmup_scale, p)
             return tf.multiply(self.warmup_learning_rate, 1.0 + scale)
-
+        
+        @tf.function
         def decay_fn():
-            """Applies exponential decay to the learning rate."""
-            p = (step - self.warmup_steps) / (self.decay_steps)
-            # p = tf.cast(p, self.dtype)
-            if self.staircase:
-                p = tf.floor(p)
-            scale = tf.pow(self.decay_rate, p)
-            return tf.multiply(self.warmed_learning_rate, scale)
-
+                """Applies exponential decay to the learning rate."""
+                p = (step - self.warmup_steps) / (self.decay_steps)
+                if self.staircase:
+                    p = tf.floor(p)
+                scale = tf.pow(self.decay_rate, p)
+                return tf.multiply(self.warmed_learning_rate, scale)
+    
         return tf.cond(step < self.warmup_steps, warmup_fn, decay_fn)
 
     def get_config(self):
         return {
-            "warmup_learning_rate": self.warmup_learning_rate,
-            "warmup_steps": self.warmup_steps,
-            "warmup_scale": self.warmup_scale,
-            "warmup_scale_steps": self.warmup_scale_steps,
-            "warmed_learning_rate": self.warmed_learning_rate,
-            "decay_steps": self.decay_steps,
-            "decay_rate": self.decay_rate,
+            "warmup_learning_rate": self.warmup_learning_rate.numpy(),  # type: ignore
+            "warmup_steps": self.warmup_steps.numpy(),  # type: ignore
+            "warmup_scale": self.warmup_scale.numpy(),  # type: ignore
+            "warmup_scale_steps": self.warmup_scale_steps.numpy(),  # type: ignore
+            "warmed_learning_rate": self.warmed_learning_rate.numpy(),  # type: ignore
+            "decay_steps": self.decay_steps.numpy(),  # type: ignore
+            "decay_rate": self.decay_rate.numpy(),  # type: ignore
             "staircase": self.staircase,
         }
 
@@ -162,7 +124,6 @@ class TimedLoggingCallback(Callback):
     def _get_time_str(self, seconds):
         """
         Convert seconds to a human readable time string.
-        Tracks the depth of the time string per epoch to ensure consistent formatting.
         """
         minutes, seconds = divmod(int(seconds), 60)
         hours, minutes = divmod(minutes, 60)
@@ -179,6 +140,9 @@ class TimedLoggingCallback(Callback):
         if logs is None:
             return ""
         return " - ".join(f"{k}: {v:.4f}" for k, v in logs.items())
+
+    def _lr_str(self):
+        return f"Learning Rate: {self.model.optimizer.lr.numpy().item():.4f}"
 
     def on_train_begin(self, logs=None):
         tf.print("Starting training...")
@@ -199,12 +163,7 @@ class TimedLoggingCallback(Callback):
         if current_time - self.last_print_time >= self.print_frequency:
             steps = self.params["steps"]
 
-            eta = (
-                (steps - batch)
-                * (current_time - self.batch_start_time)
-                / self.num_replicas
-            )
-            eta = self._get_time_str(eta)
+            batch_str = f"{str(batch).rjust(self._steps_str_len)}/{steps}"
 
             progress = batch / steps
             progress_bar_val = int(progress * 30)
@@ -212,9 +171,16 @@ class TimedLoggingCallback(Callback):
 
             metrics_log = self._get_log_line(logs)
 
-            batch_str = f"{str(batch).rjust(self._steps_str_len)}/{steps}"
+            eta = (
+                (steps - batch)
+                * (current_time - self.batch_start_time)
+                / self.num_replicas
+            )
+            eta = self._get_time_str(eta)
 
-            tf.print(f"{batch_str} [{progress_bar}] - ETA: {eta} - {metrics_log}")
+            tf.print(
+                f"{batch_str} [{progress_bar}] - ETA: {eta} - {metrics_log} - {self._lr_str()}"
+            )
             self.last_print_time = current_time
 
     def on_epoch_begin(self, epoch, logs=None):
@@ -222,8 +188,9 @@ class TimedLoggingCallback(Callback):
 
     def on_epoch_end(self, epoch, logs=None):
         current_time = time.time()
-        elapsed_time = current_time - self.epoch_start_time
-        elapsed_time = self._get_time_str(elapsed_time)
-        metrics_log = self._get_log_line(logs)
         epoch_str = f"{str(epoch).rjust(self._epoch_str_len)}/{self.params['epochs']}"
-        tf.print(f"Epoch: {epoch_str} - Time: {elapsed_time} - {metrics_log}")
+        elapsed_time = self._get_time_str(current_time - self.epoch_start_time)
+        metrics_log = self._get_log_line(logs)
+        tf.print(
+            f"Epoch: {epoch_str} - Time: {elapsed_time} - {metrics_log} - {self._lr_str()}"
+        )

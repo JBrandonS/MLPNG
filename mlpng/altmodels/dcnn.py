@@ -29,7 +29,7 @@ from tensorflow.keras.optimizers.legacy import Adam
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.regularizers import l2
 from utils import Config, get_fisher
-from utils.data import PatchLoader, TFDSLoader
+from utils.tf.dataloaders import PatchLoader, TFDSLoader
 from utils.tf.callbacks import TimedLoggingCallback
 from utils.tf.layers import (
     ReflectionPadding2D,

@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 from sklearn.metrics import r2_score
 
-def plot_predictions(y_val, y_pred, save_file, fisher=None, scaled_variance=None):
+def plot_predictions(y_val, y_pred, save_file=None, fisher=None, scaled_variance=None):
     df = pd.DataFrame(
         {"True Labels": y_val.flatten(), "Predicted Labels": y_pred.flatten()}
     )
@@ -56,10 +56,11 @@ def plot_predictions(y_val, y_pred, save_file, fisher=None, scaled_variance=None
     plt.text(min(y_val), max(y_val), f"R^2 = {r2:.2f}", verticalalignment="top")
 
     plt.title("Predicted vs True Labels")
-    plt.savefig(save_file)
+    if save_file is not None:
+        plt.savefig(save_file)
 
 
-def plot_histogram(y_val, y_pred, save_file):
+def plot_histogram(y_val, y_pred, save_file=None):
     """Plot and save a histogram of predictions with mean and std dev as title"""
     # Calculate mean and standard deviation
     y_val = y_val.flatten()
@@ -84,10 +85,11 @@ def plot_histogram(y_val, y_pred, save_file):
     axs[1].set_title(f"Differences - Mean: {mean_diff:.2f}, Standard Deviation: {std_diff:.2f}")
 
     # Save the plot
-    plt.savefig(save_file)
+    if save_file is not None:
+        plt.savefig(save_file)
 
 
-def plot_metrics(history, save_file, metrics=["loss"]):
+def plot_metrics(history, save_file=None, metrics=["loss"]):
     num_metrics = len(metrics)
     fig, axs = plt.subplots(num_metrics, figsize=(15, 6 * num_metrics))
 
@@ -102,7 +104,8 @@ def plot_metrics(history, save_file, metrics=["loss"]):
         axs[i].set_xlabel("Epoch")
         axs[i].legend(["Train", "Validation"], loc="upper right")
 
-    plt.savefig(save_file)
+    if save_file is not None:
+        plt.savefig(save_file)
 
 def plot_activations(model, ds, name, layers=None, plot_dir="data/plots/activations"):
     import keract  # pip install keract for this to work

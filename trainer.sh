@@ -10,7 +10,7 @@ JOB1="sbatch/trainer.sbatch"
 #  "l_128.json"      "l_256.json"      "l_512.json"      "l_1024.json"
 # )
 
-SETTINGS=( "ul_nn_128.json" )
+SETTINGS=( "ul_nn_128_large.json" )
 
 SETTINGS_DIR="settings/"
 
