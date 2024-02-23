@@ -69,7 +69,10 @@ def alm_model(
 ):
     input_layer = inputs
 
-    # remove the last axis
+    # We start with data in (2,500,500), (real/complex, l, m)
+    # This is too much data for a transformer so we collapse down the m axis using a FF
+    # We could look at something smarter to do this
+    # then we squeeze to get a final data size of (2, 500) which attention can handle
     layer = Dense(512, activation='sigmoid')(input_layer)
     layer = Dense(128, activation='sigmoid')(layer)
     layer = Dense(1)(layer)
@@ -89,6 +92,7 @@ def alm_model(
     #     dropout=dropout_rate,
     # )(layer, layer)
 
+    # Now we do a final FF to get the output as a scalar
     layer = Flatten()(layer)
     layer = Dropout(dropout_rate)(layer)
     layer = Dense(1024, activation="relu")(layer)
@@ -127,7 +131,6 @@ if __name__ == "__main__":
         "batch_size": BATCH_SIZE,
         "cache": True,
         "shuffle_buffer": 1000,
-        "normalize": False,
         "dtype": np.float32,
     }
 
