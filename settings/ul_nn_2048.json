@@ -10,47 +10,25 @@
         "mnu": 0.06,
         "tau": 0.0561,
         "TCMB": 2.7255,
-
         "max_l": 2500,
         "lmax": 2000,
         "lens_potential_accuracy": 2,
-
         "DoLateRadTruncation": false,
         "AccuracyBoost":2.0,
         "lSampleBoost": 2.0,
         "lAccuracyBoost": 2.0
     },
-
-    "name" : "ulnn2048",
     "nsims" : 100,
     "narray": 10,                   
     "npatches" : 10,
     "lensing" : false,
     "disable_noise" : true,
-    "double_precision": false,
     "duplicate_backgrounds": 10,
     "fnl_range":[-1000, 1000],        
     "nside":2048,
-    "patch_side_deg" : 10,
-    "polarizations" : ["T"], 
-
     "force_alm_gen" : false, 
-
-    "base_dir" : "data",
-    "alm_cache_dir" : "alm_cache",
-    "plot_dir" : "plots",
-    "tb_dir" : "tensorboard",
-    "model_dir" : "models",
-
     "noise_scale_tt" : 1,
     "noise_scale_ee" : 1.41421,
     "noise_scale_te" : 0, 
-
-    "beam_width" : 1.4,
-
-    "nthreads_alm" : 32,            
-    "nthreads_sim" : 32,
-
-    "r_min" : 1,                      
-    "r_max" : 50000               
+    "beam_width" : 1.4
 }

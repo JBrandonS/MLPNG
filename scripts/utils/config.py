@@ -11,7 +11,7 @@ from utils import setup_logging
 
 class Config:
     def __init__(self, settings_file, print_settings=True):
-        logger = setup_logging("Config")
+        logger = setup_logging("config")
         
         with open(settings_file, "r") as f:
             self.settings = settings = json.load(f)
@@ -20,36 +20,39 @@ class Config:
             logger.info(f"Loading settings from file {settings_file}:")
             pprint.PrettyPrinter(indent=2).pprint(settings)
 
-        # get the settings
-        self.save_fullsky = settings.get("save_fullsky", False)
         self.force_alm_gen = settings.get("force_alm_gen", False)
 
-        self.name = settings.get("name", "default")
         self.cosmo_params = settings.get("cosmo_params")
 
         # main parameters
         self.lmax = self.cosmo_params["lmax"]
-        self.polarizations = settings.get("polarizations", "T")
         self.nside = settings.get("nside", 1024)
         self.npatches = settings.get("npatches", 10)
         self.narray = settings.get("narray", 1)
-        self.npol = len(self.polarizations)
+
+        self.pols = settings.get("polarizations", "T")
+        self.npol = len(self.pols)
+        self.pol_chars = "".join(self.pols)
 
         self.lensing = settings.get("lensing", False)
         self.disable_noise = settings.get("disable_noise", True)
 
         # find out the number of sims
         self.nsims = settings.get("nsims", 1)
-        self.ndup = settings.get("duplicate_backgrounds", 1)
-        self.total_sims = self.nsims * self.ndup
+        self.total_sims = self.nsims * self.narray
 
-        self.job_array_index = os.environ.get("SLURM_ARRAY_TASK_ID")
-        if self.job_array_index is not None:
-            logger.debug("Running with SLURM job array index %s", self.job_array_index)
-            self.job_array_index = int(self.job_array_index)
-            self.total_sims *= int(os.environ.get("SLURM_ARRAY_TASK_COUNT"))
+        job_tasks = os.environ.get("SLURM_ARRAY_TASK_COUNT")
+        if job_tasks is not None:
+            job_tasks = int(job_tasks)
+
+            if job_tasks != self.narray:
+                raise ValueError(
+                    f"SLURM_ARRAY_TASK_COUNT {job_tasks} does not match narray value {self.narray}"
+                )
+            
+            self.job_array_index = int(os.environ.get("SLURM_ARRAY_TASK_ID"))
         else:
-            self.total_sims *= self.narray
+            self.job_array_index = None
 
         # some important derived parameters
         self.nell = self.lmax + 1
@@ -57,11 +60,7 @@ class Config:
         self.npix = hp.nside2npix(self.nside)
         self.ells = np.arange(self.nell)
 
-        self.pol_chars = "".join(self.polarizations)
         self.fnl_min, self.fnl_max = settings.get("fnl_range", [0, 0])
-
-        self.nthreads_sim = settings["nthreads_sim"]
-        self.nthreads_alm = settings["nthreads_alm"]
 
         # set up units
         self.double_precision = self.settings.get("double_precision", False)
@@ -80,7 +79,7 @@ class Config:
         self.noise_beam = self.get_noise_beam()
 
         # get the radii
-        self.radii, self.drs = self.get_radii(settings["r_min"], settings["r_max"])
+        self.radii, self.drs = self.get_radii(1, 50000)
 
         # paths
         self.base_dir = settings.get("base_dir", "data")
@@ -102,12 +101,12 @@ class Config:
 
         # set up the file names
         self.base_name = f"{self.nside}_{nn_str}{self.pol_chars}_{self.total_sims}"
-        self.data_str = f"{self.base_name}x{self.npatches}x{self.ndup}_fnl{self.fnl_min}-{self.fnl_max}{ja_str}"
+        self.data_str = f"{self.base_name}x{self.npatches}_fnl{self.fnl_min}-{self.fnl_max}{ja_str}"
         self.alm_str = f"{self.base_name}{ja_str}"
 
         # setup the file paths
         self.data_file_nc = os.path.join(self.data_dir, f"{self.data_str}.hdf5.nc")
-        self.data_file_complete = os.path.join(self.data_dir, f"{self.data_str}.hdf5")
+        self.data_file = os.path.join(self.data_dir, f"{self.data_str}.hdf5")
         
         self.alm_file_nc = os.path.join(
             self.alm_cache_dir, f"{self.alm_str}.alms.hdf5.nc"
@@ -115,7 +114,7 @@ class Config:
         self.alm_file_partial = os.path.join(
             self.alm_cache_dir, f"{self.alm_str}.alms.hdf5"
         )
-        self.alm_file_complete = os.path.join(
+        self.alm_file = os.path.join(
             self.alm_cache_dir, f"{self.base_name}.alms.hdf5"
         )
 
@@ -127,7 +126,7 @@ class Config:
 
         noise_ell = []
         beam_ell = []
-        if "T" in self.polarizations:
+        if "T" in self.pols:
             noise = (
                 np.ones((self.nell), dtype=self.r_dtype)
                 * self.noise_scale_tt.to_value(u.radian) ** 2
@@ -135,7 +134,7 @@ class Config:
             noise_ell.append(noise)
             beam_ell.append(beam_ell_pre[0])
 
-        if "E" in self.polarizations:
+        if "E" in self.pols:
             noise = (
                 np.ones((self.nell), dtype=self.r_dtype)
                 * self.noise_scale_ee.to_value(u.radian) ** 2
@@ -143,7 +142,7 @@ class Config:
             noise_ell.append(noise)
             beam_ell.append(beam_ell_pre[1])
 
-        if self.polarizations == ["T", "E"]:
+        if self.pols == ["T", "E"]:
             noise = (
                 np.ones((self.nell), dtype=self.r_dtype)
                 * self.noise_scale_te.to_value(u.radian) ** 2
