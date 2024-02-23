@@ -186,7 +186,7 @@ def isensee_attn(
 
 
 if __name__ == "__main__":
-    s = Config(sys.argv[1])
+    s = Config(sys.argv[1:])
 
     MAX_EPOCHS = 30
 

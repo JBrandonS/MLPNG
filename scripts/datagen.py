@@ -64,7 +64,7 @@ def cutSqPatches_pixell(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, alm, fnl, al
     car_map = curvedsky.alm2map(alms, fs_map)
 
     if (s.job_array_index is None or s.job_array_index == 1):
-        map2hp = reproject.map2healpix(pixell_map, s.lmax)
+        map2hp = reproject.map2healpix(car_map, s.lmax)
         hp.mollview(map2hp, min=-650.0, max=650, title=f"fnl = {fnl}")
         moll_path = os.join(s.plot_dir, s.base_name + f"_{fnl}_fullsky.png")
         plt.savefig(moll_path)
@@ -122,7 +122,7 @@ if __name__ == "__main__":
     # $$B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}$$
     # where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
 
-    s = Config(sys.argv[1])
+    s = Config(sys.argv[1:])
     is_main = True if s.job_array_index is None or s.job_array_index == 1 else False
 
     logger = setup_logging("datagen", logging.INFO if is_main else logging.ERROR)

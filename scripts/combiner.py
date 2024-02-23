@@ -76,7 +76,7 @@ def combine_data(directory, base_name, ext, remove_files=True, finalize=False):
 
 if __name__ == "__main__":
     logger = setup_logging("combiner")
-    s = Config(sys.argv[1])
+    s = Config(sys.argv[1:])
 
     # check that we are not using a already completed file!
     if not os.path.isfile(s.alm_file):

@@ -1,5 +1,6 @@
 import json
 import os
+import argparse
 
 import healpy as hp
 import numpy as np
@@ -9,15 +10,26 @@ import pprint
 
 from utils import setup_logging
 
+def parse_args(args):
+    parser = argparse.ArgumentParser()
+    parser.add_argument('settings_file', type=str, help='The settings file to use')
+    parser.add_argument('--nsims', type=int, help='The number of sims to use')
+
+    return parser.parse_args(args)
+
+def safe_get(a, b):
+    """Return a if a is not None, else b."""
+    return a if a is not None else b
+
 class Config:
-    def __init__(self, settings_file, print_settings=True):
+    def __init__(self, args, print_settings=True):
         logger = setup_logging("config")
-        
-        with open(settings_file, "r") as f:
+        args = parse_args(args)
+        with open(args.settings_file, "r") as f:
             self.settings = settings = json.load(f)
 
         if print_settings:
-            logger.info(f"Loading settings from file {settings_file}:")
+            logger.info(f"Loading settings from file {args.settings_file}:")
             pprint.PrettyPrinter(indent=2).pprint(settings)
 
         self.force_alm_gen = settings.get("force_alm_gen", False)
@@ -39,7 +51,7 @@ class Config:
         self.disable_noise = settings.get("disable_noise", True)
 
         # find out the number of sims
-        self.nsims = settings.get("nsims", 1)
+        self.nsims = safe_get(args.nsims, settings.get("nsims", 1))
         self.total_sims = self.nsims * self.narray
 
         job_tasks = os.environ.get("SLURM_ARRAY_TASK_COUNT")
