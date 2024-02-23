@@ -16,7 +16,7 @@
    - `optweight` should be installed first, just need run `pip install -e .` in the root directory.
    - For `ksw` run `make && pip install -e . && make check` in the root.
       - You will probably see an error on the make check, this seems to be an issue with the ksw test code and does not affect anything.
-4. You can now run the code, using the pipeline with `datagenerator.sh` or manually with `mlpng/datagen.py`, `mlpng/combiner.py`, and `mlpng/estimator.py`.
+4. You can now run the code, using the pipeline with `datagenerator.sh` or manually with `scripts/datagen.py`, `scripts/combiner.py`, and `scripts/estimator.py`.
 
 ### Trainer
 
@@ -67,8 +67,8 @@ For large runs you will want to use the command `nohup bash datagenerator.sh &`.
 The training pipeline is very simple. From superpod,
 
 0. Ensure your data is fully generated and avaible on the superpod filesystem.
-1. Create your model, follow the example in `mlpng/isensee_attn.py`, or any of the other model files.
-2. Point the `trainer.sh` script to the correct settings files you would like to train on and point the `sbatch $JOB1 "mlpng/isensee_attn.py" "$SETTINGSFILE"` line to the correct model file.
+1. Create your model, follow the example in `scripts/isensee_attn.py`, or any of the other model files.
+2. Point the `trainer.sh` script to the correct settings files you would like to train on and point the `sbatch $JOB1 "scripts/isensee_attn.py" "$SETTINGSFILE"` line to the correct model file.
 3. Run the `trainer.sh` script.
 
 ## Some Notes

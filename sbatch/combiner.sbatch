@@ -14,4 +14,4 @@ module load gcc/11.2.0 gcc-11.2.0/intel-oneapi-mkl/2022.2.1-c4efjsy fftw/3.3.10-
 eval "$(conda shell.bash hook)"
 conda activate mlpng
 
-time srun python mlpng/combiner.py "$1"
+time srun python scripts/combiner.py "$1"

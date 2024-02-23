@@ -32,7 +32,7 @@ from tensorflow import pad
 
 from utils import Config
 from utils.tf import TimedLoggingCallback
-from mlpng.utils.tf.dataloaders import PatchLoader
+from scripts.utils.tf.dataloaders import PatchLoader
 from utils.plots import plot_histogram, plot_metrics, plot_predictions
 
 from tensorflow.keras.callbacks import (
