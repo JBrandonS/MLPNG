@@ -196,7 +196,7 @@ if __name__ == "__main__":
         model = alm_model(input, opt, metrics, **model_settings)
 
     # Lets load our data
-    tfds_filepath = s.alm_file_complete.replace(".hdf5", ".tfds")
+    tfds_filepath = s.alm_file.replace(".hdf5", ".tfds")
     data_loader = AlmLoaderTFDS(tfds_filepath, **data_loader_args)
     train_dataset, test_dataset, val_dataset = data_loader.get_split(0.8, 0.1, 0.1)
 

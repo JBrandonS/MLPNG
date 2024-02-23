@@ -264,7 +264,7 @@ if __name__ == "__main__":
         callbacks.append(WandbMetricsLogger())
 
     # Lets load our data
-    data_loader = PatchLoader(s.data_file_complete, **data_loader_args)
+    data_loader = PatchLoader(s.data_file, **data_loader_args)
     train_dataset, test_dataset, val_dataset = data_loader.get_split(0.8, 0.1, 0.1)
 
     strategy = tf.distribute.MirroredStrategy()
