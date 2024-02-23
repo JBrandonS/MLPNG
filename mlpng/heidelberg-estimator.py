@@ -9,7 +9,7 @@ from astropy import units as u
 from ksw import KSW, Cosmology, Data, Shape
 from mpi4py import MPI
 
-from utils import Config, load_data, load_single_data, save_data
+from utils import Config, setup_logging
 from utils.plots import plot_ksw_predictions, plot_cl_alm
 
 comm = MPI.COMM_WORLD
@@ -41,18 +41,6 @@ def alm_loader(str_idx):
     logging.info("sending fnl: %s", fnl)
     return (alm_h_l + fnl * alm_h_nl) * t_scale
 
-    # """Loads in a single alm given a int in string form. Used inside the KSW code."""
-    # idx = int(str_idx)
-    # dup_idx = idx % s.ndup
-    # idx = idx // s.ndup
-    # pol = 0
-
-    # alm = load_single_data(s.alm_file_complete, "alm", idx, verbose=s.verbose).astype(complex)
-    # almng = load_single_data(s.alm_file_complete, "almng", idx, verbose=s.verbose).astype(complex)
-    # fnl = load_single_data(s.data_file_nc, "fnls", idx, verbose=s.verbose)[dup_idx]
-
-    # return alm + fnl * almng
-
 
 def alm_step_loader(idx):
     # needs a gaussian realization of signal + noise
@@ -79,16 +67,14 @@ def compute_icov_ell(N, b):
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO if rank == 0 else logging.ERROR,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%d-%b-%y %H:%M:%S",
-        handlers=[logging.StreamHandler(sys.stdout)],
-    )
-    logger = logging.getLogger(__name__)
-    logger.name = f"heidelberg_estimator_{rank}"
+    """
+    A test script to run the KSW estimator just on the heildelberg sims.
+    Probably not up to date with the latest changes in estimator.
+    """
 
-    s = Config("settings/heidelberg.json", print_settings=(rank == 0))
+    is_main_comm = rank == 0
+    logger = setup_logging(name=f"heidelberg_estimator_{rank}")
+    s = Config("settings/heidelberg.json", print_settings=is_main_comm)
 
     s.fnl_min = -50
     s.fnl_max = 50
@@ -113,8 +99,10 @@ if __name__ == "__main__":
 
     # generate our beam functioned based on noise
     beam_width_rad = 0 if s.disable_noise else s.beam_width.to_value(u.radian)
-
     def beam(alm):
+        if beam_width_rad == 0:
+            return alm
+
         return hp.sphtfunc.smoothalm(alm, fwhm=beam_width_rad, inplace=False)
 
     ksw = KSW(
@@ -126,7 +114,7 @@ if __name__ == "__main__":
         precision="double" if s.double_precision else "single",
     )
 
-    alm_strs = np.arange(1, s.total_sims+1).astype(str)
+    alm_strs = np.arange(1, s.total_sims +1).astype(str)
     alm_step_strs = np.arange(1, 100) if s.total_sims > 100 else alm_strs
 
     logger.info("Running KSW step")

@@ -20,7 +20,9 @@ def setup_logging(
     )
     return logging.getLogger(name)
 
+
 _logger = setup_logging(__name__)
+
 
 def safe_makedir(dir):
     "Create a directory if it does not exist. Handles a race condition"
@@ -30,6 +32,7 @@ def safe_makedir(dir):
             _logger.debug("Created directory %s", dir)
         except FileExistsError:
             pass
+
 
 def save_data(file_path, data_dict):
     _logger.debug("Saving data to %s", file_path)
@@ -69,7 +72,7 @@ def load_data(data_file, keys, start_index=None, end_index=None):
             if start_index is not None and end_index is not None:
                 data[key] = np.array(kv[start_index:end_index])  # type: ignore
             else:
-                data[key] = np.array(kv[()]) # type: ignore
+                data[key] = np.array(kv[()])  # type: ignore
     _logger.debug("Finished loading data from %s", data_file)
     return data
 

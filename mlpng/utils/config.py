@@ -11,7 +11,7 @@ from utils import setup_logging
 
 class Config:
     def __init__(self, settings_file, print_settings=True):
-        logger = setup_logging()
+        logger = setup_logging("Config")
         
         with open(settings_file, "r") as f:
             self.settings = settings = json.load(f)

@@ -21,17 +21,15 @@ if [[ ! $(squeue --me -h -n jupyter) && -f .vscj.out ]]; then
 fi
 
 rm -rvf logs/datagen/*
-rm -rvf logs/*/*.log
+rm -vf logs/*/*.log
 rm -vf nohup.out 
 rm -vf .vscj.out
 
 cd "data" || ( echo "cannot find data folder" && exit )
-
 echo "Currently in directory: $(pwd)"
 
 rm -rvf plots/*
 rm -rvf models/*
-rm -rvf tb/*
 rm -rvf tensorboard/*
 rm -rvf wandb/*
 

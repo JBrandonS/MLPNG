@@ -3,7 +3,7 @@
 #SBATCH --partition=standard-s
 #SBATCH --ntasks=1
 #SBATCH --mem=500G
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=64
 #SBATCH --output=logs/datagen/%A/%j.log
 #SBATCH --array=1-100
 #SBATCH --time=24:00:00

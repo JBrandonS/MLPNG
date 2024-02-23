@@ -210,29 +210,27 @@ def process_patch(i, j, pol):
 if __name__ == "__main__":
     # This code primarily generates non-gaussian cmb maps. These get stored in a data file with the fnls, and patches.
     # The full-sky maps are generated using the method discussed in [CMB lensing and primordial non-gaussianity](https://arxiv.org/abs/0905.4732), where we find (eq. 6)
-    # $$
-    # a_{\ell m} = a_{\ell m}^{{G}} + f_{NL}^X a_{\ell m}^{NG}
-    # $$
+    # $$a_{\ell m} = a_{\ell m}^{{G}} + f_{NL}^X a_{\ell m}^{NG}$$
     # and generated the full sky map from the $a_{\ell m}$.
     # Most of this code is to calculate the term (eq. 27)
-    # $$
-    # a_{\ell m}^{NG,loc'} = \int dr r^2 \left[ \alpha_\ell(r)\left(\int d^2 \hat{n} Y_{\ell m}^\star (\hat{n}) B(r,\hat{n})^2 \right)\right]
-    # $$
+    # $$a_{\ell m}^{NG,loc'} = \int dr r^2 \left[ \alpha_\ell(r)\left(\int d^2 \hat{n} Y_{\ell m}^\star (\hat{n}) B(r,\hat{n})^2 \right)\right]$$
     # and
-    # $$
-    # \alpha_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^2 \Delta_\ell^T(k) j_\ell(k r)
-    # $$
-    # $$
-    # \beta_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^{-1} \Delta_\phi \Delta_\ell^T(k) j_\ell(k r)
-    # $$
-    # $$
-    # B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}
-    # $$
+    # $$\alpha_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^2 \Delta_\ell^T(k) j_\ell(k r)$$
+    # $$\beta_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^{-1} \Delta_\phi \Delta_\ell^T(k) j_\ell(k r)$$
+    # $$B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}$$
     # where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
 
-    logger = setup_logging()
+    # disable some info logs from healpy that clutter the output with
+    # healpy - INFO - Sigma is 0.000000 arcmin (0.000000 rad) 
+    # healpy - INFO - -> fwhm is 0.000000 arcmin
+    logging.getLogger("healpy").setLevel(logging.WARNING)
+
     s = Config(sys.argv[1])
-    is_main = True if s.job_array_index is not None and s.job_array_index == 1 else False
+    is_main = (
+        True if s.job_array_index is not None and s.job_array_index == 1 else False
+    )
+
+    logger = setup_logging("datagen", logging.INFO if is_main else logging.ERROR)
 
     # here we setup camb since it is needed for the sims in both the alm generation
     # and patch generation
@@ -261,7 +259,7 @@ if __name__ == "__main__":
         ldata = load_data(s.alm_file_complete, ["alm", "almng"])
     elif os.path.isfile(s.alm_file_partial) and not s.force_alm_gen:
         logger.info(
-            "Found partial alm file %s, skipping alm generation", s.alm_file_partial
+            f"Found partial alm file {s.alm_file_partial}, skipping alm generation"
         )
         ldata = load_data(s.alm_file_partial, ["alm", "almng"])
     else:
