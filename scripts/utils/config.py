@@ -29,6 +29,7 @@ class Config:
         self.nside = settings.get("nside", 1024)
         self.npatches = settings.get("npatches", 10)
         self.narray = settings.get("narray", 1)
+        self.patch_side_deg = settings.get("patch_side_deg", 10)
 
         self.pols = settings.get("polarizations", "T")
         self.npol = len(self.pols)
