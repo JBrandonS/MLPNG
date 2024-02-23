@@ -197,7 +197,7 @@ if __name__ == "__main__":
         num_gpus = strategy.num_replicas_in_sync
 
         data_loader = AlmLoader(
-            s.alm_file_complete, flat_output=False, num_replicas=num_gpus, **data_loader_args
+            s.alm_file, flat_output=False, num_replicas=num_gpus, **data_loader_args
         )
         train_dataset, test_dataset, val_dataset = data_loader.get_split(0.8, 0.1, 0.1)
 

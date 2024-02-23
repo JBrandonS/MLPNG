@@ -204,7 +204,7 @@ if __name__ == "__main__":
     strategy = tf.distribute.MirroredStrategy()
     with strategy.scope():
         # Lets load our data
-        tfds_filepath = s.alm_file_complete.replace(".hdf5", "split.tfds")
+        tfds_filepath = s.alm_file.replace(".hdf5", "split.tfds")
         data_loader = TFDSLoader(tfds_filepath, **data_loader_args)
         print(data_loader.shape, data_loader.dtype, data_loader.num_replicas, flush=True)
         train_dataset, test_dataset, val_dataset = data_loader.get_split(0.8, 0.1, 0.1)

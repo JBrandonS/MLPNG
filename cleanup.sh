@@ -20,7 +20,9 @@ if [[ ! $(squeue --me -h -n jupyter) && -f .vscj.out ]]; then
     rm .vscj.out
 fi
 
+rm -rvf logs/almgen/*
 rm -rvf logs/datagen/*
+
 rm -vf logs/*/*.log
 rm -vf nohup.out 
 rm -vf .vscj.out

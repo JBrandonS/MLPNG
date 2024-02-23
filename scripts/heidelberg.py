@@ -94,7 +94,7 @@ if __name__ == "__main__":
 
     # setup the data and get our icov object
     noise_ell, beam_ell = s.noise_beam
-    data = Data(s.lmax, noise_ell, beam_ell, s.polarizations, cosmo)
+    data = Data(s.lmax, noise_ell, beam_ell, s.pols, cosmo)
     icov = data.icov_diag_lensed if s.lensing else data.icov_diag_nonlensed
 
     # generate our beam functioned based on noise
@@ -110,7 +110,7 @@ if __name__ == "__main__":
         icov,
         beam,
         s.lmax,
-        s.polarizations,
+        s.pols,
         precision="double" if s.double_precision else "single",
     )
 

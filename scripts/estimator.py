@@ -3,14 +3,12 @@ import os
 import sys
 
 import camb
+import h5py
 import healpy as hp
 import numpy as np
 from astropy import units as u
-from tensorflow.python.ops.gen_array_ops import rank_eager_fallback
 from ksw import KSW, Cosmology, Data, Shape
 from mpi4py import MPI
-import h5py
-
 from utils import Config, save_data, setup_logging
 
 comm = MPI.COMM_WORLD
@@ -26,19 +24,17 @@ logging.getLogger("astropy").setLevel(logging.ERROR)
 def alm_loader(str_idx):
     """Loads in a single alm given a int in string form. Used inside the KSW code."""
     idx = int(str_idx)
-    dup_idx = idx % s.ndup
-    idx = idx // s.ndup
     pol = 0
 
-    logging.info(
-        f"Loading alm {idx} with dup_idx {dup_idx}, alms shape {alms_from_file.shape} and almngs shape {almngs_from_file.shape}"
+    logging.debug(
+        f"Loading alm {idx}, alms shape {alms.shape} and almngs shape {almngs.shape}"
     )
 
-    alm = np.array(alms_from_file[idx, pol])
-    almng = np.array(almngs_from_file[idx, pol])
-    fnl = fnls[idx, dup_idx]
+    alm = np.array(alms[idx, pol])
+    almng = np.array(almngs[idx, pol])
+    fnl = fnls[idx]
 
-    logging.debug("idx: %s, dup_idx: %s, fnl: %s", idx, dup_idx, fnl)
+    logging.debug("idx: %s, fnl: %s", idx, fnl)
 
     alm = remove_mono_dipole(alm)
     almng = remove_mono_dipole(almng)
@@ -76,15 +72,17 @@ def compute_icov_ell(N, b):
 
 
 if __name__ == "__main__":
-    is_main_comm = rank == 0
-    logger = setup_logging(f"ksw estimator {rank}", level=logging.INFO if is_main_comm else logging.WARNING)
-    s = Config(sys.argv[1], print_settings=is_main_comm)
+    is_main = rank == 0
+    logger = setup_logging(
+        f"estimator {rank}", level=logging.INFO if is_main else logging.WARNING
+    )
+    s = Config(sys.argv[1], print_settings=is_main)
 
     # init camb and setup the reduced bispecturm to local
     logger.info("Running camb")
     camb_params_obj = camb.set_params(**s.cosmo_params)
     cosmo = Cosmology(camb_params_obj)
-    cosmo.compute_transfer(s.cosmo_params["max_l"], verbose=is_main_comm)
+    cosmo.compute_transfer(s.cosmo_params["max_l"], verbose=is_main)
     cosmo.compute_c_ell()
     logger.info("done starting camb")
 
@@ -94,11 +92,11 @@ if __name__ == "__main__":
 
     # setup the data and get our icov object
     noise_ell, beam_ell = s.noise_beam
-    data = Data(s.lmax, noise_ell, beam_ell, s.polarizations, cosmo)
+    data = Data(s.lmax, noise_ell, beam_ell, s.pols, cosmo)
     icov = data.icov_diag_lensed if s.lensing else data.icov_diag_nonlensed
 
     # generate our beam functioned based on noise
-    beam_width_rad = s.beam_width.to_value(u.radian) if not s.disable_noise else 0
+    beam_width_rad = 0 if s.disable_noise else s.beam_width.to_value(u.radian)
 
     def beam(alm):
         if beam_width_rad == 0:
@@ -111,7 +109,7 @@ if __name__ == "__main__":
         icov,
         beam,
         s.lmax,
-        s.polarizations,
+        s.pols,
         precision="double" if s.double_precision else "single",
     )
 
@@ -119,21 +117,19 @@ if __name__ == "__main__":
     alm_strs = np.arange(s.total_sims).astype(str)
 
     # open the files for reading
-    alm_h5_file = h5py.File(s.alm_file_complete, "r", swmr=True, locking=False)
+    alm_file = h5py.File(s.alm_file, "r", swmr=True, locking=False)
 
     # these are not fully loaded into memory
-    alms_from_file = alm_h5_file["alm"]
-    almngs_from_file = alm_h5_file["almng"]
+    alms = alm_file["alm"]
+    almngs = alm_file["almng"]
 
     # lazy load the fnls
     fnls = h5py.File(s.data_file_nc, "r", swmr=True, locking=False)["fnls"]
 
-    logger.debug(
-        f"alms: {alms_from_file.shape}, almngs: {almngs_from_file.shape}, fnls: {fnls.shape}"
-    )
+    logger.debug(f"alms: {alms.shape}, almngs: {almngs.shape}, fnls: {fnls.shape}")
 
     # check for existing ksw state
-    use_mc_file = False  # just a quick disable
+    use_mc_file = True  # just a quick disable
     ksw_mc_file = os.path.join(s.data_dir, "kswmc_" + s.data_str)
     if use_mc_file and os.path.exists(ksw_mc_file):
         logger.info("Loading KSW state from %s", ksw_mc_file)
@@ -142,17 +138,18 @@ if __name__ == "__main__":
         logger.info("No KSW state found, running KSW step")
         # we dont need to step through all the alms to setup the mc
         # so this saves a lot of time
-        alm_strs_i = np.arange(1000) if s.total_sims > 1000 else alm_strs
-        ksw.step_batch(alm_step_loader, alm_strs_i, comm, is_main_comm)
-        logger.debug("Done with KSW step")
+        alm_strs_i = np.arange(100) if s.total_sims > 100 else alm_strs
+        ksw.step_batch(alm_step_loader, alm_strs_i, comm, is_main)
+        logger.info("Done with KSW step")
 
-        if use_mc_file and is_main_comm:
+        if use_mc_file and is_main:
+            logger.debug("Saving KSW state to %s", ksw_mc_file)
             ksw.write_state(ksw_mc_file, comm)
 
     logger.info("Computing estimates")
-    fisher = ksw.compute_fisher()
+    fisher = np.float(ksw.compute_fisher())
     estimates = ksw.compute_estimate_batch(
-        alm_loader, alm_strs, comm, verbose=is_main_comm, fisher=fisher
+        alm_loader, alm_strs, comm, verbose=is_main, fisher=fisher
     )
     logger.info("done")
 
@@ -161,7 +158,7 @@ if __name__ == "__main__":
     fisher_iso = ksw.compute_fisher_isotropic(icov_ell, comm=comm)
 
     # save data
-    if is_main_comm:
+    if is_main:
         sdata = {}
 
         # fnls = load_data(s.data_file_nc, ["fnls"])["fnls"]
@@ -175,6 +172,6 @@ if __name__ == "__main__":
         sdata["errors"] = snr
 
         save_data(s.data_file_nc, sdata)
-        os.replace(s.data_file_nc, s.data_file_complete)
+        os.replace(s.data_file_nc, s.data_file)
 
     logger.info("Finished %s!", rank)

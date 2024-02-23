@@ -1,12 +1,11 @@
 import glob
-import logging
 import os
 import re
 import sys
 
 import h5py
 from tqdm.auto import tqdm
-from utils import Config, setup_logging, setup_logging
+from utils import Config, setup_logging
 
 
 def extract_number(filename):
@@ -80,7 +79,7 @@ if __name__ == "__main__":
     s = Config(sys.argv[1])
 
     # check that we are not using a already completed file!
-    if not os.path.isfile(s.alm_file_complete):
+    if not os.path.isfile(s.alm_file):
         logger.info(f"Combining alm files {s.alm_str} in {s.alm_cache_dir}")
         combine_data(s.alm_cache_dir, s.alm_str, ".alms.hdf5", finalize=True)
 
