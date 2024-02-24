@@ -125,7 +125,7 @@ if __name__ == "__main__":
     s = Config(sys.argv)
     is_main = True if s.job_array_index is None or s.job_array_index == 1 else False
 
-    logger = setup_logging("datagen", logging.INFO if is_main else logging.ERROR)
+    logger = setup_logging("patchgen", logging.INFO if is_main else logging.ERROR)
 
     # Load in the alm data
     if os.path.isfile(s.alm_file):

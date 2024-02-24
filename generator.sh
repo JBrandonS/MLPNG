@@ -1,10 +1,10 @@
 #!/bin/bash
 
 #
-# This script is used to submit a series of jobs to the slurm scheduler to automate the datageneration along the settings files
+# This script is used to submit a series of jobs to the slurm scheduler to automate the generation pipeline along the settings files
 # This can take days to run, so it's best to run it in the background and log out of the ssh session
 #
-# run with `nohup bash datagenerator.sh &` so you can close the terminal and log out of ssh without killing the process
+# run with `nohup bash generator.sh &` so you can close the terminal and log out of ssh without killing the process
 #
 
 SETTINGS_DIR="settings/"
@@ -29,11 +29,11 @@ ARGS=(
     # "--fnl_range" "-100" "100"
 )
 
-echo "Submitting jobs with overrides: ${ARGS[@]}"
+echo "Submitting jobs with overrides:" "${ARGS[@]}"
 
 # the sbatch files to be used
 JOB0="sbatch/almgen.sbatch"
-JOB1="sbatch/datagen.sbatch"
+JOB1="sbatch/patchgen.sbatch"
 JOB2="sbatch/combiner.sbatch"
 JOB3="sbatch/estimator.sbatch"
 
@@ -57,8 +57,8 @@ do
     done
 
     # JOB1_ID=$(sbatch $JOB1 "${ARGS[@]}" "$SETTINGSFILE" | awk '{print $4}')
-    # mkdir -p logs/datagen/"$JOB1_ID"
-    # echo "Submitted Datagen of $x with ID $JOB1_ID"
+    # mkdir -p logs/patchgen/"$JOB1_ID"
+    # echo "Submitted patchgen of $x with ID $JOB1_ID"
     # while squeue -j "$JOB1_ID" | grep -q "$JOB1_ID"; do
     #   sleep 1
     # done

@@ -16,7 +16,7 @@
    - `optweight` should be installed first, just need run `pip install -e .` in the root directory.
    - For `ksw` run `make && pip install -e . && make check` in the root.
       - You will probably see an error on the make check, this seems to be an issue with the ksw test code and does not affect anything.
-4. You can now run the code, using the pipeline with `generator.sh` or manually with ``scripts/almgen.py`, `scripts/datagen.py`, `scripts/combiner.py`, and `scripts/estimator.py`.
+4. You can now run the code, using the pipeline with `generator.sh` or manually with ``scripts/almgen.py`, `scripts/patchgen.py`, `scripts/combiner.py`, and `scripts/estimator.py`.
 
 ### Trainer
 
@@ -38,11 +38,11 @@
 
 The data generator is controlled by settings files located in the `settings/` directory. You can specify a different settings file as an argument when running the Python scripts.
 
-Generate the $A_{lm}s$ with the `almgen.py`, you can generate the patched data with `datagen.py`
+Generate the $A_{lm}s$ with the `almgen.py`, you can generate the patched data with `patchgen.py`
 
 > **Note:** 
 > 
-> It's recommended to use slurm job arrays for this script. If you change the `array` setting in the `sbatch/datagen.sbatch` file, make sure to update the `narray` value in your settings file to match the size of the job arrays. This ensures the `combiner` and `estimator` scripts handle the data correctly.
+> It's recommended to use slurm job arrays for this script. If you change the `array` setting in the `sbatch/patchgen.sbatch` file, make sure to update the `narray` value in your settings file to match the size of the job arrays. This ensures the `combiner` and `estimator` scripts handle the data correctly.
 
 #### Data Combination
 

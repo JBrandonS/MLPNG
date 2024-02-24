@@ -21,7 +21,7 @@ if [[ ! $(squeue --me -h -n jupyter) && -f .vscj.out ]]; then
 fi
 
 rm -rvf logs/almgen/*
-rm -rvf logs/datagen/*
+rm -rvf logs/patchgen/*
 
 rm -vf logs/*/*.log
 rm -vf nohup.out 
