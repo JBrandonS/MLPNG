@@ -123,9 +123,7 @@ if __name__ == "__main__":
     alms = alm_file["alm"]
     almngs = alm_file["almng"]
 
-    # lazy load the fnls
-    # TODO: just generate the random fnls
-    fnls = h5py.File(s.data_file_nc, "r", swmr=True, locking=False)["fnls"]
+    fnls = np.random.uniform(s.fnl_min, s.fnl_max, s.total_sims)
 
     logger.debug(f"alms: {alms.shape}, almngs: {almngs.shape}, fnls: {fnls.shape}")
 
@@ -172,7 +170,7 @@ if __name__ == "__main__":
         sdata["errors"] = snr
 
         #maybe make this its own file
-        save_data(s.data_file_nc, sdata)
-        os.replace(s.data_file_nc, s.data_file)
+        save_data(s.data_file_nc + 'est', sdata)
+        os.replace(s.data_file_nc + 'est', s.data_file + 'est')
 
     logger.info("Finished %s!", rank)

@@ -20,10 +20,10 @@ SETTINGS=(
 # override the json / default settings with command line arguments
 # see config.py for the meaning of these settings
 ARGS=(
-  "--nsims" "10"
+  "--nsims" "10000"
     # "--lensing"
     # "--disable_lensing"
-    # "--enable_noise"
+    # "--noise"
     # "--disable_noise"
     # "--force_alm_gen"
     # "--fnl_range" "-100" "100"
