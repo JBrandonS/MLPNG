@@ -61,10 +61,10 @@ def generate_almngs(plot=False):
         dtype=s.c_dtype,
     )
 
+    logger.info("Applying beam to alms")
+    # KSW expects the alms to be coevolved with the beam
     # Make sure we dont get error from the beam_ell being a vector
     beam_ell_2d = np.atleast_2d(beam_ell)
-
-    # KSW expects the alms to be coevolved with the beam
     for i in range(s.nsims):
         for j in range(s.npol):
             alms[i, j] = hp.almxfl(alms[i, j], beam_ell_2d[j] ** -1)
@@ -125,7 +125,7 @@ if __name__ == "__main__":
     # $$B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}$$
     # where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
 
-    s = Config(sys.argv[1])
+    s = Config(sys.argv[1:])
     is_main = True if s.job_array_index is None or s.job_array_index == 1 else False
     logger = setup_logging("almgen", logging.INFO if is_main else logging.ERROR)
 

@@ -11,13 +11,15 @@ def setup_logging(
     name=__name__,
     level=logging.INFO,
     handlers=[logging.StreamHandler(sys.stdout)],
+    set_base=False
 ):
-    logging.basicConfig(
-        # level=level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%d-%b-%y %H:%M:%S",
-        handlers=handlers,
-    )
+    if set_base:
+        logging.basicConfig(
+            # level=level,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            datefmt="%d-%b-%y %H:%M:%S",
+            handlers=handlers,
+        )
     logger = logging.getLogger(name)
     logger.setLevel(level)
     return logger

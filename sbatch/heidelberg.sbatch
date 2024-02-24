@@ -5,7 +5,7 @@
 #SBATCH --mem-per-cpu=40G
 #SBATCH --cpus-per-task=1
 #SBATCH --output=logs/estimator/%j-hei.log
-#SBATCH --time=8:00:00
+#SBATCH --time=1-00:00:00
 
 module purge
 module load spack conda 
