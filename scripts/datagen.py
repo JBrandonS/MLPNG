@@ -64,7 +64,7 @@ def cutSqPatches_pixell(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, alm, fnl, al
     car_map = curvedsky.alm2map(alms, fs_map)
 
     if (s.job_array_index is None or s.job_array_index == 1):
-        map2hp = reproject.map2healpix(pixell_map, s.lmax)
+        map2hp = reproject.map2healpix(car_map, s.lmax)
         hp.mollview(map2hp, min=-650.0, max=650, title=f"fnl = {fnl}")
         moll_path = os.join(s.plot_dir, s.base_name + f"_{fnl}_fullsky.png")
         plt.savefig(moll_path)
