@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=32
 #SBATCH --output=logs/almgen/%A/%j.log
 #SBATCH --array=1-10
-#SBATCH --time=10:00:00
+#SBATCH --time=1-00:00:00
 
 module purge
 module load spack conda

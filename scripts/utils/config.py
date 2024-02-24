@@ -12,8 +12,16 @@ from utils import setup_logging
 
 def parse_args(args):
     parser = argparse.ArgumentParser()
-    parser.add_argument('settings_file', type=str, help='The settings file to use')
+    parser.add_argument('settings_file', type=str, help='Not fully implemented')
+
     parser.add_argument('--nsims', type=int, help='The number of sims to use')
+    parser.add_argument('--narray', type=int, help='The number of slurm arrays used in the sbatch script')
+    parser.add_argument('--lensing', action='store_true', help='Use lensing')
+    parser.add_argument('--disable_lensing', action='store_false', dest='lensing', help='Do not use lensing')
+    parser.add_argument('--disable_noise', action='store_true', help='Disable noise')
+    parser.add_argument('--enable_noise', action='store_false', dest='disable_noise', help='Enables noise')
+    parser.add_argument('--force_alm_gen', action='store_true', help='Force alm generation')
+    parser.add_argument('--fnl_range', type=float, nargs=2, help='The range of fnl values to use')
 
     return parser.parse_args(args)
 
@@ -22,7 +30,7 @@ def safe_get(a, b):
     return a if a is not None else b
 
 class Config:
-    def __init__(self, args, print_settings=True):
+    def __init__(self, args=None, print_settings=True):
         logger = setup_logging("config")
         args = parse_args(args)
         with open(args.settings_file, "r") as f:
@@ -32,26 +40,25 @@ class Config:
             logger.info(f"Loading settings from file {args.settings_file}:")
             pprint.PrettyPrinter(indent=2).pprint(settings)
 
-        self.force_alm_gen = settings.get("force_alm_gen", False)
-
+        self.force_alm_gen = safe_get(args.force_alm_gen, settings.get("force_alm_gen", False))
         self.cosmo_params = settings.get("cosmo_params")
 
         # main parameters
         self.lmax = self.cosmo_params["lmax"]
         self.nside = settings.get("nside", 1024)
         self.npatches = settings.get("npatches", 10)
-        self.narray = settings.get("narray", 1)
         self.patch_side_deg = settings.get("patch_side_deg", 10)
 
         self.pols = settings.get("polarizations", "T")
         self.npol = len(self.pols)
         self.pol_chars = "".join(self.pols)
 
-        self.lensing = settings.get("lensing", False)
-        self.disable_noise = settings.get("disable_noise", True)
+        self.lensing = safe_get(args.lensing, settings.get("lensing", False))
+        self.disable_noise = safe_get(args.disable_noise, settings.get("disable_noise", True))
 
         # find out the number of sims
         self.nsims = safe_get(args.nsims, settings.get("nsims", 1))
+        self.narray = safe_get(args.narray, settings.get("narray", 1))
         self.total_sims = self.nsims * self.narray
 
         job_tasks = os.environ.get("SLURM_ARRAY_TASK_COUNT")
@@ -73,7 +80,7 @@ class Config:
         self.npix = hp.nside2npix(self.nside)
         self.ells = np.arange(self.nell)
 
-        self.fnl_min, self.fnl_max = settings.get("fnl_range", [0, 0])
+        self.fnl_min, self.fnl_max = safe_get(args.fnl_range, settings.get("fnl_range", (-1, 1)))
 
         # set up units
         self.double_precision = self.settings.get("double_precision", False)

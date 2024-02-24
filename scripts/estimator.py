@@ -76,7 +76,7 @@ if __name__ == "__main__":
     logger = setup_logging(
         f"estimator {rank}", level=logging.INFO if is_main else logging.WARNING
     )
-    s = Config(sys.argv[1], print_settings=is_main)
+    s = Config(sys.argv, print_settings=is_main)
 
     # init camb and setup the reduced bispecturm to local
     logger.info("Running camb")
@@ -124,6 +124,7 @@ if __name__ == "__main__":
     almngs = alm_file["almng"]
 
     # lazy load the fnls
+    # TODO: just generate the random fnls
     fnls = h5py.File(s.data_file_nc, "r", swmr=True, locking=False)["fnls"]
 
     logger.debug(f"alms: {alms.shape}, almngs: {almngs.shape}, fnls: {fnls.shape}")
@@ -161,7 +162,6 @@ if __name__ == "__main__":
     if is_main:
         sdata = {}
 
-        # fnls = load_data(s.data_file_nc, ["fnls"])["fnls"]
         fnls = fnls.ravel()
         est_length = estimates.shape[0]
         snr = (estimates - fnls[est_length]) * np.sqrt(fisher)
@@ -171,6 +171,7 @@ if __name__ == "__main__":
         sdata["estimates"] = estimates
         sdata["errors"] = snr
 
+        #maybe make this its own file
         save_data(s.data_file_nc, sdata)
         os.replace(s.data_file_nc, s.data_file)
 

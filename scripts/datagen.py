@@ -122,7 +122,7 @@ if __name__ == "__main__":
     # $$B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}$$
     # where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
 
-    s = Config(sys.argv[1:])
+    s = Config(sys.argv)
     is_main = True if s.job_array_index is None or s.job_array_index == 1 else False
 
     logger = setup_logging("datagen", logging.INFO if is_main else logging.ERROR)
@@ -202,6 +202,11 @@ if __name__ == "__main__":
         i, pol = args[idx]
         patches[i, pol] = result
 
+    # remove the partial file if it exists
+    if os.path.isfile(s.data_file_nc):
+        logger.debug("Removing stale data file: %s", s.data_file_nc)
+        os.remove(s.data_file_nc)
+
     # Save data
     sdata = {}
     sdata["fnls"] = fnls
@@ -213,11 +218,6 @@ if __name__ == "__main__":
 
         plot_file = os.path.join(s.plot_dir, s.base_name + "_patches.png")
         plot_patches(patches, 10, save_file=plot_file)
-
-    # remove the partial file if it exists
-    if os.path.isfile(s.data_file_nc):
-        logger.debug("Removing stale data file: %s", s.data_file_nc)
-        os.remove(s.data_file_nc)
 
     save_data(s.data_file_nc, sdata)
     logger.info("Done with Generation!")
