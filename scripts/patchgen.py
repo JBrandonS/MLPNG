@@ -106,7 +106,7 @@ def get_fs_patch_geo():
 
 # helper function to process a single patch
 def process_patch(i, pol):
-    return np.array(cutPatches(alms[i, pol], fnls[i], almngs[i, pol]))
+    return np.array(cutPatches(alms[i, pol], fnls[i, pol], almngs[i, pol]))
 
 
 if __name__ == "__main__":
@@ -130,10 +130,10 @@ if __name__ == "__main__":
     # Load in the alm data
     if os.path.isfile(s.alm_file):
         logger.info(f"loading alms from completed file {s.alm_file}")
-        ldata = load_data(s.alm_file, ["alm", "almng"])
+        ldata = load_data(s.alm_file, ["alm", "almng", "fnls"])
     elif os.path.isfile(s.alm_file_partial):
         logger.info(f"Loading alms from partial file {s.alm_file_partial}")
-        ldata = load_data(s.alm_file_partial, ["alm", "almng"])
+        ldata = load_data(s.alm_file_partial, ["alm", "almng", "fnls"])
     else:
         logger.fatal("No alms found, please run almgen.py first")
         exit(1)
@@ -141,6 +141,7 @@ if __name__ == "__main__":
     # and read in our alms and almngs, since ldata is a h5 dataset these are not in memory
     alms = ldata["alm"]
     almngs = ldata["almng"]
+    fnls = ldata["fnls"]
 
     # here we setup camb since it is needed for the sims in the patch generation
     camb_params_obj = camb.set_params(**s.cosmo_params)
@@ -174,9 +175,6 @@ if __name__ == "__main__":
         cutPatches = partial(cutSqPatches_lenspyx, s, *patch_geo, cl_phi)
     else:
         cutPatches = partial(cutSqPatches_pixell, s, *patch_geo)
-
-    # Here we generate the fnls
-    fnls = uniform(s.fnl_min, s.fnl_max, s.nsims)
 
     # Start the patch generation, create the array to store the patches
     patches = np.empty(

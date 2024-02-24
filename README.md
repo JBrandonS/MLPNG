@@ -16,7 +16,7 @@
    - `optweight` should be installed first, just need run `pip install -e .` in the root directory.
    - For `ksw` run `make && pip install -e . && make check` in the root.
       - You will probably see an error on the make check, this seems to be an issue with the ksw test code and does not affect anything.
-4. You can now run the code, using the pipeline with `generator.sh` or manually with ``scripts/almgen.py`, `scripts/patchgen.py`, `scripts/combiner.py`, and `scripts/estimator.py`.
+4. You can now run the code, using the pipeline with `generator.sh` or manually with `scripts/almgen.py`, `scripts/patchgen.py`, `scripts/combiner.py`, and `scripts/estimator.py`.
 
 ### Trainer
 
@@ -38,15 +38,15 @@
 
 The data generator is controlled by settings files located in the `settings/` directory. You can specify a different settings file as an argument when running the Python scripts.
 
-Generate the $A_{lm}s$ with the `almgen.py`, you can generate the patched data with `patchgen.py`
+Generate the $A_{lm}s$ with the `almgen.py`, optinally, you can generate the patched data with `patchgen.py`
 
 > **Note:** 
 > 
-> It's recommended to use slurm job arrays for this script. If you change the `array` setting in the `sbatch/patchgen.sbatch` file, make sure to update the `narray` value in your settings file to match the size of the job arrays. This ensures the `combiner` and `estimator` scripts handle the data correctly.
+> It's recommended to use slurm job arrays for this script. If you change the `array` setting in the `sbatch` files, make sure to update the `narray` value in your settings file to match the size of the job arrays, or set the `--narray` arg in the running script. This ensures the `combiner` and `estimator` scripts handle the data correctly.
 
 #### Data Combination
 
-After data generation, if you're using job arrays, the data will be in separate files per job. You can use the `combiner.py` script to combine the data into a single file. Simply point it to the correct settings file. See the `generator.sh` script for an example of how to automate this.
+After data generation, if you're using job arrays, the data will be in separate files per job. You can use the `combiner.py` script to combine the data into a single file. Simply point it to the correct settings file. 
 
 #### Data Estimation
 
@@ -60,15 +60,15 @@ For convenience, a `generator.sh` script is provided. To use it:
 2. Check the sbatch files in `sbatch/`. You may need to correct the array number to match the settings you will be using. Check and change the conda env used in all the `sbatch` files in `sbatch/`.
 3. Point the `generator.sh` script to the correct settings file and run it.
 
-For large runs you will want to use the command `nohup bash generator.sh &`. This runs the script in the background (`&`) and keeps the process running if your connection drops (`nohup`). Once ran it will be save to log out of your ssh connection. **This script is safe to run on the log-in nodes as it does no intensive work and spends most of its time idle**.
+> For large runs you will want to use the command `nohup bash generator.sh &`. This runs the script in the background (`&`) and keeps the process running if your connection drops (`nohup`). Once ran it will be safe to log out of your ssh connection. **This script is safe to run on the log-in nodes as it does no intensive work and spends most of its time idle**.
 
 ### Training
 
 The training pipeline is very simple. From superpod,
 
 0. Ensure your data is fully generated and avaible on the superpod filesystem.
-1. Create your model, follow the example in `scripts/isensee_attn.py`, or any of the other model files.
-2. Point the `trainer.sh` script to the correct settings files you would like to train on and point the `sbatch $JOB1 "scripts/isensee_attn.py" "$SETTINGSFILE"` line to the correct model file.
+1. Create your model, follow the example in `scripts/attn_alm.py`, or any of the other model files in `scripts/altmodels`.
+2. Point the `trainer.sh` script to the correct settings and model files.
 3. Run the `trainer.sh` script.
 
 ## Some Notes
@@ -81,13 +81,13 @@ The data is stored in `hdf5` files as they allow reading and appending data with
   - `alm` : the gaussian $a_{\ell m}$ values in `shape: (nsims, len(polarizations), data)`
   - `almng`: the non-gaussian $a_{\ell m}^{NG}$ values in `shape :(nsims, len(polarizations), data)`
     - where the size of `data` depends on the settings used in a complicated way, see `healpy` or `pixell` documentation.
+  - `fnls`: the fnls valuse to be used ine `shape (nsims, len(polarizations))`
   - `settings`: A copy of the settings file used to generate the data, for reference.
 
 - For the data files in `data/[un]lensed/`:
   - `estimates`: the KSW estimates of the bispectrum in `shape: (nsims,)`
   - `errors`: the percent diff errors of the estimates vs true fnls in `shape: (nsims,)`
-  - `fnls`: the fnl values used to generate the data in `shape: (nsims,)`
-    - if you need to align the fnls with the patches use `np.repeat(fnls, npatches)`.
+  - `fnls`: the fnl values used to generate the data in `shape: (nsims, len(polarizations))`
   - `patches`: the patches used to generate the data in `shape: (nsims, len(polarizations), npatches, nside, nside)`
   - `settings`: A copy of the settings file used to generate the data for reference.
 

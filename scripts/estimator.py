@@ -27,15 +27,14 @@ def alm_loader(str_idx):
     pol = 0
 
     logging.debug(
-        f"Loading alm {idx}, alms shape {alms.shape} and almngs shape {almngs.shape}"
+        f"Loading alm {idx}, alms shape {alms.shape} and almngs shape {almngs.shape}, fnl {fnls[idx]}"
     )
 
     alm = np.array(alms[idx, pol])
     almng = np.array(almngs[idx, pol])
     fnl = fnls[idx]
 
-    logging.debug("idx: %s, fnl: %s", idx, fnl)
-
+    # not sure if these are really needed
     alm = remove_mono_dipole(alm)
     almng = remove_mono_dipole(almng)
 
@@ -122,8 +121,7 @@ if __name__ == "__main__":
     # these are not fully loaded into memory
     alms = alm_file["alm"]
     almngs = alm_file["almng"]
-
-    fnls = np.random.uniform(s.fnl_min, s.fnl_max, s.total_sims)
+    fnls = alm_file["fnls"]
 
     logger.debug(f"alms: {alms.shape}, almngs: {almngs.shape}, fnls: {fnls.shape}")
 

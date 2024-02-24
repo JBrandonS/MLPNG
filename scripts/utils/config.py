@@ -12,7 +12,7 @@ from utils import setup_logging
 
 def parse_args(args):
     parser = argparse.ArgumentParser()
-    parser.add_argument('settings_file', type=str, help='Not fully implemented')
+    parser.add_argument('settings_file', type=str, help='Not finished')
 
     parser.add_argument('--nsims', type=int, help='The number of sims to use')
     parser.add_argument('--narray', type=int, help='The number of slurm arrays used in the sbatch script')
@@ -22,6 +22,7 @@ def parse_args(args):
     parser.add_argument('--noise', action='store_false', dest='disable_noise', help='Enables noise')
     parser.add_argument('--force_alm_gen', action='store_true', help='Force alm generation')
     parser.add_argument('--fnl_range', type=float, nargs=2, help='The range of fnl values to use')
+    parser.add_argument('--base_dir', type=str, help='The base directory to use')
 
     return parser.parse_args(args)
 
@@ -54,7 +55,6 @@ class Config:
         self.pol_chars = "".join(self.pols)
 
         self.lensing = safe_get(args.lensing, settings.get("lensing", False))
-        self.disable_noise = safe_get(args.disable_noise, settings.get("disable_noise", True))
 
         # find out the number of sims
         self.nsims = safe_get(args.nsims, settings.get("nsims", 1))
@@ -92,6 +92,7 @@ class Config:
             self.c_dtype = np.complex64
 
         # get the beam and noise
+        self.disable_noise = safe_get(args.disable_noise, settings.get("disable_noise", True))
         self.beam_width = settings.get("beam_width", 1) * u.arcmin
         self.noise_scale_tt = settings.get("noise_scale_tt", 1) * u.arcmin
         self.noise_scale_ee = settings.get("noise_scale_ee", 1) * u.arcmin
@@ -102,7 +103,7 @@ class Config:
         self.radii, self.drs = self.get_radii(1, 50000)
 
         # paths
-        self.base_dir = settings.get("base_dir", "data")
+        self.base_dir = safe_get(args.base_dir, settings.get("base_dir", "data"))
         self.alm_cache_dir = os.path.join(
             self.base_dir, settings.get("alm_cache_dir", "alm_cache")
         )

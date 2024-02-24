@@ -95,6 +95,13 @@ def generate_almngs(plot=False):
     sdata = {}
     sdata["alm"] = alms
     sdata["almng"] = sim_data
+    sdata["fnl"] = np.array(
+        [
+            [uniform(s.fnl_min, s.fnl_max) for _ in range(s.npols)]
+            for _ in range(s.nsims)
+        ],
+        dtype=s.r_dtype,
+    )
     if is_main:
         # save the settings if this is the main process
         sdata["settings"] = s.settings
@@ -128,11 +135,6 @@ if __name__ == "__main__":
     s = Config(sys.argv[1:])
     is_main = True if s.job_array_index is None or s.job_array_index == 1 else False
     logger = setup_logging("almgen", logging.INFO if is_main else logging.ERROR)
-
-    # disable some info logs from healpy that clutter the output with
-    # healpy - INFO - Sigma is 0.000000 arcmin (0.000000 rad)
-    # healpy - INFO - -> fwhm is 0.000000 arcmin
-    # logging.getLogger("healpy").setLevel(logging.ERROR)
 
     # check for completed alm runs if we are not forcing alm generation
     if not s.force_alm_gen:
