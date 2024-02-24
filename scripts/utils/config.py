@@ -19,7 +19,7 @@ def parse_args(args):
     parser.add_argument('--lensing', action='store_true', help='Use lensing')
     parser.add_argument('--disable_lensing', action='store_false', dest='lensing', help='Do not use lensing')
     parser.add_argument('--disable_noise', action='store_true', help='Disable noise')
-    parser.add_argument('--enable_noise', action='store_false', dest='disable_noise', help='Enables noise')
+    parser.add_argument('--noise', action='store_false', dest='disable_noise', help='Enables noise')
     parser.add_argument('--force_alm_gen', action='store_true', help='Force alm generation')
     parser.add_argument('--fnl_range', type=float, nargs=2, help='The range of fnl values to use')
 
