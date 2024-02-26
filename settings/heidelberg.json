@@ -22,11 +22,13 @@
     "nsims" : 1000,
     "narray": 1,                   
     "npatches" : 10,
-    "lensing" : false,
-    "disable_noise" : false,
+
     "fnl_range":[-50, 50],        
     "nside":512,
-    "force_alm_gen" : false, 
+    
+    "lensing" : false,
+    
+    "disable_noise" : false, 
     "noise_scale_tt" : 43,
     "noise_scale_ee" : 0,
     "noise_scale_te" : 0, 

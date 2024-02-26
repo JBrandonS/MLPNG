@@ -10,8 +10,8 @@
         "mnu": 0.06,
         "tau": 0.0561,
         "TCMB": 2.7255,
-        "max_l": 1000,
-        "lmax": 750,
+        "max_l": 2500,
+        "lmax": 2000,
         "lens_potential_accuracy": 2,
         "DoLateRadTruncation": false,
         "AccuracyBoost":2.0,
@@ -21,14 +21,13 @@
     "nsims" : 100,
     "narray": 10,                   
     "npatches" : 10,
-    
+
     "fnl_range":[-1000, 1000],        
-    "nside":256,
+    "nside":2048,
 
     "lensing" : true,
-
+    
     "disable_noise" : false,
-    "force_alm_gen" : false, 
     "noise_scale_tt" : 1,
     "noise_scale_ee" : 1.41421,
     "noise_scale_te" : 0, 

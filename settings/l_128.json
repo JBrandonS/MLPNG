@@ -21,12 +21,13 @@
     "nsims" : 100,
     "narray": 10,                   
     "npatches" : 10,
-    "lensing" : true,
-    "disable_noise" : false,
-    "duplicate_backgrounds": 10,
+
     "fnl_range":[-1000, 1000],        
     "nside":128,
-    "force_alm_gen" : false, 
+
+    "lensing" : true,
+
+    "disable_noise" : false,
     "noise_scale_tt" : 1,
     "noise_scale_ee" : 1.41421,
     "noise_scale_te" : 0, 
