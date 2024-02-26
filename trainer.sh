@@ -14,7 +14,7 @@ ARGS=(
     # "--base_dir" "data-shared"
 )
 
-SETTINGS=( "ul_nn_128_large.json" )
+SETTINGS=( "l_128.json" )
 
 SETTINGS_DIR="settings/"
 
