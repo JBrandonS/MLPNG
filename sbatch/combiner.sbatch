@@ -4,7 +4,7 @@
 #SBATCH --ntasks=1
 #SBATCH --mem=500G
 #SBATCH --cpus-per-task=10
-#SBATCH --output=logs/combiner/%j.log
+#SBATCH --output=data/logs/combiner/%j.log
 #SBATCH --time=1-00:00:00
 
 module purge

@@ -4,7 +4,7 @@
 #SBATCH --ntasks=1
 #SBATCH --mem=500G
 #SBATCH --cpus-per-task=32
-#SBATCH --output=logs/patchgen/%A/%j.log
+#SBATCH --output=data/logs/patchgen/%A/%j.log
 #SBATCH --array=1-10
 #SBATCH --time=1-00:00:00
 

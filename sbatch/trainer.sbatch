@@ -5,7 +5,7 @@
 #SBATCH --mem=1000G
 #SBATCH --cpus-per-task=64
 #SBATCH --gpus-per-task=4
-#SBATCH --output=logs/training/%j.log
+#SBATCH --output=data/logs/training/%j.log
 #SBATCH --time=2-00:00:00
 
 module purge

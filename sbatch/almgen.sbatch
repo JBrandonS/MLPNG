@@ -3,8 +3,8 @@
 #SBATCH --partition=standard-s
 #SBATCH --ntasks=1
 #SBATCH --mem=500G
-#SBATCH --cpus-per-task=32
-#SBATCH --output=logs/almgen/%A/%j.log
+#SBATCH --cpus-per-task=64
+#SBATCH --output=data/logs/almgen/%A/%j.log
 #SBATCH --array=1-10
 #SBATCH --time=1-00:00:00
 
