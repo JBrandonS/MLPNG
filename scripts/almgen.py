@@ -174,8 +174,7 @@ if __name__ == "__main__":
     logger.debug("Non-gaussian Alm shape: %s", almngs.shape)
 
     # and get the fnls
-    # TODO: s.fnl_max + 1 to include the max value
-    fnls = np.random.uniform(s.fnl_min, s.fnl_max, (s.nsims, s.npol, 1)).astype(
+    fnls = np.random.uniform(s.fnl_min, s.fnl_max+1, (s.nsims, s.npol, 1)).astype(
         s.r_dtype
     )
 
