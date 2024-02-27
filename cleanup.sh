@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# a fairly destructive cleaner
+
 FULL_CLEAN=0
 CLEAN_INCOMPLETE=0
 
@@ -20,37 +22,31 @@ if [[ ! $(squeue --me -h -n jupyter) && -f .vscj.out ]]; then
     rm .vscj.out
 fi
 
-rm -rvf logs/almgen/*
-rm -rvf logs/patchgen/*
-
-rm -vf logs/*/*.log
-rm -vf nohup.out 
-rm -vf .vscj.out
+rm -rvf logs/almgen
+rm -rvf logs/patchgen
+rm -rvf logs/combiner
+rm -rvf logs/estimator
 
 cd "data" || ( echo "cannot find data folder" && exit )
 echo "Currently in directory: $(pwd)"
 
-rm -rvf plots/*
-rm -rvf models/*
-rm -rvf tensorboard/*
-rm -rvf wandb/*
+rm -rvf plots
+rm -rvf models
+rm -rvf tensorboard
+rm -rvf wandb
 
 if [[ "$CLEAN_INCOMPLETE" -eq 1 ]] || [[ "$FULL_CLEAN" -eq 1 ]]; then
-    directories=('alm_cache' 'lensed' 'unlensed')
+    directories=('alms' 'patches')
     for dir in "${directories[@]}"; do
-        cd "$dir" 2>/dev/null || continue
-        echo "Currently in directory: $(pwd)"
 
         if [[ "$CLEAN_INCOMPLETE" -eq 1 ]] || [[ "$FULL_CLEAN" -eq 1 ]]; then
-            rm -rvf ./*.nc
+            rm -rvf "${dir:?}"/*.nc
         fi
 
         # If the --full flag is passed, remove all data files in the directory
         if [[ "$FULL_CLEAN" -eq 1 ]]; then
-            rm -rvf ./*
+            rm -rvf "${dir:?}"
         fi
-
-        cd ..
     done
 fi
 

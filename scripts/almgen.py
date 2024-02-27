@@ -6,6 +6,7 @@ import camb
 import healpy as hp
 import numpy as np
 from joblib import Parallel, delayed
+from sympy.physics.units import Pa
 from ksw import Cosmology, Data
 from ksw.radial_functional import radial_func
 from numpy.random import randint, uniform
@@ -13,13 +14,26 @@ from scipy.interpolate import CubicSpline
 from tqdm.auto import tqdm
 from utils import Config, save_data, setup_logging
 from utils.plots import plot_cl_alm
+from itertools import product
 
 
-def get_alm(alm, bl_div_cl, alpha_l, r, dr):
+def remove_mono_dipole(alm):
+    """
+    Remove the monopole and dipole terms from the alms.
+    Note that we do not need -m's due to symmetry
+    """
+    lmax = hp.Alm.getlmax(len(alm))
+    alm[..., hp.Alm.getidx(lmax, 0, 0)] = 0.0  # Remove monopole
+    alm[..., hp.Alm.getidx(lmax, 1, 0)] = 0.0  # Remove dipole
+    alm[..., hp.Alm.getidx(lmax, 1, 1)] = 0.0  # Remove dipole
+    return alm
+
+
+def get_alm(alm, bl_div_cl, alpha_l, r, dr, nside, lmax):
     """This calculates the alms from the precalculated values"""
     Balm = hp.almxfl(alm, bl_div_cl, inplace=False)
-    B = hp.alm2map(Balm, nside=s.nside, lmax=s.lmax, pol=False, inplace=False)
-    inner = hp.map2alm(B**2, lmax=s.lmax, pol=False, use_pixel_weights=True)
+    B = hp.alm2map(Balm, nside=nside, lmax=lmax, pol=False, inplace=False)
+    inner = hp.map2alm(B**2, lmax=lmax, pol=False, use_pixel_weights=True)
     kernel = hp.almxfl(inner, alpha_l, inplace=False)
     return dr * r**2 * kernel
 
@@ -29,8 +43,15 @@ def interpolate_ells(func, ells_sparse, ls, axis=1):
     return CubicSpline(ells_sparse, func, axis)(ls)
 
 
-def generate_almngs(plot=False):
+def generate_almngs(alms):
     """This code completely calculates, and saves, the alms and almngs."""
+    # $$a_{\ell m}^{NG,loc'} = \int dr r^2 \left[ \alpha_\ell(r)\left(\int d^2 \hat{n} Y_{\ell m}^\star (\hat{n}) B(r,\hat{n})^2 \right)\right]$$
+    # and
+    # $$\alpha_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^2 \Delta_\ell^T(k) j_\ell(k r)$$
+    # $$\beta_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^{-1} \Delta_\phi \Delta_\ell^T(k) j_\ell(k r)$$
+    # $$B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}$$
+    # where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
+
     A = (3 / 5) ** 2 * 2 * np.pi**2 * s.cosmo_params["As"]
     delta_phi = (tr_k) ** ((s.cosmo_params["ns"] - 1)) / (tr_k**3)
 
@@ -51,90 +72,54 @@ def generate_almngs(plot=False):
     bl_div_cl = np.concatenate(np.array([interpolate_ells(div, tr_ells, s.ells)]))
     bl_div_cl = np.ascontiguousarray(bl_div_cl)
 
-    # Each alm takes ~30Mb at 1024. This is fast enough we don't need to parallelize even for very large datasets
-    logger.info("Starting gaussian Alm generation")
-    alms = np.array(
-        [
-            ksw_data.compute_alm_sim(s.lensing)
-            for _ in tqdm(range(s.nsims), desc="Alm progress")
-        ],
-        dtype=s.c_dtype,
-    )
-
-    logger.info("Applying beam to alms")
-    # KSW expects the alms to be coevolved with the beam
-    # Make sure we dont get error from the beam_ell being a vector
-    beam_ell_2d = np.atleast_2d(beam_ell)
-    for i in range(s.nsims):
-        for j in range(s.npol):
-            alms[i, j] = hp.almxfl(alms[i, j], beam_ell_2d[j] ** -1)
-
     logger.info("Starting non-gaussian Alm generation")
-    sim_data = np.zeros((s.nsims, s.npol, s.nelem), dtype=s.c_dtype)
-    for i in tqdm(range(s.nsims), desc="NG Alm progress"):
-        for pol in range(s.npol):
-            # create a generator
-            alm_gen = Parallel(n_jobs=-1, verbose=0, return_as="generator")(
-                delayed(get_alm)(
-                    alms[i, pol],
-                    bl_div_cl[ri, :, pol],
-                    alpha_l[ri, :, pol],
-                    s.radii[ri],
-                    s.drs[ri],
-                )
-                for ri in range(len(s.drs))
+    almng = np.zeros((s.nsims, s.npol, s.nelem), dtype=s.c_dtype)
+    temp_folder = os.environ.get("SCRATCH", None)
+    logger.debug(f"Using temp folder for almng generation: {temp_folder}")
+
+    for i, pol in tqdm(
+        product(range(s.nsims), range(s.npol)), total=s.nsims * s.npol, desc="Almng", miniters=10
+    ):
+
+        # create a generator
+        alm_gen = Parallel(
+            n_jobs=-1, verbose=0, return_as="generator", temp_folder=temp_folder
+        )(
+            delayed(get_alm)(
+                alms[i, pol],
+                bl_div_cl[ri, :, pol],
+                alpha_l[ri, :, pol],
+                s.radii[ri],
+                s.drs[ri],
+                s.nside,
+                s.lmax
             )
+            for ri in range(len(s.drs))
+        )
 
-            # consume
-            for alm in alm_gen:
-                sim_data[i, pol] += alm
+        # consume
+        for alm in alm_gen:
+            almng[i, pol] += alm
 
-    logger.info("Done!")
-
-    logger.info("Saving alm and almng data")
-    sdata = {}
-    sdata["alm"] = alms
-    sdata["almng"] = sim_data
-    sdata["fnl"] = np.array(
-        [
-            [uniform(s.fnl_min, s.fnl_max) for _ in range(s.npols)]
-            for _ in range(s.nsims)
-        ],
-        dtype=s.r_dtype,
-    )
-    if is_main:
-        # save the settings if this is the main process
-        sdata["settings"] = s.settings
-
-        if plot:
-            # polt a random alm and almng for this run
-            i, j = np.random.randint(s.nsims), np.random.randint(s.npol)
-            alm_plot = os.path.join(s.plot_dir, s.base_name + f"_alm[{i},{j}].png")
-            almng_plot = os.path.join(s.plot_dir, s.base_name + f"_almng[{i},{j}].png")
-
-            logger.info("Plotting alm and almng")
-            plot_cl_alm(alms[i, j], save_file=alm_plot, plot_camb=True, c_ells=c_ells)
-            # Don't add camb to the ng plots since they are a much small scale
-            plot_cl_alm(sim_data[i, j], save_file=almng_plot, plot_camb=False)
-
-    save_data(s.alm_file_nc, sdata)
-    os.replace(s.alm_file_nc, s.alm_file_partial)
+    return almng
 
 
 if __name__ == "__main__":
-    # This code generates the alms
-    # $$a_{\ell m} = a_{\ell m}^{{G}} + f_{NL}^X a_{\ell m}^{NG}$$
-    # Most of this code is to calculate the term (eq. 27)
-    # $$a_{\ell m}^{NG,loc'} = \int dr r^2 \left[ \alpha_\ell(r)\left(\int d^2 \hat{n} Y_{\ell m}^\star (\hat{n}) B(r,\hat{n})^2 \right)\right]$$
-    # and
-    # $$\alpha_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^2 \Delta_\ell^T(k) j_\ell(k r)$$
-    # $$\beta_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^{-1} \Delta_\phi \Delta_\ell^T(k) j_\ell(k r)$$
-    # $$B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}$$
-    # where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
+    r"""
+    This code generates the alms
+    $$a_{\ell m} = a_{\ell m}^{{G}} + f_{NL}^X a_{\ell m}^{NG}$$
+    with
+    $a_{\ell m}^{NG,loc'} = \int dr r^2 \left[ \alpha_\ell(r)\left(\int d^2 \hat{n} Y_{\ell m}^\star (\hat{n}) B(r,\hat{n})^2 \right)\right]$
+    and
+    $\alpha_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^2 \Delta_\ell^T(k) j_\ell(k r)$
+    $\beta_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^{-1} \Delta_\phi \Delta_\ell^T(k) j_\ell(k r)$
+    $B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}$
+    where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
+    """
 
+    logger = setup_logging("almgen", logging.INFO)
     s = Config(sys.argv[1:])
     is_main = True if s.job_array_index is None or s.job_array_index == 1 else False
-    logger = setup_logging("almgen", logging.INFO if is_main else logging.ERROR)
 
     # check for completed alm runs if we are not forcing alm generation
     if not s.force_alm_gen:
@@ -157,8 +142,7 @@ if __name__ == "__main__":
     cosmo.compute_c_ell()
 
     # setup the KSW data
-    noise_ell, beam_ell = s.noise_beam
-    ksw_data = Data(s.lmax, noise_ell, beam_ell, s.pols, cosmo)
+    ksw_data = Data(s.lmax, s.noise_ell, s.beam_ell, s.pols, cosmo)
 
     # get some data from the KSW data
     c_ells = ksw_data.cosmology.c_ell["unlensed_scalar"]  # type: ignore
@@ -171,4 +155,72 @@ if __name__ == "__main__":
     tr_ell_k = tr_ell_k[mask]
     tr_ells = tr_ells[mask]
 
-    generate_almngs(plot=is_main)
+    # Get our alms
+    logger.info("Starting gaussian Alm generation")
+    alms = np.array(
+        [ksw_data.compute_alm_sim(s.lensing) for _ in range(s.nsims)],
+        dtype=s.c_dtype,
+    )
+    logger.debug("Gaussian Alm shape: %s", alms.shape)
+
+    # KWS needs the alms to be coevolved with the beam
+    beam_ell_2d = np.atleast_2d(s.beam_ell)
+    for i, j in product(range(s.nsims), range(s.npol)):
+        alms[i, j] = hp.almxfl(alms[i, j], beam_ell_2d[j] ** -1)
+    logger.info("Gaussian Alm generation complete")
+
+    # get our almngs
+    almngs = generate_almngs(alms)
+    logger.debug("Non-gaussian Alm shape: %s", almngs.shape)
+
+    # and get the fnls
+    # TODO: s.fnl_max + 1 to include the max value
+    fnls = np.random.uniform(s.fnl_min, s.fnl_max, (s.nsims, s.npol, 1)).astype(
+        s.r_dtype
+    )
+
+    # create our combined alms, and remove the monopole and dipole
+    complete_alms = alms + fnls * almngs
+    complete_alms = remove_mono_dipole(complete_alms)
+
+    sdata = {}
+    sdata["alm"] = complete_alms
+    sdata["fnl"] = fnls
+
+    logger.debug(f"Completed Alm shape {complete_alms.shape} fnls shape {fnls.shape}")
+
+    if is_main:
+        # save the settings if this is the main process
+        sdata["settings"] = s.settings
+
+        # polt a random alm and almng for this run
+        logger.info("Plotting a random alm and almng")
+        i, j = np.random.randint(s.nsims), np.random.randint(s.npol)
+        filebase = os.path.join(s.plot_dir, f"{s.sjob}_{s.base_name}_alm[{i},{j}]")
+        plot_cl_alm(
+            complete_alms[i, j],
+            save_file=filebase + f".png",
+            plot_camb=True,
+            c_ells=c_ells,
+        )
+        # this is just the gaussian part
+        plot_cl_alm(
+            alms[i, j],
+            save_file=filebase + f"_g.png",
+            plot_camb=True,
+            c_ells=c_ells,
+        )
+        # Don't add camb to the ng plots since they are such a small scale
+        plot_cl_alm(
+            almngs[i, j],
+            save_file=filebase + f"_ng.png",
+            plot_camb=False,
+        )
+
+    logger.info("Saving alm and almng data")
+    if not os.path.exists(s.alm_dir):
+        logger.info("creating directory: %s", s.alm_dir)
+        os.makedirs(s.alm_dir)
+
+    save_data(s.alm_file_nc, sdata)
+    os.replace(s.alm_file_nc, s.alm_file_partial)

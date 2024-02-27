@@ -8,31 +8,72 @@ from astropy import units as u
 
 import pprint
 
-from utils import setup_logging
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def parse_args(args):
     parser = argparse.ArgumentParser()
-    parser.add_argument('settings_file', type=str, help='Not finished')
-
-    parser.add_argument('--nsims', type=int, help='The number of sims to use')
-    parser.add_argument('--narray', type=int, help='The number of slurm arrays used in the sbatch script')
-    parser.add_argument('--lensing', action='store_true', help='Use lensing')
-    parser.add_argument('--disable_lensing', action='store_false', dest='lensing', help='Do not use lensing')
-    parser.add_argument('--disable_noise', action='store_true', help='Disable noise')
-    parser.add_argument('--noise', action='store_false', dest='disable_noise', help='Enables noise')
-    parser.add_argument('--force_alm_gen', action='store_true', help='Force alm generation')
-    parser.add_argument('--fnl_range', type=float, nargs=2, help='The range of fnl values to use')
-    parser.add_argument('--base_dir', type=str, help='The base directory to use')
+    parser.add_argument("settings_file", help="which settings file to use")
+    parser.add_argument("--nsims", type=int, help="The number of sims to use")
+    parser.add_argument(
+        "--narray",
+        type=int,
+        help="The number of slurm arrays used in the sbatch script",
+    )
+    parser.add_argument("--lensing", action="store_true", help="Use lensing")
+    parser.add_argument(
+        "--disable_lensing",
+        action="store_false",
+        dest="lensing",
+        help="Do not use lensing",
+    )
+    parser.add_argument("--disable_noise", action="store_true", help="Disable noise")
+    parser.add_argument(
+        "--noise", action="store_false", dest="disable_noise", help="Enables noise"
+    )
+    parser.add_argument(
+        "--force_alm_gen", action="store_true", help="Force alm generation"
+    )
+    parser.add_argument(
+        "--fnl_range", type=float, nargs=2, help="The range of fnl values to use"
+    )
+    parser.add_argument("--base_dir", type=str, help="The base directory to use")
 
     return parser.parse_args(args)
+
 
 def safe_get(a, b):
     """Return a if a is not None, else b."""
     return a if a is not None else b
 
+
+def get_cosmo_defaults():
+    defaults = {
+        "H0": 67.5,
+        "r": 0,
+        "As": 2.13e-09,
+        "ns": 0.9624,
+        "pivot_scalar": 0.05,
+        "ombh2": 0.02233,
+        "omch2": 0.1198,
+        "mnu": 0.06,
+        "tau": 0.0561,
+        "TCMB": 2.7255,
+        "max_l": 1000,
+        "lmax": 500,
+        "lens_potential_accuracy": 2,
+        "DoLateRadTruncation": False,
+        "AccuracyBoost": 2.0,
+        "lSampleBoost": 2.0,
+        "lAccuracyBoost": 2.0,
+    }
+    return defaults
+
+
 class Config:
     def __init__(self, args=None, print_settings=True):
-        logger = setup_logging("config")
         args = parse_args(args)
         with open(args.settings_file, "r") as f:
             self.settings = settings = json.load(f)
@@ -40,14 +81,21 @@ class Config:
         if print_settings:
             logger.info(f"Loading settings from file {args.settings_file}:")
             pprint.PrettyPrinter(indent=2).pprint(settings)
+            logger.info(f"Command line arguments: {args}")
 
-        self.force_alm_gen = safe_get(args.force_alm_gen, settings.get("force_alm_gen", False))
-        self.cosmo_params = settings.get("cosmo_params")
+        self.force_alm_gen = safe_get(
+            args.force_alm_gen, settings.get("force_alm_gen", False)
+        )
+
+        # setup the cosmological parameters, using defaults if not provided
+        self.cosmo_params = {**get_cosmo_defaults(), **settings.get("cosmo_params")}
+        if print_settings:
+            logger.info(f"Using cosmological parameters:")
+            pprint.PrettyPrinter(indent=2).pprint(self.cosmo_params)
 
         # main parameters
         self.lmax = self.cosmo_params["lmax"]
         self.nside = settings.get("nside", 1024)
-        self.npatches = settings.get("npatches", 10)
         self.patch_side_deg = settings.get("patch_side_deg", 10)
 
         self.pols = settings.get("polarizations", "T")
@@ -59,20 +107,8 @@ class Config:
         # find out the number of sims
         self.nsims = safe_get(args.nsims, settings.get("nsims", 1))
         self.narray = safe_get(args.narray, settings.get("narray", 1))
+        self.npatches = settings.get("npatches", 10)
         self.total_sims = self.nsims * self.narray
-
-        job_tasks = os.environ.get("SLURM_ARRAY_TASK_COUNT")
-        if job_tasks is not None:
-            job_tasks = int(job_tasks)
-
-            if job_tasks != self.narray:
-                raise ValueError(
-                    f"SLURM_ARRAY_TASK_COUNT {job_tasks} does not match narray value {self.narray}"
-                )
-            
-            self.job_array_index = int(os.environ.get("SLURM_ARRAY_TASK_ID"))
-        else:
-            self.job_array_index = None
 
         # some important derived parameters
         self.nell = self.lmax + 1
@@ -80,7 +116,9 @@ class Config:
         self.npix = hp.nside2npix(self.nside)
         self.ells = np.arange(self.nell)
 
-        self.fnl_min, self.fnl_max = safe_get(args.fnl_range, settings.get("fnl_range", (-1, 1)))
+        self.fnl_min, self.fnl_max = safe_get(
+            args.fnl_range, settings.get("fnl_range", (-1, 1))
+        )
 
         # set up units
         self.double_precision = self.settings.get("double_precision", False)
@@ -92,52 +130,75 @@ class Config:
             self.c_dtype = np.complex64
 
         # get the beam and noise
-        self.disable_noise = safe_get(args.disable_noise, settings.get("disable_noise", True))
+        self.disable_noise = safe_get(
+            args.disable_noise, settings.get("disable_noise", True)
+        )
         self.beam_width = settings.get("beam_width", 1) * u.arcmin
         self.noise_scale_tt = settings.get("noise_scale_tt", 1) * u.arcmin
         self.noise_scale_ee = settings.get("noise_scale_ee", 1) * u.arcmin
         self.noise_scale_te = settings.get("noise_scale_te", 1) * u.arcmin
-        self.noise_beam = self.get_noise_beam()
+        self.noise_ell, self.beam_ell = self.get_noise_beam()
 
         # get the radii
         self.radii, self.drs = self.get_radii(1, 50000)
 
+        self.sjob = os.getenv("SLURM_JOB_ID") or 0
+        job_tasks = os.environ.get("SLURM_ARRAY_TASK_COUNT")
+        if job_tasks is not None:
+            job_tasks = int(job_tasks)
+
+            if job_tasks != self.narray:
+                raise ValueError(
+                    f"SLURM_ARRAY_TASK_COUNT {job_tasks} does not match narray value {self.narray}"
+                )
+
+            self.job_array_index = int(os.environ.get("SLURM_ARRAY_TASK_ID"))
+            ja_str = f"_{self.job_array_index}"
+        else:
+            self.job_array_index = None
+            ja_str = ""
+
+        logger.info(
+            f"Running SLURM job {self.sjob} with job array index {self.job_array_index} of {self.narray}"
+        )
+
         # paths
         self.base_dir = safe_get(args.base_dir, settings.get("base_dir", "data"))
-        self.alm_cache_dir = os.path.join(
-            self.base_dir, settings.get("alm_cache_dir", "alm_cache")
-        )
+        self.alm_dir = os.path.join(self.base_dir, settings.get("alm_dir", "alms"))
         self.plot_dir = os.path.join(self.base_dir, settings.get("plot_dir", "plots"))
-        self.data_dir = os.path.join(
-            self.base_dir, "lensed" if self.lensing else "unlensed"
+        self.patch_dir = os.path.join(
+            self.base_dir, settings.get("patch_dir", "patches")
         )
         self.tb_dir = os.path.join(self.base_dir, settings.get("tb_dir", "tensorboard"))
         self.model_dir = os.path.join(
             self.base_dir, settings.get("model_dir", "models")
         )
 
-        # add info to the strings
+        # TODO: add info to the strings
+        # l_str = "l" if self.lensing else "ul"
+        # nn_str = "-nn" if self.disable_noise else ""
+
+        l_str = "l_" if self.lensing else "nl_"
         nn_str = "nn_" if self.disable_noise else ""
-        ja_str = f"_{self.job_array_index}" if self.job_array_index is not None else ""
 
         # set up the file names
-        self.base_name = f"{self.nside}_{nn_str}{self.pol_chars}_{self.total_sims}"
-        self.data_str = f"{self.base_name}x{self.npatches}_fnl{self.fnl_min}-{self.fnl_max}{ja_str}"
-        self.alm_str = f"{self.base_name}{ja_str}"
+        # self.base_name = f"l{self.lmax}_n{self.nside}_{l_str}{nn_str}_{self.pol_chars}_{self.total_sims}"
+        self.base_name = (
+            f"{self.nside}_{l_str}{nn_str}{self.pol_chars}_{self.total_sims}"
+        )
+        logger.info(f"Base name: {self.base_name}")
 
         # setup the file paths
-        self.data_file_nc = os.path.join(self.data_dir, f"{self.data_str}.hdf5.nc")
-        self.data_file = os.path.join(self.data_dir, f"{self.data_str}.hdf5")
-        
-        self.alm_file_nc = os.path.join(
-            self.alm_cache_dir, f"{self.alm_str}.alms.hdf5.nc"
+        self.patch_str = (
+            f"{self.base_name}x{self.npatches}_fnl{self.fnl_min}-{self.fnl_max}{ja_str}"
         )
-        self.alm_file_partial = os.path.join(
-            self.alm_cache_dir, f"{self.alm_str}.alms.hdf5"
-        )
-        self.alm_file = os.path.join(
-            self.alm_cache_dir, f"{self.base_name}.alms.hdf5"
-        )
+        self.patch_file_nc = os.path.join(self.patch_dir, f"{self.patch_str}.hdf5.nc")
+        self.patch_file = os.path.join(self.patch_dir, f"{self.patch_str}.hdf5")
+
+        self.alm_str = f"{self.base_name}{ja_str}"
+        self.alm_file_nc = os.path.join(self.alm_dir, f"{self.alm_str}.alms.hdf5.nc")
+        self.alm_file_partial = os.path.join(self.alm_dir, f"{self.alm_str}.alms.hdf5")
+        self.alm_file = os.path.join(self.alm_dir, f"{self.base_name}.alms.hdf5")
 
     def get_noise_beam(self):
         beam_ell_pre = hp.gauss_beam(

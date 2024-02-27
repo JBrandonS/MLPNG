@@ -106,8 +106,8 @@ class PatchLoader(Sequence):
         )
 
         # we also need to add the channel dimension as TF expects it
-        patch = np.array(self.file["patches"][i, j, k, l][:, :, None])
-        fnl = np.array(self.file["fnls"][i, j])
+        patch = np.array(self.file["patch"][i, j, k, l][:, :, None])
+        fnl = np.array(self.file["fnl"][i, j])
         return patch, fnl
 
     def _init_ds(self):
@@ -122,7 +122,7 @@ class PatchLoader(Sequence):
             self._npatches,
             self._nside,
             _,
-        ) = file["patches"].shape
+        ) = file["patch"].shape
 
         self.length = self._nsims * self._ndup * self._npol * self._npatches
         self.shape = (self._nside, self._nside, 1)
@@ -231,6 +231,7 @@ class AlmLoader(PatchLoader):
 
         self._file = h5py.File(self.file_path, mode="r", swmr=True, locking=False)
         (self._nsims, self._npol, self._ndata) = self._file["alm"].shape
+        self.fnls = self._file["fnl"]
 
         # get the shape and length that our dataset will be in
         lmax = Alm.getlmax(self._ndata)
@@ -244,18 +245,6 @@ class AlmLoader(PatchLoader):
 
         # creates our positional encoding to give the model some sense of the position of the data
         self.pos_enc = self.idx_map / self._ndata / 1000
-
-        # Loads in the fnl from the data
-        # This will be in a dataset=array(bytestring) format, [b'[-100, 100]'], so grab the first element and decode it
-        # convert this to a tuple using json to get our fnl range
-        fnl_range_dataset = self._file["settings"]["fnl_range"]
-        fnl_range_json = fnl_range_dataset[0].decode()
-        fnl_range = tuple(json.loads(fnl_range_json))
-
-        # generate the fnl values
-        self.fnls = default_rng(self.seed).uniform(
-            fnl_range[0], fnl_range[1] + 1, (self._nsims, self._npol)
-        )
 
         # now create our dataset from generator
         self._ds = Dataset.from_generator(
@@ -274,16 +263,12 @@ class AlmLoader(PatchLoader):
         # now we can get the data
         # probably the slowest part of the code
         alm = np.array(self._file["alm"][i, j])
-        almng = np.array(self._file["almng"][i, j])
         fnl = self.fnls[i, j]
-
-        # combine the alms
-        alm_complete = alm + fnl * almng
 
         # converts data(i) -> data(l, m), also splits the real and imaginary parts and adds the index map
         data = np.zeros(self.shape, dtype=self.dtype)
-        data[0, ...] = np.real(alm_complete[self.idx_map]) + self.pos_enc
-        data[1, ...] = np.imag(alm_complete[self.idx_map]) + self.pos_enc
+        data[0, ...] = np.real(alm[self.idx_map]) + self.pos_enc
+        data[1, ...] = np.imag(alm[self.idx_map]) + self.pos_enc
         return data, fnl
 
 

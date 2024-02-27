@@ -73,8 +73,8 @@ if __name__ == "__main__":
     """
 
     is_main_comm = rank == 0
-    logger = setup_logging(name=f"heidelberg_estimator_{rank}")
-    s = Config("settings/heidelberg.json", print_settings=is_main_comm)
+    logger = setup_logging(name=f"heidelberg_estimator_{rank}", set_base=is_main_comm)
+    s = Config(["settings/heidelberg.json"], print_settings=is_main_comm)
 
     s.fnl_min = -50
     s.fnl_max = 50
@@ -93,8 +93,7 @@ if __name__ == "__main__":
     cosmo.add_prim_reduced_bispectrum(loc_shape, s.radii)
 
     # setup the data and get our icov object
-    noise_ell, beam_ell = s.noise_beam
-    data = Data(s.lmax, noise_ell, beam_ell, s.pols, cosmo)
+    data = Data(s.lmax, s.noise_ell, s.beam_ell, s.pols, cosmo)
     icov = data.icov_diag_lensed if s.lensing else data.icov_diag_nonlensed
 
     # generate our beam functioned based on noise
@@ -129,7 +128,7 @@ if __name__ == "__main__":
     logger.info("done")
 
     # compute isotropic fisher
-    icov_ell = compute_icov_ell(noise_ell, beam_ell)
+    icov_ell = compute_icov_ell(s.noise_ell, s.beam_ell)
     fisher_iso = ksw.compute_fisher_isotropic(icov_ell, comm=comm)
 
     logger.info("Finished %s!", rank)

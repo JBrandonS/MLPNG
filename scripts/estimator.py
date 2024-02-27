@@ -23,22 +23,9 @@ logging.getLogger("astropy").setLevel(logging.ERROR)
 
 def alm_loader(str_idx):
     """Loads in a single alm given a int in string form. Used inside the KSW code."""
-    idx = int(str_idx)
-    pol = 0
-
-    logging.debug(
-        f"Loading alm {idx}, alms shape {alms.shape} and almngs shape {almngs.shape}, fnl {fnls[idx]}"
-    )
-
-    alm = np.array(alms[idx, pol])
-    almng = np.array(almngs[idx, pol])
-    fnl = fnls[idx]
-
-    # not sure if these are really needed
-    alm = remove_mono_dipole(alm)
-    almng = remove_mono_dipole(almng)
-
-    return alm + fnl * almng
+    idx, pol = np.unravel_index(int(str_idx), (s.nsims, s.npol))
+    logging.info(f"Loading alm [{idx}, {pol}], alms shape {alms.shape}, fnl {fnls[idx]}")
+    return np.array(alms[idx, pol])
 
 
 def alm_step_loader(idx):
@@ -48,18 +35,6 @@ def alm_step_loader(idx):
     """
     logger.debug("Loading alm step %s", idx)
     return data.compute_alm_sim(s.lensing)
-
-
-def remove_mono_dipole(alm):
-    """
-    Remove the monopole and dipole terms from the alms.
-    Note that we do not need -m's due to symmetry
-    """
-    lmax = hp.Alm.getlmax(len(alm))
-    alm[hp.Alm.getidx(lmax, 0, 0)] = 0.0  # Remove monopole
-    alm[hp.Alm.getidx(lmax, 1, 0)] = 0.0  # Remove dipole
-    alm[hp.Alm.getidx(lmax, 1, 1)] = 0.0  # Remove dipole
-    return alm
 
 
 def compute_icov_ell(N, b):
@@ -73,9 +48,9 @@ def compute_icov_ell(N, b):
 if __name__ == "__main__":
     is_main = rank == 0
     logger = setup_logging(
-        f"estimator {rank}", level=logging.INFO if is_main else logging.WARNING
+        f"estimator {rank}", level=logging.INFO if is_main else logging.ERROR
     )
-    s = Config(sys.argv, print_settings=is_main)
+    s = Config(sys.argv[1:], print_settings=is_main)
 
     # init camb and setup the reduced bispecturm to local
     logger.info("Running camb")
@@ -90,8 +65,7 @@ if __name__ == "__main__":
     cosmo.add_prim_reduced_bispectrum(loc_shape, s.radii)
 
     # setup the data and get our icov object
-    noise_ell, beam_ell = s.noise_beam
-    data = Data(s.lmax, noise_ell, beam_ell, s.pols, cosmo)
+    data = Data(s.lmax, s.noise_ell, s.beam_ell, s.pols, cosmo)
     icov = data.icov_diag_lensed if s.lensing else data.icov_diag_nonlensed
 
     # generate our beam functioned based on noise
@@ -120,55 +94,55 @@ if __name__ == "__main__":
 
     # these are not fully loaded into memory
     alms = alm_file["alm"]
-    almngs = alm_file["almng"]
-    fnls = alm_file["fnls"]
-
-    logger.debug(f"alms: {alms.shape}, almngs: {almngs.shape}, fnls: {fnls.shape}")
+    fnls = alm_file["fnl"]
+    logger.debug(f"loaded alms: {alms.shape}, fnls: {fnls.shape}")
 
     # check for existing ksw state
     use_mc_file = True  # just a quick disable
-    ksw_mc_file = os.path.join(s.data_dir, "kswmc_" + s.data_str)
+    ksw_mc_file = os.path.join(s.alm_dir, "kswmc_" + s.base_name)
     if use_mc_file and os.path.exists(ksw_mc_file):
         logger.info("Loading KSW state from %s", ksw_mc_file)
         ksw.start_from_read_state(ksw_mc_file, comm)
     else:
         logger.info("No KSW state found, running KSW step")
+
         # we dont need to step through all the alms to setup the mc
         # so this saves a lot of time
-        alm_strs_i = np.arange(100) if s.total_sims > 100 else alm_strs
+        alm_strs_i = np.arange(100)
         ksw.step_batch(alm_step_loader, alm_strs_i, comm, is_main)
         logger.info("Done with KSW step")
 
         if use_mc_file and is_main:
-            logger.debug("Saving KSW state to %s", ksw_mc_file)
+            logger.info("Saving KSW state to %s", ksw_mc_file)
             ksw.write_state(ksw_mc_file, comm)
 
     logger.info("Computing estimates")
-    fisher = np.float(ksw.compute_fisher())
+    fisher = float(ksw.compute_fisher())
     estimates = ksw.compute_estimate_batch(
         alm_loader, alm_strs, comm, verbose=is_main, fisher=fisher
     )
     logger.info("done")
 
     # compute isotropic fisher
-    icov_ell = compute_icov_ell(noise_ell, beam_ell)
+    icov_ell = compute_icov_ell(s.noise_ell, s.beam_ell)
     fisher_iso = ksw.compute_fisher_isotropic(icov_ell, comm=comm)
 
     # save data
     if is_main:
-        sdata = {}
-
+        # calculate the error
         fnls = fnls.ravel()
-        est_length = estimates.shape[0]
-        snr = (estimates - fnls[est_length]) * np.sqrt(fisher)
+        snr = (estimates - fnls[alm_strs.astype(int)]) * np.sqrt(fisher)
 
+        # save the data, this will append to the alm_file
+        sdata = {}
         sdata["fisher"] = np.atleast_1d(fisher)
         sdata["fisher_iso"] = np.atleast_1d(fisher_iso)
-        sdata["estimates"] = estimates
-        sdata["errors"] = snr
+        sdata["estimate"] = estimates
+        sdata["error"] = snr
+        save_data(s.alm_file, sdata)
 
-        #maybe make this its own file
-        save_data(s.data_file_nc + 'est', sdata)
-        os.replace(s.data_file_nc + 'est', s.data_file + 'est')
+        logger.info(
+            f"Saved data in shapes {fisher.shape}, {fisher_iso.shape}, {estimates.shape}, {snr.shape}"
+        )
 
     logger.info("Finished %s!", rank)
