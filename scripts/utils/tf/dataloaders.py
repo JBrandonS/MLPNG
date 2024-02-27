@@ -101,12 +101,10 @@ class PatchLoader(Sequence):
 
     def __getitem__(self, index):
         # Convert the flat index to a multidimensional index
-        i, j, k, l = unravel_index(
-            index, (self._nsims, self._ndup, self._npol, self._npatches)
-        )
+        i, j, k = unravel_index(index, (self._nsims, self._npol, self._npatches))
 
         # we also need to add the channel dimension as TF expects it
-        patch = np.array(self.file["patch"][i, j, k, l][:, :, None])
+        patch = np.array(self.file["patch"][i, j, k][:, :, None])
         fnl = np.array(self.file["fnl"][i, j])
         return patch, fnl
 
@@ -117,14 +115,13 @@ class PatchLoader(Sequence):
         self.file = file = h5py.File(self.file_path, mode="r", swmr=True, locking=False)
         (
             self._nsims,
-            self._ndup,
             self._npol,
             self._npatches,
             self._nside,
             _,
         ) = file["patch"].shape
 
-        self.length = self._nsims * self._ndup * self._npol * self._npatches
+        self.length = self._nsims * self._npol * self._npatches
         self.shape = (self._nside, self._nside, 1)
 
         self._ds = Dataset.from_generator(
@@ -230,8 +227,9 @@ class AlmLoader(PatchLoader):
             raise ValueError("Dataset already initialized")
 
         self._file = h5py.File(self.file_path, mode="r", swmr=True, locking=False)
-        (self._nsims, self._npol, self._ndata) = self._file["alm"].shape
+        self.alms = self._file["alm"]
         self.fnls = self._file["fnl"]
+        (self._nsims, self._npol, self._ndata) = self.alms.shape
 
         # get the shape and length that our dataset will be in
         lmax = Alm.getlmax(self._ndata)
@@ -262,7 +260,7 @@ class AlmLoader(PatchLoader):
 
         # now we can get the data
         # probably the slowest part of the code
-        alm = np.array(self._file["alm"][i, j])
+        alm = np.array(self.alms[i, j])
         fnl = self.fnls[i, j]
 
         # converts data(i) -> data(l, m), also splits the real and imaginary parts and adds the index map

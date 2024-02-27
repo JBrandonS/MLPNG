@@ -142,8 +142,7 @@ def resnet_model(
 if __name__ == "__main__":
     # Get the config file from the command line
     # you can manually set it here if you want
-    config_file = sys.argv[1]
-    s = Config(config_file)
+    s = Config(sys.argv[1:])
 
     MAX_EPOCHS = 300
 
@@ -253,7 +252,7 @@ if __name__ == "__main__":
         model = resnet_model(input_img, opt, metrics, **model_settings)
 
     # Lets load our data
-    tfds_filepath = s.data_file.replace(".hdf5", ".tfds")
+    tfds_filepath = s.patch_file.replace(".hdf5", ".tfds")
     if os.path.exists(tfds_filepath):
         # This might have a small speedup, but it also might not
         # This WILL let us run on multinode which the hdf5 loader does not
@@ -262,7 +261,7 @@ if __name__ == "__main__":
         # load data as a python generator, directly from hdf5
         # This requires everything to be in the same python environment
         # aka, no multinode
-        data_loader = DataLoader(s.data_file, **data_loader_args)
+        data_loader = DataLoader(s.patch_file, **data_loader_args)
 
     # Just print some good info for the log
     print("TensorFlow version:", tf.__version__)
@@ -298,7 +297,7 @@ if __name__ == "__main__":
     # Just get that here so we can plot it
     full_sky_degree = (np.pi / 180) ** 2
     f_sky = (s.settings["patch_side_deg"]) ** 2 / full_sky_degree
-    fisher = get_fisher(s.data_file)
+    fisher = get_fisher(s.patch_file)
     scaled_variance = np.sqrt(1 / (f_sky * fisher))
 
     # Plot the loss curves and metrics
