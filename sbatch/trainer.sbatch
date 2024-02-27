@@ -5,8 +5,11 @@
 #SBATCH --mem=1000G
 #SBATCH --cpus-per-task=64
 #SBATCH --gpus-per-task=4
-#SBATCH --output=data/logs/training/%j.log
+#SBATCH --output=logs/training/%j.log
 #SBATCH --time=2-00:00:00
+
+# create the logging dir
+mkdir -p logs/training
 
 module purge
 module load conda nvidia/nvhpc

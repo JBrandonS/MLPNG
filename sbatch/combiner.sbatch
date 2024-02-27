@@ -4,8 +4,11 @@
 #SBATCH --ntasks=1
 #SBATCH --mem=500G
 #SBATCH --cpus-per-task=10
-#SBATCH --output=data/logs/combiner/%j.log
-#SBATCH --time=1-00:00:00
+#SBATCH --output=logs/combiner/%j.log
+#SBATCH --time=6:00:00
+
+# create the logging dir
+mkdir -p logs/combiner
 
 module purge
 module load spack conda

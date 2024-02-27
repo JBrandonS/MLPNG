@@ -4,9 +4,12 @@
 #SBATCH --ntasks=1
 #SBATCH --mem=500G
 #SBATCH --cpus-per-task=64
-#SBATCH --output=data/logs/almgen/%A/%j.log
+#SBATCH --output=logs/almgen/%A/%j.log
 #SBATCH --array=1-10
-#SBATCH --time=1-00:00:00
+#SBATCH --time=12:00:00
+
+# create our logging dir
+mkdir -p logs/almgen/"$SLURM_JOB_ID"/
 
 module purge
 module load spack conda
