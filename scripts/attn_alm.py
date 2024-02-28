@@ -6,9 +6,7 @@ import inspect
 import re
 
 import numpy as np
-from healpy.sphtfunc import Alm
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 
 import tensorflow as tf
@@ -19,47 +17,17 @@ from tensorflow.keras.callbacks import (
     TensorBoard,
 )
 from tensorflow.keras.layers import (
-    Conv1D,
-    Conv2D,
-    Conv3D,
     Dense,
     Flatten,
     MultiHeadAttention,
-    Concatenate,
-    LayerNormalization,
     Dropout,
-    Add,
-    Reshape,
-    AveragePooling2D,
-    AveragePooling3D,
 )
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.optimizers.schedules import ExponentialDecay
-from tensorflow.keras.regularizers import l2
 
 from utils import Config
 from utils.tf.dataloaders import AlmLoader
-from utils.tf.layers import PeriodicPadding2D
 from utils.tf.plots import plot_histogram, plot_metrics, plot_predictions
 from utils.tf.callbacks import TimedLoggingCallback, WarmupLearningRate
-
-
-def simple_transformer(inputs, dropout_rate=0.3, name=""):
-    initializer = tf.keras.initializers.TruncatedNormal(stddev=0.02)
-
-    x = MultiHeadAttention(
-        num_heads=1,
-        key_dim=1,
-        kernel_initializer=initializer,
-    )(inputs, inputs)
-
-
-    layer = Add()([inputs, x])
-    layer = LayerNormalization()(layer)
-    layer = Flatten()(layer)
-    layer = Dense(1)(layer)
-
-    return Model(inputs=inputs, outputs=layer, name=name)
 
 def alm_model(
     inputs,
@@ -69,14 +37,14 @@ def alm_model(
 ):
     input_layer = inputs
 
-    # We start with data in (2,500,500), (real/complex, l, m)
+    # We start with data in (batch,2,500,500), (real/complex, l, m)
     # This is too much data for a transformer so we collapse down the m axis using a FF
     # We could look at something smarter to do this
     # then we squeeze to get a final data size of (2, 500) which attention can handle
     layer = Dense(512, activation='sigmoid')(input_layer)
     layer = Dense(128, activation='sigmoid')(layer)
     layer = Dense(1)(layer)
-    layer = tf.squeeze(layer, axis=-1) # (, 2, 500)
+    layer = tf.squeeze(layer, axis=-1) # (batch, 2, 500)
 
     layer = MultiHeadAttention(
         num_heads=8,
@@ -85,17 +53,10 @@ def alm_model(
         dropout=dropout_rate,
     )(layer, layer)
 
-    # layer = MultiHeadAttention(
-    #     num_heads=8,
-    #     key_dim=n_features,
-    #     kernel_initializer=initializer,
-    #     dropout=dropout_rate,
-    # )(layer, layer)
-
     # Now we do a final FF to get the output as a scalar
     layer = Flatten()(layer)
     layer = Dropout(dropout_rate)(layer)
-    layer = Dense(1024, activation="relu")(layer)
+    layer = Dense(1024, activation="relu", kernel_initializer='he_uniform')(layer)
     layer = Dense(128)(layer)
     layer = Dense(1)(layer)
 
