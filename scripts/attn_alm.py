@@ -64,7 +64,7 @@ def alm_model(
 
 
 if __name__ == "__main__":
-    s = Config(sys.argv)
+    s = Config(sys.argv[1:])
 
     MAX_EPOCHS = 300
     BATCH_SIZE = 1

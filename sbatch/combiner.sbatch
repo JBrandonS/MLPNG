@@ -3,7 +3,7 @@
 #SBATCH --partition=standard-s
 #SBATCH --ntasks=1
 #SBATCH --mem=500G
-#SBATCH --cpus-per-task=10
+#SBATCH --cpus-per-task=1
 #SBATCH --output=logs/combiner/%j.log
 #SBATCH --time=6:00:00
 

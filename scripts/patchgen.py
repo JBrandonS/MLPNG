@@ -18,9 +18,7 @@ from utils import Config, load_data, save_data, setup_logging
 from utils.plots import plot_cl_map, plot_patches
 
 
-def cutSqPatches_lenspyx(
-    is_main, s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, cl_phi, alms, fnl
-):
+def cutSqPatches_lenspyx(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, cl_phi, alms, fnl):
     """Uses lenspyx to generate and cut the lensed flat maps"""
 
     lmax_unl = s.cosmo_params["max_l"]
@@ -44,10 +42,13 @@ def cutSqPatches_lenspyx(
     )
     pixell_map = reproject.healpix2map(lens_map, fs_shape, fs_wcs, s.lmax)
 
-    if is_main:
+    if s.is_main_job:
         map2hp = reproject.map2healpix(pixell_map, s.lmax)
         hp.mollview(map2hp, min=-650.0, max=650, title=f"fnl = {fnl}")
-        plt.savefig(s.plot_dir + "/" + s.base_name + "_" + str(fnl) + "_fullsky.png")
+
+        plot_dir = os.path.join(s.plot_dir, "patchgen")
+        moll_path = os.join(plot_dir, s.base_name + f"_{fnl}_fullsky.png")
+        plt.savefig(moll_path)
 
     patches = []
     for i in range(s.npatches):
@@ -57,18 +58,20 @@ def cutSqPatches_lenspyx(
     return patches
 
 
-def cutSqPatches_pixell(is_main, s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, alms, fnl):
+def cutSqPatches_pixell(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, alms, fnl):
     """Uses pixell to generate and cut the flat sky patches, unlensed"""
     fs_map = enmap.empty(fs_shape, fs_wcs)
     car_map = curvedsky.alm2map(alms, fs_map)
 
-    if is_main:
+    if s.is_main_job:
         map2hp = reproject.map2healpix(car_map, s.lmax)
         hp.mollview(map2hp, min=-650.0, max=650, title=f"fnl = {fnl}")
-        moll_path = os.join(s.plot_dir, s.base_name + f"_{fnl}_fullsky.png")
+
+        plot_dir = os.path.join(s.plot_dir, "patchgen")
+        moll_path = os.join(plot_dir, s.base_name + f"_{fnl}_fullsky.png")
         plt.savefig(moll_path)
 
-        map_path = os.join(s.plot_dir, s.base_name + f"_{fnl}_pixell_cl_map.png")
+        map_path = os.join(plot_dir, s.base_name + f"_{fnl}_pixell_cl_map.png")
         plot_cl_map(car_map, fs_wcs, plot_camb=True, c_ells=c_ells, save_file=map_path)
 
     patches = []
@@ -118,7 +121,6 @@ if __name__ == "__main__":
 
     logger = setup_logging("patchgen")
     s = Config(sys.argv[1:])
-    is_main = True if s.job_array_index is None or s.job_array_index == 1 else False
 
     # Load in the alm data, do this first to crash fast if data is not found
     if os.path.isfile(s.alm_file):
@@ -126,8 +128,13 @@ if __name__ == "__main__":
         ldata = load_data(s.alm_file, ["alm", "fnls"])
 
         # if using a completed file, we need to adjust the start index for generation
-        start_idx = s.nsims * s.job_array_index
-        logger.info("Using sims (%d, %d) out of %d", start_idx, start_idx + s.nsims, ldata["alm"].shape[0])
+        start_idx = s.nsims * (int(s.job_array_index) - 1)  # we start at 1 rn
+        logger.info(
+            "Using sims (%d, %d) out of %d",
+            start_idx,
+            start_idx + s.nsims,
+            ldata["alm"].shape[0],
+        )
 
     elif os.path.isfile(s.alm_file_partial):
         logger.info(f"Loading alms from partial file {s.alm_file_partial}")
@@ -175,9 +182,9 @@ if __name__ == "__main__":
         cl_phi = ksw_data.cosmology._camb_data.get_lens_potential_cls(
             s.cosmo_params["max_l"], CMB_unit="muK", raw_cl=True
         )[:, 0]
-        cutPatches = partial(cutSqPatches_lenspyx, is_main, s, *patch_geo, cl_phi)
+        cutPatches = partial(cutSqPatches_lenspyx, s, *patch_geo, cl_phi)
     else:
-        cutPatches = partial(cutSqPatches_pixell, is_main, s, *patch_geo)
+        cutPatches = partial(cutSqPatches_pixell, s, *patch_geo)
 
     ## Start the patch generation
     # create the array to store the patches
@@ -227,15 +234,15 @@ if __name__ == "__main__":
     sdata["patch"] = np.array(patches)
 
     # only save 1 copy of the settings
-    if is_main:
+    if s.is_main_job:
         sdata["settings"] = s.settings
 
-        plot_file = os.path.join(s.plot_dir, s.base_name + "_patches.png")
+        plot_dir = os.path.join(s.plot_dir, "patchgen")
+        os.makedirs(plot_dir, exist_ok=True)
+        plot_file = os.path.join(plot_dir, s.base_name + "_patches.png")
         plot_patches(patches, 10, save_file=plot_file)
 
-    if not os.path.exists(s.patch_dir):
-        logger.info("Creating patch directory: %s", s.patch_dir)
-        os.makedirs(s.patch_dir)
+    os.makedirs(s.patch_dir, exist_ok=True)
     save_data(s.patch_file_nc, sdata)
     os.replace(s.patch_file_nc, s.patch_file)
     logger.info("Done with Generation!")

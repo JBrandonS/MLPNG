@@ -50,6 +50,8 @@ def combine_data(directory, base_name, ext, remove_files=True):
     # Get a list of all h5py files that match the pattern, i.e., end with a SLURM job array index
     file_pattern = os.path.join(directory, base_name + "_[0-9]*" + ext + "*")
     files_to_combine = glob.glob(file_pattern)
+
+    # combine in order, might not be needed
     files_to_combine = sorted(files_to_combine, key=extract_number)
 
     if len(files_to_combine) == 0:

@@ -27,16 +27,6 @@ def setup_logging(
     return logger
 
 
-def safe_makedir(dir):
-    "Create a directory if it does not exist. Handles a race condition"
-    if not os.path.exists(dir):
-        try:
-            os.makedirs(dir)
-            logger.debug("Created directory %s", dir)
-        except FileExistsError:
-            pass
-
-
 def save_data(file_path, data_dict):
     logger.debug("Saving data to %s", file_path)
 

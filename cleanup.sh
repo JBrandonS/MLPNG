@@ -22,10 +22,7 @@ if [[ ! $(squeue --me -h -n jupyter) && -f .vscj.out ]]; then
     rm .vscj.out
 fi
 
-rm -rvf logs/almgen
-rm -rvf logs/patchgen
-rm -rvf logs/combiner
-rm -rvf logs/estimator
+rm -rvf logs
 
 cd "data" || ( echo "cannot find data folder" && exit )
 echo "Currently in directory: $(pwd)"

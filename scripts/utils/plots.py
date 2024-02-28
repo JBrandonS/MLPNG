@@ -13,7 +13,7 @@ def plot_patches(patches, n_plots, title="Patches", save_file=None):
     patches = np.random.choice(patches, n_plots, replace=False)
 
     nrows = int(np.ceil(n_plots / 4))
-    ncols = min(n_plots, 4) 
+    ncols = min(n_plots, 4)
     fig, axes = plt.subplots(nrows, n_plots, figsize=(20, 20))
 
     for idx, patch in enumerate(patches):
@@ -174,7 +174,11 @@ def plot_ksw_predictions(fnls, preds, fisher=None, save_file=None):
 
     # Truth line
     plt.plot(
-        [min(fnls), max(fnls)], [min(fnls), max(fnls)], color="red", linestyle="--"
+        [min(fnls), max(fnls)],
+        [min(fnls), max(fnls)],
+        color="red",
+        linestyle="--",
+        label="truth",
     )
 
     if fisher is not None:
@@ -195,7 +199,7 @@ def plot_ksw_predictions(fnls, preds, fisher=None, save_file=None):
 
     # Line for perfect fit
     r2 = r2_score(df["True Labels"], df["Predicted Labels"])
-    plt.text(min(fnls), max(fnls), f"R^2 = {r2:.2f}", verticalalignment="top")
+    plt.text(min(fnls), max(fnls), f"$R^2$ = {r2:.2f}", verticalalignment="top")
 
     plt.title("Predicted vs True Labels")
 

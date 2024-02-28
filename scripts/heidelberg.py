@@ -14,12 +14,14 @@ from utils.plots import plot_ksw_predictions, plot_cl_alm
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
+is_main_comm = rank == 0
 
 # fix healpy logging because we will get a lot of info
 logging.getLogger("healpy").setLevel(logging.WARNING)
 
 # remove astropy warning about verbose that I can't change
 logging.getLogger("astropy").setLevel(logging.ERROR)
+
 
 def alm_loader(str_idx):
     global fnls
@@ -72,9 +74,11 @@ if __name__ == "__main__":
     Probably not up to date with the latest changes in estimator.
     """
 
-    is_main_comm = rank == 0
-    logger = setup_logging(name=f"heidelberg_estimator_{rank}", set_base=is_main_comm)
-    s = Config(["settings/heidelberg.json"], print_settings=is_main_comm)
+    logger = setup_logging(
+        name=f"heidelberg_estimator_{rank}",
+        level=logging.INFO if is_main_comm else logging.ERROR,
+    )
+    s = Config(["settings/heidelberg.json"])
 
     s.fnl_min = -50
     s.fnl_max = 50
@@ -98,6 +102,7 @@ if __name__ == "__main__":
 
     # generate our beam functioned based on noise
     beam_width_rad = 0 if s.disable_noise else s.beam_width.to_value(u.radian)
+
     def beam(alm):
         if beam_width_rad == 0:
             return alm
@@ -113,7 +118,7 @@ if __name__ == "__main__":
         precision="double" if s.double_precision else "single",
     )
 
-    alm_strs = np.arange(1, s.total_sims +1).astype(str)
+    alm_strs = np.arange(1, s.total_sims + 1).astype(str)
     alm_step_strs = np.arange(1, 100) if s.total_sims > 100 else alm_strs
 
     logger.info("Running KSW step")
@@ -133,7 +138,7 @@ if __name__ == "__main__":
 
     logger.info("Finished %s!", rank)
 
-    if rank == 0:
+    if is_main_comm:
         fnls = np.array(fnls[alm_strs.astype(int)])
 
         pred_file = os.path.join(s.plot_dir, "ksw_heidelberg_predictions.png")
@@ -148,5 +153,5 @@ if __name__ == "__main__":
             c_ells=c_ells,
             plot_camb_noise=True,
             noise_scale_tt=s.noise_scale_tt,
-            beam_width=s.beam_width
+            beam_width=s.beam_width,
         )

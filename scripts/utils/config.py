@@ -6,14 +6,13 @@ import healpy as hp
 import numpy as np
 from astropy import units as u
 
-import pprint
-
 import logging
 
 logger = logging.getLogger(__name__)
 
 
 def parse_args(args):
+    # note: arguments must be stored in a var name matching the dict key
     parser = argparse.ArgumentParser()
     parser.add_argument("settings_file", help="which settings file to use")
     parser.add_argument("--nsims", type=int, help="The number of sims to use")
@@ -44,11 +43,6 @@ def parse_args(args):
     return parser.parse_args(args)
 
 
-def safe_get(a, b):
-    """Return a if a is not None, else b."""
-    return a if a is not None else b
-
-
 def get_cosmo_defaults():
     defaults = {
         "H0": 67.5,
@@ -73,52 +67,58 @@ def get_cosmo_defaults():
 
 
 class Config:
-    def __init__(self, args=None, print_settings=True):
-        args = parse_args(args)
+    def __init__(self, argv=None):
+        args = parse_args(argv)
+
+        logger.info(f"Loading settings from file {args.settings_file}")
         with open(args.settings_file, "r") as f:
-            self.settings = settings = json.load(f)
+            self.settings = json.load(f)
 
-        if print_settings:
-            logger.info(f"Loading settings from file {args.settings_file}:")
-            pprint.PrettyPrinter(indent=2).pprint(settings)
-            logger.info(f"Command line arguments: {args}")
+        # replace the settings with the command line arguments
+        logger.info(f"Overriding settings with command line arguments {args}")
+        for key, value in vars(args).items():
+            if value is not None:
+                self.settings[key] = value
 
-        self.force_alm_gen = safe_get(
-            args.force_alm_gen, settings.get("force_alm_gen", False)
-        )
+        # set the cosmological parameters defaults
+        self.settings["cosmo_params"] = {
+            **get_cosmo_defaults(),
+            **self.settings.get("cosmo_params", {}),
+        }
 
-        # setup the cosmological parameters, using defaults if not provided
-        self.cosmo_params = {**get_cosmo_defaults(), **settings.get("cosmo_params")}
-        if print_settings:
-            logger.info(f"Using cosmological parameters:")
-            pprint.PrettyPrinter(indent=2).pprint(self.cosmo_params)
+        # just clean up the code below a little
+        settings = self.settings
+
+        logger.info(f"Running with settings: \n{json.dumps(settings, indent=2)}")
 
         # main parameters
         self.lmax = self.cosmo_params["lmax"]
         self.nside = settings.get("nside", 1024)
         self.patch_side_deg = settings.get("patch_side_deg", 10)
-
         self.pols = settings.get("polarizations", "T")
         self.npol = len(self.pols)
         self.pol_chars = "".join(self.pols)
-
-        self.lensing = safe_get(args.lensing, settings.get("lensing", False))
+        self.fnl_min, self.fnl_max = settings.get("fnl_range", (-1, 1))
+        self.lensing = settings.get("lensing", False)
+        self.force_alm_gen = settings.get("force_alm_gen", False)
 
         # find out the number of sims
-        self.nsims = safe_get(args.nsims, settings.get("nsims", 1))
-        self.narray = safe_get(args.narray, settings.get("narray", 1))
+        self.nsims = settings.get("nsims", 1)
+        self.narray = settings.get("narray", 1)
         self.npatches = settings.get("npatches", 10)
-        self.total_sims = self.nsims * self.narray
+        self.total_sims = self.nsims * self.npol * self.narray
+        self.total_patches = self.npatches * self.total_sims
 
-        # some important derived parameters
-        self.nell = self.lmax + 1
-        self.nelem = hp.Alm.getsize(self.lmax)
-        self.npix = hp.nside2npix(self.nside)
-        self.ells = np.arange(self.nell)
+        # get the beam and noise
+        self.disable_noise = settings.get("disable_noise", True)
+        self.beam_width = settings.get("beam_width", 1) * u.arcmin
+        self.noise_scale_tt = settings.get("noise_scale_tt", 1) * u.arcmin
+        self.noise_scale_ee = settings.get("noise_scale_ee", 1) * u.arcmin
+        self.noise_scale_te = settings.get("noise_scale_te", 1) * u.arcmin
+        self.noise_ell, self.beam_ell = self.get_noise_beam()
 
-        self.fnl_min, self.fnl_max = safe_get(
-            args.fnl_range, settings.get("fnl_range", (-1, 1))
-        )
+        # get the radii
+        self.radii, self.drs = self.get_radii(1, 50000)
 
         # set up units
         self.double_precision = self.settings.get("double_precision", False)
@@ -129,19 +129,7 @@ class Config:
             self.r_dtype = np.float32
             self.c_dtype = np.complex64
 
-        # get the beam and noise
-        self.disable_noise = safe_get(
-            args.disable_noise, settings.get("disable_noise", True)
-        )
-        self.beam_width = settings.get("beam_width", 1) * u.arcmin
-        self.noise_scale_tt = settings.get("noise_scale_tt", 1) * u.arcmin
-        self.noise_scale_ee = settings.get("noise_scale_ee", 1) * u.arcmin
-        self.noise_scale_te = settings.get("noise_scale_te", 1) * u.arcmin
-        self.noise_ell, self.beam_ell = self.get_noise_beam()
-
-        # get the radii
-        self.radii, self.drs = self.get_radii(1, 50000)
-
+        # get some info from SLURM
         self.sjob = os.getenv("SLURM_JOB_ID") or 0
         job_tasks = os.environ.get("SLURM_ARRAY_TASK_COUNT")
         if job_tasks is not None:
@@ -154,7 +142,13 @@ class Config:
 
             self.job_array_index = int(os.environ.get("SLURM_ARRAY_TASK_ID"))
             ja_str = f"_{self.job_array_index}"
+
+            if self.job_array_index == 1:
+                self.is_main_job = True
+            else:
+                self.is_main_job = False
         else:
+            self.is_main_job = None  # unknown, only for estimator really
             self.job_array_index = None
             ja_str = ""
 
@@ -162,8 +156,15 @@ class Config:
             f"Running SLURM job {self.sjob} with job array index {self.job_array_index} of {self.narray}"
         )
 
+        # some important derived parameters
+        # most of these are not really used, delete?
+        self.nell = self.lmax + 1
+        self.nelem = hp.Alm.getsize(self.lmax)
+        self.npix = hp.nside2npix(self.nside)
+        self.ells = np.arange(self.nell)
+
         # paths
-        self.base_dir = safe_get(args.base_dir, settings.get("base_dir", "data"))
+        self.base_dir = settings.get("base_dir", "data")
         self.alm_dir = os.path.join(self.base_dir, settings.get("alm_dir", "alms"))
         self.plot_dir = os.path.join(self.base_dir, settings.get("plot_dir", "plots"))
         self.patch_dir = os.path.join(

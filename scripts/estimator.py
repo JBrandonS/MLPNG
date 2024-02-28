@@ -10,9 +10,11 @@ from astropy import units as u
 from ksw import KSW, Cosmology, Data, Shape
 from mpi4py import MPI
 from utils import Config, save_data, setup_logging
+from utils.plots import plot_ksw_predictions
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
+is_main_comm = rank == 0
 
 # fix healpy logging because we will get a lot of info
 logging.getLogger("healpy").setLevel(logging.WARNING)
@@ -52,17 +54,16 @@ def compute_icov_ell(N, b):
 
 
 if __name__ == "__main__":
-    is_main = rank == 0
     logger = setup_logging(
-        f"estimator {rank}", level=logging.INFO if is_main else logging.ERROR
+        f"estimator {rank}", level=logging.INFO if is_main_comm else logging.ERROR
     )
-    s = Config(sys.argv[1:], print_settings=is_main)
+    s = Config(sys.argv[1:])
 
     # init camb and setup the reduced bispecturm to local
     logger.info("Running camb")
     camb_params_obj = camb.set_params(**s.cosmo_params)
     cosmo = Cosmology(camb_params_obj)
-    cosmo.compute_transfer(s.cosmo_params["max_l"], verbose=is_main)
+    cosmo.compute_transfer(s.cosmo_params["max_l"], verbose=is_main_comm)
     cosmo.compute_c_ell()
     logger.info("done starting camb")
 
@@ -115,17 +116,17 @@ if __name__ == "__main__":
         # we dont need to step through all the alms to setup the mc
         # so this saves a lot of time
         alm_strs_i = np.arange(100)
-        ksw.step_batch(alm_step_loader, alm_strs_i, comm, is_main)
+        ksw.step_batch(alm_step_loader, alm_strs_i, comm, is_main_comm)
         logger.info("Done with KSW step")
 
-        if use_mc_file and is_main:
+        if use_mc_file and is_main_comm:
             logger.info("Saving KSW state to %s", ksw_mc_file)
             ksw.write_state(ksw_mc_file, comm)
 
     logger.info("Computing estimates")
     fisher = float(ksw.compute_fisher())
     estimates = ksw.compute_estimate_batch(
-        alm_loader, alm_strs, comm, verbose=is_main, fisher=fisher
+        alm_loader, alm_strs, comm, verbose=is_main_comm, fisher=fisher
     )
     logger.info("done")
 
@@ -134,7 +135,7 @@ if __name__ == "__main__":
     fisher_iso = ksw.compute_fisher_isotropic(icov_ell, comm=comm)
 
     # save data
-    if is_main:
+    if is_main_comm:
         # note: the ksw code will use all reduce so we only need to worry about the main process
 
         # calculate the error
@@ -152,5 +153,11 @@ if __name__ == "__main__":
         logger.info(
             f"Saved data in shapes {fisher.shape}, {fisher_iso.shape}, {estimates.shape}, {snr.shape}"
         )
+
+        plot_dir = os.path.join(s.plot_dir, "estimator")
+        os.makedirs(plot_dir, exist_ok=True)
+        
+        pred_file = os.path.join(plot_dir, f"{s.sjob}_{s.base_name}_preds.png")
+        plot_ksw_predictions(fnls, estimates, fisher, save_file=pred_file)
 
     logger.info("Finished %s!", rank)

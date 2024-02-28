@@ -127,7 +127,6 @@ if __name__ == "__main__":
 
     logger = setup_logging("almgen")
     s = Config(sys.argv[1:])
-    is_main = True if s.job_array_index is None or s.job_array_index == 1 else False
 
     # check for completed alm runs if we are not forcing alm generation
     if not s.force_alm_gen:
@@ -198,17 +197,15 @@ if __name__ == "__main__":
 
     logger.debug(f"Completed Alm shape {complete_alms.shape} fnls shape {fnls.shape}")
 
-    if is_main:
+    if s.is_main_job:
         # save the settings if this is the main process
         sdata["settings"] = s.settings
 
         # plot a random alm and almng for this run
         logger.info("Plotting a random alm and almng")
 
-        alm_plot_dir = os.path.join(s.plot_dir, "alms")
-        if not os.path.exists(alm_plot_dir):
-            logger.info("creating plot directory: %s", alm_plot_dir)
-            os.makedirs(alm_plot_dir)
+        alm_plot_dir = os.path.join(s.plot_dir, "almgen")
+        os.makedirs(alm_plot_dir, exist_ok=True)
 
         i, j = np.random.randint(s.nsims), np.random.randint(s.npol)
         filebase = os.path.join(alm_plot_dir, f"{s.sjob}_{s.base_name}_alm[{i},{j}]")
@@ -233,9 +230,6 @@ if __name__ == "__main__":
         )
 
     logger.info("Saving alm and almng data")
-    if not os.path.exists(s.alm_dir):
-        logger.info("creating directory: %s", s.alm_dir)
-        os.makedirs(s.alm_dir)
-
+    os.makedirs(s.alm_dir, exist_ok=True)
     save_data(s.alm_file_nc, sdata)
     os.replace(s.alm_file_nc, s.alm_file_partial)
