@@ -18,7 +18,9 @@ from utils import Config, load_data, save_data, setup_logging
 from utils.plots import plot_cl_map, plot_patches
 
 
-def cutSqPatches_lenspyx(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, cl_phi, alms, fnl):
+def cutSqPatches_lenspyx(
+    is_main, s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, cl_phi, alms, fnl
+):
     """Uses lenspyx to generate and cut the lensed flat maps"""
 
     lmax_unl = s.cosmo_params["max_l"]
@@ -42,7 +44,7 @@ def cutSqPatches_lenspyx(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, cl_phi, alm
     )
     pixell_map = reproject.healpix2map(lens_map, fs_shape, fs_wcs, s.lmax)
 
-    if (s.job_array_index is None or s.job_array_index == 1):
+    if is_main:
         map2hp = reproject.map2healpix(pixell_map, s.lmax)
         hp.mollview(map2hp, min=-650.0, max=650, title=f"fnl = {fnl}")
         plt.savefig(s.plot_dir + "/" + s.base_name + "_" + str(fnl) + "_fullsky.png")
@@ -55,12 +57,12 @@ def cutSqPatches_lenspyx(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, cl_phi, alm
     return patches
 
 
-def cutSqPatches_pixell(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, alms, fnl):
+def cutSqPatches_pixell(is_main, s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, alms, fnl):
     """Uses pixell to generate and cut the flat sky patches, unlensed"""
     fs_map = enmap.empty(fs_shape, fs_wcs)
     car_map = curvedsky.alm2map(alms, fs_map)
 
-    if (s.job_array_index is None or s.job_array_index == 1):
+    if is_main:
         map2hp = reproject.map2healpix(car_map, s.lmax)
         hp.mollview(map2hp, min=-650.0, max=650, title=f"fnl = {fnl}")
         moll_path = os.join(s.plot_dir, s.base_name + f"_{fnl}_fullsky.png")
@@ -101,11 +103,6 @@ def get_fs_patch_geo():
     return fs_shape, fs_wcs, fs_map, patch_shapes, patch_wcss
 
 
-# helper function to process a single patch
-def process_patch(i, pol):
-    return np.array(cutPatches(alms[i, pol], fnls[i, pol]))
-
-
 if __name__ == "__main__":
     # This code primarily generates non-gaussian cmb maps. These get stored in a data file with the fnls, and patches.
     # The full-sky maps are generated using the method discussed in [CMB lensing and primordial non-gaussianity](https://arxiv.org/abs/0905.4732), where we find (eq. 6)
@@ -118,20 +115,28 @@ if __name__ == "__main__":
     # $$\beta_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^{-1} \Delta_\phi \Delta_\ell^T(k) j_\ell(k r)$$
     # $$B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}$$
     # where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
-    
-    logger = setup_logging("patchgen", logging.INFO)
+
+    logger = setup_logging("patchgen")
     s = Config(sys.argv[1:])
     is_main = True if s.job_array_index is None or s.job_array_index == 1 else False
 
-    # Load in the alm data
+    # Load in the alm data, do this first to crash fast if data is not found
     if os.path.isfile(s.alm_file):
         logger.info(f"loading alms from completed file {s.alm_file}")
         ldata = load_data(s.alm_file, ["alm", "fnls"])
+
+        # if using a completed file, we need to adjust the start index for generation
+        start_idx = s.nsims * s.job_array_index
+        logger.info("Using sims (%d, %d) out of %d", start_idx, start_idx + s.nsims, ldata["alm"].shape[0])
+
     elif os.path.isfile(s.alm_file_partial):
         logger.info(f"Loading alms from partial file {s.alm_file_partial}")
         ldata = load_data(s.alm_file_partial, ["alm", "fnls"])
+
+        # for partial files, we can just start at 0
+        start_idx = 0
     else:
-        logger.fatal("No alms found, please run almgen.py first")
+        logger.fatal("No alms found, please run almgen.py first or check configuration")
         exit(1)
 
     # and read in our alms and almngs, since ldata is a h5 dataset these are not in memory
@@ -144,13 +149,17 @@ if __name__ == "__main__":
     cosmo.compute_transfer(s.cosmo_params["max_l"])
     cosmo.compute_c_ell()
 
+    # get our ksw object
     ksw_data = Data(s.lmax, s.noise_ell, s.beam_ell, s.pols, cosmo)
 
+    # Get the transfer data from ksw
     c_ells = ksw_data.cosmology.c_ell["unlensed_scalar"]  # type: ignore
     tr_ell_k = ksw_data.cosmology.transfer["tr_ell_k"]
     tr_ells = ksw_data.cosmology.transfer["ells"]
     tr_k = ksw_data.cosmology.transfer["k"]
 
+    # CAMB will use max_l to generate the transfer functions, this is more than we need
+    # so we need to mask the transfer functions to the lmax we are using
     mask = tr_ells <= s.lmax
     tr_ell_k = tr_ell_k[mask]
     tr_ells = tr_ells[mask]
@@ -166,32 +175,43 @@ if __name__ == "__main__":
         cl_phi = ksw_data.cosmology._camb_data.get_lens_potential_cls(
             s.cosmo_params["max_l"], CMB_unit="muK", raw_cl=True
         )[:, 0]
-        cutPatches = partial(cutSqPatches_lenspyx, s, *patch_geo, cl_phi)
+        cutPatches = partial(cutSqPatches_lenspyx, is_main, s, *patch_geo, cl_phi)
     else:
-        cutPatches = partial(cutSqPatches_pixell, s, *patch_geo)
+        cutPatches = partial(cutSqPatches_pixell, is_main, s, *patch_geo)
 
-    # Start the patch generation, create the array to store the patches
-    patches = np.empty(
-        (s.nsims, s.npol, s.npatches, s.nside, s.nside), dtype=s.r_dtype
-    )
+    ## Start the patch generation
+    # create the array to store the patches
+    patches = np.empty((s.nsims, s.npol, s.npatches, s.nside, s.nside), dtype=s.r_dtype)
 
     # We setup an array with all our possible arguments to pass to the function
-    args = [
-        (i, pol)
-        for i in range(s.nsims)
-        for pol in range(s.npol)
-    ]
+    # if we are using a completed alm file, we offset our sim index by the start index
+    args = [(start_idx + i, pol) for i in range(s.nsims) for pol in range(s.npol)]
 
-    # lets get our generator setup using parallel, return as generator so we consume memory as we go
+    # We use joblib.parallel to generate the patches in parallel
+    # by default (temp_folder=None) this will use a ram disk /dev/shm
+    # if the data files are larger than the available memory, about 1TB, it will error
+    # so we give it a temp folder to use, which wont have that problem
     temp_folder = os.environ.get("SCRATCH", None)
     logger.debug(f"Using temp folder for patch generation: {temp_folder}")
-    patch_generator = Parallel(n_jobs=-1, return_as="generator", temp_folder=temp_folder)(
-        delayed(process_patch)(*arg) for arg in args
+
+    # lets get our generator using parallel, return as generator so we consume memory as we go
+    patch_generator = Parallel(
+        n_jobs=-1,
+        return_as="generator",
+        temp_folder=temp_folder,
+    )(
+        delayed(lambda i, pol: np.array(cutPatches(alms[i, pol], fnls[i, pol])))(*arg)
+        for arg in args
     )
 
-    # actually gets our data from the generator, only update every 100 runs, takes a long time
+    # Get our data from the generator, only update logging every 100 runs, takes a long time
     for idx, result in enumerate(
-        tqdm(patch_generator, desc="patch progress", total=len(args), miniters=100)
+        tqdm(
+            patch_generator,
+            desc="patch progress",
+            total=len(args),
+            miniters=100,
+        )
     ):
         i, pol = args[idx]
         patches[i, pol] = result

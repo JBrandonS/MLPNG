@@ -74,14 +74,22 @@ def generate_almngs(alms):
 
     logger.info("Starting non-gaussian Alm generation")
     almng = np.zeros((s.nsims, s.npol, s.nelem), dtype=s.c_dtype)
+
+    # We use joblib.parallel to generate the patches in parallel
+    # by default (temp_folder=None) this will use a ram disk /dev/shm
+    # if the data files are larger than the available memory, about 1TB, it will error
+    # so we give it a temp folder to use, which wont have that problem
     temp_folder = os.environ.get("SCRATCH", None)
     logger.debug(f"Using temp folder for almng generation: {temp_folder}")
 
     for i, pol in tqdm(
-        product(range(s.nsims), range(s.npol)), total=s.nsims * s.npol, desc="Almng", miniters=10
+        product(range(s.nsims), range(s.npol)),
+        total=(s.nsims * s.npol),
+        desc="Almng",
+        miniters=10,
     ):
 
-        # create a generator
+        # create a generator, errored when I tried context manager, TODO try again
         alm_gen = Parallel(
             n_jobs=-1, verbose=0, return_as="generator", temp_folder=temp_folder
         )(
@@ -92,7 +100,7 @@ def generate_almngs(alms):
                 s.radii[ri],
                 s.drs[ri],
                 s.nside,
-                s.lmax
+                s.lmax,
             )
             for ri in range(len(s.drs))
         )
@@ -117,7 +125,7 @@ if __name__ == "__main__":
     where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
     """
 
-    logger = setup_logging("almgen", logging.INFO)
+    logger = setup_logging("almgen")
     s = Config(sys.argv[1:])
     is_main = True if s.job_array_index is None or s.job_array_index == 1 else False
 
@@ -127,6 +135,7 @@ if __name__ == "__main__":
             logger.info("Found completed alms file, skipping alm generation")
             exit(0)
         elif os.path.isfile(s.alm_file_partial):
+            # this allows us to stop and start the generation
             logger.info(f"Found partial alm file, skipping alm generation")
             exit(0)
 
@@ -174,7 +183,8 @@ if __name__ == "__main__":
     logger.debug("Non-gaussian Alm shape: %s", almngs.shape)
 
     # and get the fnls
-    fnls = np.random.uniform(s.fnl_min, s.fnl_max+1, (s.nsims, s.npol, 1)).astype(
+    # TODO seed this and update to use new method
+    fnls = np.random.uniform(s.fnl_min, s.fnl_max + 1, (s.nsims, s.npol, 1)).astype(
         s.r_dtype
     )
 
@@ -192,10 +202,16 @@ if __name__ == "__main__":
         # save the settings if this is the main process
         sdata["settings"] = s.settings
 
-        # polt a random alm and almng for this run
+        # plot a random alm and almng for this run
         logger.info("Plotting a random alm and almng")
+
+        alm_plot_dir = os.path.join(s.plot_dir, "alms")
+        if not os.path.exists(alm_plot_dir):
+            logger.info("creating plot directory: %s", alm_plot_dir)
+            os.makedirs(alm_plot_dir)
+
         i, j = np.random.randint(s.nsims), np.random.randint(s.npol)
-        filebase = os.path.join(s.plot_dir, f"{s.sjob}_{s.base_name}_alm[{i},{j}]")
+        filebase = os.path.join(alm_plot_dir, f"{s.sjob}_{s.base_name}_alm[{i},{j}]")
         plot_cl_alm(
             complete_alms[i, j],
             save_file=filebase + f".png",

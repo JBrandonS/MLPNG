@@ -46,7 +46,7 @@ def recursive_copy(hf_source, hf_dest):
                     )
 
 
-def combine_data(directory, base_name, ext, remove_files=True, finalize=False):
+def combine_data(directory, base_name, ext, remove_files=True):
     # Get a list of all h5py files that match the pattern, i.e., end with a SLURM job array index
     file_pattern = os.path.join(directory, base_name + "_[0-9]*" + ext + "*")
     files_to_combine = glob.glob(file_pattern)
@@ -68,11 +68,11 @@ def combine_data(directory, base_name, ext, remove_files=True, finalize=False):
             with h5py.File(file, "r") as hf:
                 recursive_copy(hf, hf_combined)
 
-    if finalize:
-        os.replace(
-            os.path.join(directory, base_name + ext + ".nc"),
-            os.path.join(directory, base_name + ext),
-        )
+    # Rename the combined file to remove the .nc extension
+    os.replace(
+        os.path.join(directory, base_name + ext + ".nc"),
+        os.path.join(directory, base_name + ext),
+    )
 
     if remove_files:
         for file in tqdm(files_to_combine, desc="removing partial files", miniters=10):
@@ -86,7 +86,7 @@ if __name__ == "__main__":
     # check that we are not using a already completed file!
     if not os.path.isfile(s.alm_file):
         logger.info(f"Combining alm files {s.alm_str} in {s.alm_dir}")
-        combine_data(s.alm_dir, s.alm_str, ".alms.hdf5", finalize=True)
+        combine_data(s.alm_dir, s.alm_str, ".alms.hdf5")
     else:
         logger.info(f"Found completed alms file, skipping alm combination")
 

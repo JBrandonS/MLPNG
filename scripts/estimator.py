@@ -24,7 +24,9 @@ logging.getLogger("astropy").setLevel(logging.ERROR)
 def alm_loader(str_idx):
     """Loads in a single alm given a int in string form. Used inside the KSW code."""
     idx, pol = np.unravel_index(int(str_idx), (s.nsims, s.npol))
-    logging.info(f"Loading alm [{idx}, {pol}], alms shape {alms.shape}, fnl {fnls[idx]}")
+    logging.info(
+        f"Loading alm [{idx}, {pol}], alms shape {alms.shape}, fnl {fnls[idx]}"
+    )
     return np.array(alms[idx, pol])
 
 
@@ -39,7 +41,11 @@ def alm_step_loader(idx):
 
 def compute_icov_ell(N, b):
     S_ell = cosmo._camb_data.get_cmb_power_spectra(
-        cosmo.camb_params, s.lmax, ["total"], "muK", True
+        cosmo.camb_params,
+        lmax=s.lmax,
+        spectra=["total"],
+        CMB_unit="muK",
+        raw_cl=True,
     )["total"][:, 0]
     b_inv = 1 / b
     return (1 / (S_ell + b_inv * N * b_inv))[None, :]
@@ -129,6 +135,8 @@ if __name__ == "__main__":
 
     # save data
     if is_main:
+        # note: the ksw code will use all reduce so we only need to worry about the main process
+
         # calculate the error
         fnls = fnls.ravel()
         snr = (estimates - fnls[alm_strs.astype(int)]) * np.sqrt(fisher)
