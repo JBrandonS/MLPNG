@@ -175,18 +175,12 @@ class Config:
             self.base_dir, settings.get("model_dir", "models")
         )
 
-        # TODO: add info to the strings
-        # l_str = "l" if self.lensing else "ul"
-        # nn_str = "-nn" if self.disable_noise else ""
-
-        l_str = "l_" if self.lensing else "nl_"
-        nn_str = "nn_" if self.disable_noise else ""
+        # add info to the strings
+        l_str = "l" if self.lensing else "ul"
+        nn_str = "-nn" if self.disable_noise else ""
 
         # set up the file names
-        # self.base_name = f"l{self.lmax}_n{self.nside}_{l_str}{nn_str}_{self.pol_chars}_{self.total_sims}"
-        self.base_name = (
-            f"{self.nside}_{l_str}{nn_str}{self.pol_chars}_{self.total_sims}"
-        )
+        self.base_name = f"l{self.lmax}_n{self.nside}_{l_str}{nn_str}_{self.pol_chars}_{self.total_sims}"
         logger.info(f"Base name: {self.base_name}")
 
         # setup the file paths
