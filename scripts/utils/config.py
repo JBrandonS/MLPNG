@@ -88,6 +88,7 @@ class Config:
 
         # just clean up the code below a little
         settings = self.settings
+        self.cosmo_params = self.settings["cosmo_params"]
 
         logger.info(f"Running with settings: \n{json.dumps(settings, indent=2)}")
 
@@ -109,6 +110,22 @@ class Config:
         self.total_sims = self.nsims * self.npol * self.narray
         self.total_patches = self.npatches * self.total_sims
 
+        # some important derived parameters
+        # most of these are not really used, delete?
+        self.nell = self.lmax + 1
+        self.nelem = hp.Alm.getsize(self.lmax)
+        self.npix = hp.nside2npix(self.nside)
+        self.ells = np.arange(self.nell)
+
+        # set up units
+        self.double_precision = self.settings.get("double_precision", False)
+        if self.double_precision:
+            self.r_dtype = np.float64
+            self.c_dtype = np.complex128
+        else:
+            self.r_dtype = np.float32
+            self.c_dtype = np.complex64
+
         # get the beam and noise
         self.disable_noise = settings.get("disable_noise", True)
         self.beam_width = settings.get("beam_width", 1) * u.arcmin
@@ -119,15 +136,6 @@ class Config:
 
         # get the radii
         self.radii, self.drs = self.get_radii(1, 50000)
-
-        # set up units
-        self.double_precision = self.settings.get("double_precision", False)
-        if self.double_precision:
-            self.r_dtype = np.float64
-            self.c_dtype = np.complex128
-        else:
-            self.r_dtype = np.float32
-            self.c_dtype = np.complex64
 
         # get some info from SLURM
         self.sjob = os.getenv("SLURM_JOB_ID") or 0
@@ -155,13 +163,6 @@ class Config:
         logger.info(
             f"Running SLURM job {self.sjob} with job array index {self.job_array_index} of {self.narray}"
         )
-
-        # some important derived parameters
-        # most of these are not really used, delete?
-        self.nell = self.lmax + 1
-        self.nelem = hp.Alm.getsize(self.lmax)
-        self.npix = hp.nside2npix(self.nside)
-        self.ells = np.arange(self.nell)
 
         # paths
         self.base_dir = settings.get("base_dir", "data")
