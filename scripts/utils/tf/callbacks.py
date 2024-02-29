@@ -1,5 +1,5 @@
 import time
-from sympy import I
+import logging
 
 import tensorflow as tf
 from tensorflow.config import list_physical_devices
@@ -37,23 +37,29 @@ class WarmupLearningRate(LearningRateSchedule):
         decay_steps,
         decay_rate,
         staircase=True,
+        ftype=tf.float64,
+        itype=tf.int64,
     ):
+        self.ftype = ftype
+        self.itype = itype
+
         # casting everything because tf was yelling about it
-        self.warmup_learning_rate = tf.cast(warmup_learning_rate, tf.float64)
-        self.warmup_steps = tf.cast(warmup_steps, tf.int64)
-        self.warmup_scale = tf.cast(warmup_scale, tf.float64)
-        self.warmup_scale_steps = tf.cast(warmup_scale_steps, tf.int64)
+        self.warmup_learning_rate = tf.cast(warmup_learning_rate, ftype)
+        self.warmup_steps = tf.cast(warmup_steps, itype)
+        self.warmup_scale = tf.cast(warmup_scale, ftype)
+        self.warmup_scale_steps = tf.cast(warmup_scale_steps, itype)
 
         # these should follow the ExponentialDecay function
-        self.warmed_learning_rate = tf.cast(warmed_learning_rate, tf.float64)
-        self.decay_steps = tf.cast(decay_steps, tf.int64)
-        self.decay_rate = tf.cast(decay_rate, tf.float64)
+        self.warmed_learning_rate = tf.cast(warmed_learning_rate, ftype)
+        self.decay_steps = tf.cast(decay_steps, itype)
+        self.decay_rate = tf.cast(decay_rate, ftype)
         self.staircase = staircase
 
+        logger = logging.getLogger(__name__)
         max_warmup = warmup_learning_rate * (
             1 + warmup_scale * (warmup_steps / warmup_scale_steps)
         )
-        tf.print(
+        logger.info(
             f"WarmupLearningRate: Warmup Range: {warmup_learning_rate} -> {max_warmup}"
         )
     
@@ -89,6 +95,8 @@ class WarmupLearningRate(LearningRateSchedule):
             "decay_steps": self.decay_steps.numpy(),  # type: ignore
             "decay_rate": self.decay_rate.numpy(),  # type: ignore
             "staircase": self.staircase,
+            "ftype": self.ftype.name,
+            "itype": self.itype.name,
         }
 
 

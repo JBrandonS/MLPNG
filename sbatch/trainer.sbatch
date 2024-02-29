@@ -17,4 +17,4 @@ module load conda nvidia/nvhpc
 eval "$(conda shell.bash hook)"
 conda activate mlpng-gpu 
 
-time srun python "$1" "$2"
+time srun python "$@"

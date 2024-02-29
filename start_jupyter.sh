@@ -61,33 +61,36 @@ done
 # Start the service
 if [[ $(squeue --me -h -n jupyter) && -f .vscj.out ]]; then
     echo "Found Running server, reusing:"
-else
-    # Remove the old log file if it exists
-    if [[ -f .vscj.out ]]; then
-        rm .vscj.out
-    fi
-
-    # need to run diffrent sbatch script based on the hostname
-    if [[ $(hostname) == slogin* ]]; then
-        RUN_SCRIPT="sbatch/jupyter-mp.sbatch"
-    else
-        if [[ $(hostname) != m3login* ]]; then
-            echo "Running in unknown login node, $(hostname), defaulting to m3"
-        fi
-        RUN_SCRIPT="sbatch/jupyter-m3.sbatch"
-    fi
-    sbatch -D "$PWD" "${CLI_ARGS[@]}" "$RUN_SCRIPT"
-
-    # Wait for the SLURM job to run
-    i=0
-    until [ -f .vscj.out ]
-    do
-        i=$((i+1))
-        echo -n "."
-        # sleeps for 1 second for 10 seconds and then moves to 2... to keep from spamming
-        sleep $((i/10 + 1))
-    done
+    grep -m 1 -o 'http.*' .vscj.out
+    exit 0
 fi
+
+# Remove the old log file if it exists
+if [[ -f .vscj.out ]]; then
+    rm .vscj.out
+fi
+
+# need to run diffrent sbatch script based on the hostname
+if [[ $(hostname) == slogin* ]]; then
+    RUN_SCRIPT="sbatch/jupyter-mp.sbatch"
+else
+    if [[ $(hostname) != m3login* ]]; then
+        echo "Running in unknown login node, $(hostname), defaulting to m3"
+    fi
+    RUN_SCRIPT="sbatch/jupyter-m3.sbatch"
+fi
+sbatch -D "$PWD" "${CLI_ARGS[@]}" "$RUN_SCRIPT"
+
+# Wait for the SLURM job to run
+i=0
+until [ -f .vscj.out ]
+do
+    i=$((i+1))
+    echo -n "."
+    # sleeps for 1 second for 10 seconds and then moves to 2... to keep from spamming
+    sleep $((i/10 + 1))
+done
+
 
 # Wait for the jupyter server to start once the file is created and print the URL
 line=""
@@ -96,4 +99,5 @@ while [[ -z "$line" ]]; do
     line=$(grep -m 1 -o 'http.*' .vscj.out)
 done
 
+echo ""
 echo "$line"

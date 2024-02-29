@@ -40,6 +40,7 @@ def parse_args(args):
     )
     parser.add_argument("--base_dir", type=str, help="The base directory to use")
 
+    logger.debug(f'Parsing args {args}')
     return parser.parse_args(args)
 
 
@@ -69,13 +70,11 @@ def get_cosmo_defaults():
 class Config:
     def __init__(self, argv=None):
         args = parse_args(argv)
-
         logger.info(f"Loading settings from file {args.settings_file}")
         with open(args.settings_file, "r") as f:
             self.settings = json.load(f)
 
         # replace the settings with the command line arguments
-        logger.info(f"Overriding settings with command line arguments {args}")
         for key, value in vars(args).items():
             if value is not None:
                 self.settings[key] = value
@@ -138,8 +137,8 @@ class Config:
         self.radii, self.drs = self.get_radii(1, 50000)
 
         # get some info from SLURM
-        self.sjob = os.getenv("SLURM_JOB_ID") or 0
-        job_tasks = os.environ.get("SLURM_ARRAY_TASK_COUNT")
+        self.sjob = os.getenv("SLURM_JOB_ID", 0)
+        job_tasks = os.getenv("SLURM_ARRAY_TASK_COUNT")
         if job_tasks is not None:
             job_tasks = int(job_tasks)
 
@@ -148,21 +147,23 @@ class Config:
                     f"SLURM_ARRAY_TASK_COUNT {job_tasks} does not match narray value {self.narray}"
                 )
 
-            self.job_array_index = int(os.environ.get("SLURM_ARRAY_TASK_ID"))
+            self.job_array_index = int(os.getenv("SLURM_ARRAY_TASK_ID", 0))
             ja_str = f"_{self.job_array_index}"
 
             if self.job_array_index == 1:
                 self.is_main_job = True
             else:
                 self.is_main_job = False
+
+            logger.info(
+                f"Running SLURM job {self.sjob} with job array index {self.job_array_index} of {self.narray}"
+            )
         else:
+            logger.info(f"Running SLURM job {self.sjob}")
             self.is_main_job = None  # unknown, only for estimator really
             self.job_array_index = None
             ja_str = ""
 
-        logger.info(
-            f"Running SLURM job {self.sjob} with job array index {self.job_array_index} of {self.narray}"
-        )
 
         # paths
         self.base_dir = settings.get("base_dir", "data")
