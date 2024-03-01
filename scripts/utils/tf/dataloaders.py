@@ -65,7 +65,7 @@ class PatchLoader(Sequence):
         normalize=False,
         cache=True,
         seed=None,
-        dtype=np.float64,
+        dtype=np.float32,
         dataset=None,
         shape=(None,),
         length=0,
@@ -238,7 +238,7 @@ class AlmLoader(PatchLoader):
 
         # creates the index map for the data conversion from alm(i) -> alm(l, m)
         self.idx_map = np.fromfunction(
-            lambda l, m: Alm.getidx(lmax, l, m), (lmax, lmax), dtype=np.int64
+            lambda l, m: Alm.getidx(lmax, l, m), (lmax, lmax), dtype=np.int32
         )
 
         # creates our positional encoding to give the model some sense of the position of the data
@@ -249,7 +249,7 @@ class AlmLoader(PatchLoader):
             self.__iter__,
             output_signature=(
                 tf.TensorSpec(shape=self.shape, dtype=self.dtype),
-                tf.TensorSpec(shape=(), dtype=self.dtype),
+                tf.TensorSpec(shape=(1,), dtype=self.dtype),
             ),
             name=self.name,
         )
