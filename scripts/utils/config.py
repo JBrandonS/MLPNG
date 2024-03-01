@@ -148,7 +148,7 @@ class Config:
                     f"SLURM_ARRAY_TASK_COUNT {job_tasks} does not match narray value {self.narray}"
                 )
 
-            self.job_array_index = int(os.environ.get("SLURM_ARRAY_TASK_ID"))
+            self.job_array_index = int(os.environ.get("SLURM_ARRAY_TASK_ID", 0))
             ja_str = f"_{self.job_array_index}"
 
             if self.job_array_index == 1:

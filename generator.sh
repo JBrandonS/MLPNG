@@ -14,15 +14,15 @@ SETTINGS=(
   # "l_256.json"
   "l_512.json"
   # "l_1024.json"
-  # "l_2048.json"
+  "l_2048.json"
 )
 
 # override sim settings. These settings will take priority, see config.py for the meaning of these settings, and others
 ARGS=(
   "--nsims" "200"
-  "--disable_lensing" 
+  # "--disable_lensing" 
   # --lensing
-  "--disable_noise" 
+  # "--disable_noise" 
   # --noise
   # "--fnl_range" "-100" "100"
   "--narray" "500" # change slurm args array to match this
@@ -48,8 +48,8 @@ do
     # this uses slurms dependency system to ensure the jobs run in order and only after previous jobs have completed
     
     # generate the alms
-    # JOB0_ID=$(sbatch "${SLURM_ARGS[@]}" "sbatch/almgen.sbatch" "${ARGS[@]}" "$SETTINGSFILE" | awk '{print $4}')
-    # echo "Submitted Almgen of $x with ID $JOB0_ID"
+    JOB0_ID=$(sbatch "${SLURM_ARGS[@]}" "sbatch/almgen.sbatch" "${ARGS[@]}" "$SETTINGSFILE" | awk '{print $4}')
+    echo "Submitted Almgen of $x with ID $JOB0_ID"
 
     # Not used, but generates the patches
     # JOB1_ID=$(sbatch --dependency=afterok:$JOB0_ID "${SLURM_ARGS[@]}" "sbatch/patchgen.sbatch" "${ARGS[@]}" "$SETTINGSFILE" | awk '{print $4}')
@@ -59,16 +59,16 @@ do
     PREV_JOB_ID="${JOB1_ID:-$JOB0_ID}"
 
     # combines the data into a single file, will do alms or alms and patches
-    JOB2_ID=$(sbatch "sbatch/combiner.sbatch" "${ARGS[@]}" "$SETTINGSFILE" | awk '{print $4}')
+    JOB2_ID=$(sbatch --dependency=afterok:"$PREV_JOB_ID" "sbatch/combiner.sbatch" "${ARGS[@]}" "$SETTINGSFILE" | awk '{print $4}')
     echo "Submitted Combiner of $x with ID $JOB2_ID"
 
     # runs the estimator on the combined data
-    # JOB3_ID=$(sbatch --dependency=afterok:"$JOB2_ID" "sbatch/estimator.sbatch" "${ARGS[@]}" "$SETTINGSFILE" | awk '{print $4}')
-    # echo "Submitted Estimator of $x with ID $JOB3_ID"
+    JOB3_ID=$(sbatch --dependency=afterok:"$JOB2_ID" "sbatch/estimator.sbatch" "${ARGS[@]}" "$SETTINGSFILE" | awk '{print $4}')
+    echo "Submitted Estimator of $x with ID $JOB3_ID"
 done
 
 # Uncomment to run the heidelberg estimator test
-# JOBH_ID=$(sbatch "sbatch/heidelberg.sbatch" | awk '{print $4}')
-# echo "Submitted Heidelberg Estimator with ID $JOBH_ID"
+JOBH_ID=$(sbatch "sbatch/heidelberg.sbatch" | awk '{print $4}')
+echo "Submitted Heidelberg Estimator with ID $JOBH_ID"
 
 echo "All jobs submitted."
