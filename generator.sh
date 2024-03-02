@@ -10,11 +10,11 @@ SETTINGS_DIR="settings/"
 
 # list of the settings file to be used, will be ran in order
 SETTINGS=(
-  "l_128.json" 
-  # "l_256.json"
-  "l_512.json"
-  # "l_1024.json"
-  "l_2048.json"
+  "l500_n128.json" 
+  # "l750_n256.json"
+  "l1000_n512.json"
+  # "l2000_n1024.json"
+  "l2000_n2048.json"
 )
 
 # override sim settings. These settings will take priority, see config.py for the meaning of these settings, and others
@@ -68,7 +68,7 @@ do
 done
 
 # Uncomment to run the heidelberg estimator test
-JOBH_ID=$(sbatch "sbatch/heidelberg.sbatch" | awk '{print $4}')
-echo "Submitted Heidelberg Estimator with ID $JOBH_ID"
+# JOBH_ID=$(sbatch "sbatch/heidelberg.sbatch" | awk '{print $4}')
+# echo "Submitted Heidelberg Estimator with ID $JOBH_ID"
 
 echo "All jobs submitted."

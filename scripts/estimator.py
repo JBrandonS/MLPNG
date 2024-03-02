@@ -15,6 +15,9 @@ from utils.plots import plot_ksw_predictions
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 is_main_comm = rank == 0
+logger = setup_logging(
+    f"estimator {rank}", level=logging.INFO if is_main_comm else logging.ERROR
+)
 
 # fix healpy logging because we will get a lot of info
 logging.getLogger("healpy").setLevel(logging.WARNING)
@@ -54,10 +57,7 @@ def compute_icov_ell(N, b):
 
 
 if __name__ == "__main__":
-    logger = setup_logging(
-        f"estimator {rank}", level=logging.INFO if is_main_comm else logging.ERROR
-    )
-    s = Config(sys.argv[1:])
+    s = Config()
 
     # init camb and setup the reduced bispecturm to local
     logger.info("Running camb")

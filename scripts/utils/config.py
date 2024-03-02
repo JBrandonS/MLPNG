@@ -14,33 +14,20 @@ logger = logging.getLogger(__name__)
 def parse_args(args):
     # note: arguments must be stored in a var name matching the dict key
     parser = argparse.ArgumentParser()
-    parser.add_argument("settings_file", help="which settings file to use")
-    parser.add_argument("--nsims", type=int, help="The number of sims to use")
+    parser.add_argument("settings_file")
+    parser.add_argument("--nsims", type=int)
+    parser.add_argument("--narray", type=int)
+    parser.add_argument("--lensing", action="store_true", default=None)
     parser.add_argument(
-        "--narray",
-        type=int,
-        help="The number of slurm arrays used in the sbatch script",
+        "--disable_lensing", action="store_false", dest="lensing", default=None
     )
-    parser.add_argument("--lensing", action="store_true", help="Use lensing")
+    parser.add_argument("--disable_noise", action="store_true", default=None)
     parser.add_argument(
-        "--disable_lensing",
-        action="store_false",
-        dest="lensing",
-        help="Do not use lensing",
+        "--noise", action="store_false", dest="disable_noise", default=None
     )
-    parser.add_argument("--disable_noise", action="store_true", help="Disable noise")
-    parser.add_argument(
-        "--noise", action="store_false", dest="disable_noise", help="Enables noise"
-    )
-    parser.add_argument(
-        "--force_alm_gen", action="store_true", help="Force alm generation"
-    )
-    parser.add_argument(
-        "--fnl_range", type=float, nargs=2, help="The range of fnl values to use"
-    )
-    parser.add_argument("--base_dir", type=str, help="The base directory to use")
-
-    logger.debug(f'Parsing args {args}')
+    parser.add_argument("--force_alm_gen", action="store_true", default=None)
+    parser.add_argument("--fnl_range", type=float, nargs=2)
+    parser.add_argument("--base_dir", type=str)
     return parser.parse_args(args)
 
 
@@ -77,6 +64,7 @@ class Config:
         # replace the settings with the command line arguments
         for key, value in vars(args).items():
             if value is not None:
+                logger.debug(f"Overriding settings with command line args: {key}=>{value}")
                 self.settings[key] = value
 
         # set the cosmological parameters defaults
@@ -163,7 +151,6 @@ class Config:
             self.is_main_job = None  # unknown, only for estimator really
             self.job_array_index = None
             ja_str = ""
-
 
         # paths
         self.base_dir = settings.get("base_dir", "data")
