@@ -186,7 +186,7 @@ class Config:
         self.alm_file = os.path.join(self.alm_dir, f"{self.base_name}.alms.hdf5")
 
         # save a copy of the settings file if needed
-        if args.save_settings is not None:
+        if args.save_settings is not None and args.save_settings is True:
             dir = os.path.join("settings", "runs")
             os.makedirs(dir, exist_ok=True)
             file = os.path.join(dir, f"{self.sjob}_{self.base_name}.json")
