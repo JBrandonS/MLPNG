@@ -3,9 +3,9 @@
 #SBATCH --output=.vscj.out
 #SBATCH --partition=standard-s
 #SBATCH --ntasks=1
-#SBATCH --mem=1024G
-#SBATCH --cpus-per-task=16
-#SBATCH --time=8:00:00
+#SBATCH --mem=512G
+#SBATCH --cpus-per-task=32
+#SBATCH --time=12:00:00
 
 
 module purge
