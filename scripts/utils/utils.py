@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import sys
+import time
 
 import h5py
 import numpy as np
@@ -28,7 +29,8 @@ def setup_logging(
 
 
 def save_data(file_path, data_dict):
-    logger.debug("Saving data to %s", file_path)
+    start_time = time.perf_counter()
+    logger.info("Saving data to %s", file_path)
 
     with h5py.File(file_path, "a") as hf:
         for key, value in data_dict.items():
@@ -47,10 +49,13 @@ def save_data(file_path, data_dict):
             else:
                 # Create a new dataset for this key
                 hf.create_dataset(key, data=value, maxshape=(None,) + value.shape[1:])
-    logger.debug("done")
+    logger.info("Finsihed saving data to %s in %s", file_path, time.perf_counter() - start_time)
 
 
-def load_data(data_file, keys, start_index=None, end_index=None):
+def load_data(data_file, keys):
+    start_time = time.perf_counter()
+    logger.info("Loading data %s from %s", keys, data_file)
+
     if isinstance(keys, str):
         keys = [keys]
 
@@ -61,28 +66,7 @@ def load_data(data_file, keys, start_index=None, end_index=None):
             kv = hdf.get(key, None)
             if kv is None:
                 raise ValueError(f"Key {key} not found in {data_file}")
+            data[key] = kv # type: ignore
 
-            if start_index is not None and end_index is not None:
-                data[key] = np.array(kv[start_index:end_index])  # type: ignore
-            else:
-                data[key] = np.array(kv[()])  # type: ignore
-    logger.debug("Finished loading data from %s", data_file)
+    logger.info("Finished loading data from %s in %s", data_file, time.perf_counter() - start_time)
     return data
-
-
-def load_single_data(data_file, key, index):
-    with h5py.File(data_file, "r", swmr=True, locking=False) as hdf:
-        kv = hdf.get(key, None)
-        if kv is None:
-            raise ValueError(f"Key {key} not found in {data_file}")
-        else:
-            return np.array(kv[index])  # type: ignore
-
-
-def get_fisher(data_file):
-    """Get the fisher matrix from the data file"""
-    with h5py.File(data_file, "r", swmr=True, locking=False) as hdf:
-        kv = hdf.get("fisher", None)
-        if kv is None:
-            raise ValueError(f"Key fisher not found in {data_file}")
-        return np.array(kv[()])  # type: ignore

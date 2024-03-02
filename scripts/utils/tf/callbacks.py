@@ -55,14 +55,14 @@ class WarmupLearningRate(LearningRateSchedule):
         self.decay_rate = tf.cast(decay_rate, ftype)
         self.staircase = staircase
 
-        logger = logging.getLogger(__name__)
+        self.logger = logging.getLogger("WarmupLearningRate")
+        self.logger.setLevel(logging.INFO)
+        
         max_warmup = warmup_learning_rate * (
             1 + warmup_scale * (warmup_steps / warmup_scale_steps)
         )
-        logger.info(
-            f"WarmupLearningRate: Warmup Range: {warmup_learning_rate} -> {max_warmup}"
-        )
-    
+        self.logger.info(f"Warmup Range: {warmup_learning_rate} -> {max_warmup}")
+
     @tf.function
     def __call__(self, step):
         @tf.function
@@ -73,16 +73,16 @@ class WarmupLearningRate(LearningRateSchedule):
                 p = tf.floor(p)
             scale = tf.multiply(self.warmup_scale, p)
             return tf.multiply(self.warmup_learning_rate, 1.0 + scale)
-        
+
         @tf.function
         def decay_fn():
-                """Applies exponential decay to the learning rate."""
-                p = (step - self.warmup_steps) / (self.decay_steps)
-                if self.staircase:
-                    p = tf.floor(p)
-                scale = tf.pow(self.decay_rate, p)
-                return tf.multiply(self.warmed_learning_rate, scale)
-    
+            """Applies exponential decay to the learning rate."""
+            p = (step - self.warmup_steps) / (self.decay_steps)
+            if self.staircase:
+                p = tf.floor(p)
+            scale = tf.pow(self.decay_rate, p)
+            return tf.multiply(self.warmed_learning_rate, scale)
+
         return tf.cond(step < self.warmup_steps, warmup_fn, decay_fn)
 
     def get_config(self):
@@ -164,9 +164,6 @@ class TimedLoggingCallback(Callback):
         self.batch_start_time = time.time()
 
     def on_train_batch_end(self, batch, logs=None):
-        if batch == 0:  # skip the first batch
-            return
-
         current_time = time.time()
         if current_time - self.last_print_time >= self.print_frequency:
             steps = self.params["steps"]
