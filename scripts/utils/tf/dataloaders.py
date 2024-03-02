@@ -1,4 +1,4 @@
-import json
+import logging
 
 import h5py
 import numpy as np
@@ -65,12 +65,14 @@ class PatchLoader(Sequence):
         normalize=False,
         cache=True,
         seed=None,
-        dtype=np.float32,
+        dtype=np.float64,
         dataset=None,
         shape=(None,),
         length=0,
         num_replicas="auto",
     ):
+        self.logger = logging.getLogger(name)
+
         # setup some attrributes
         self.file_path = file_path
         self.name = name
@@ -83,6 +85,7 @@ class PatchLoader(Sequence):
         self.dtype = dtype
         self.shape = shape
         self.length = length
+        self.needs_cardinality = True
 
         if num_replicas == "auto":
             # tested on superpod but would not be suprised if this doesnt work on other systems
@@ -112,14 +115,14 @@ class PatchLoader(Sequence):
         if hasattr(self, "_ds"):
             raise ValueError("Dataset already initialized")
 
-        self.file = file = h5py.File(self.file_path, mode="r", swmr=True, locking=False)
+        self.file = h5py.File(self.file_path, mode="r", swmr=True, locking=False)
         (
             self._nsims,
             self._npol,
             self._npatches,
             self._nside,
             _,
-        ) = file["patch"].shape
+        ) = self.file["patch"].shape
 
         self.length = self._nsims * self._npol * self._npatches
         self.shape = (self._nside, self._nside, 1)
@@ -132,13 +135,6 @@ class PatchLoader(Sequence):
             ),
             name=self.name,
         )
-
-        opts = tf.data.Options()
-        opts.experimental_distribute.auto_shard_policy = (
-            tf.data.experimental.AutoShardPolicy.DATA
-        )
-        opts.deterministic = False  # we dont need things returned in order
-        self._ds = self._ds.with_options(opts)
 
     @tf.function
     def _normalize(self, data, label):
@@ -166,7 +162,8 @@ class PatchLoader(Sequence):
         tf.data.Dataset: The processed subset of the dataset, ready for training or evaluation.
         """
         data = self._ds.skip(start).take(step)
-        data = data.apply(assert_cardinality(step))
+        if self.needs_cardinality:
+            data = data.apply(assert_cardinality(step))
         if self.normalize:
             data = data.map(self._normalize, num_parallel_calls=AUTOTUNE)
         if self.cache:
@@ -178,15 +175,15 @@ class PatchLoader(Sequence):
         # multiply by the number of gpus to get the correct batch size for distributed systems
         data = data.batch(
             self.batch_size * self.num_replicas,
-            drop_remainder=True,
+            drop_remainder=True,  # we dont want any partial batches
+            deterministic=False,  # we dont care about order
             num_parallel_calls=AUTOTUNE,
-            deterministic=False,
         )
         return data.prefetch(AUTOTUNE)
 
-    def get_split(self, train_frac, test_frac, val_frac=None):
+    def get_split(self, train_frac, test_frac, val_frac):
         """
-        Splits the dataset into training, testing, and optionally validation sets.
+        Splits the dataset into training, testing, and validation sets.
 
         This method calculates the sizes of the training and testing sets based on the provided fractions,
         and then creates the actual datasets.
@@ -194,23 +191,19 @@ class PatchLoader(Sequence):
         Parameters:
         train_frac (float): The fraction of the dataset to use for training.
         test_frac (float): The fraction of the dataset to use for testing.
-        val_frac (float, optional): The fraction of the dataset to use for validation. If None, no validation set is created. Defaults to None.
+        val_frac (float): The fraction of the dataset to use for validation.
 
         Returns:
-        tuple: The training and testing datasets, and the validation dataset if `val_frac` is not None.
+        tuple: The training and testing datasets, and the validation dataset.
         """
         train_size = int(self.length * train_frac)
         test_size = int(self.length * test_frac)
+        val_size = int(self.length * val_frac)
 
         train_ds = self._get_dataset(0, train_size)
         test_ds = self._get_dataset(train_size, test_size)
-
-        if val_frac is not None:
-            val_size = int(self.length * val_frac)
-            val_ds = self._get_dataset(train_size + test_size, val_size)
-            return train_ds, test_ds, val_ds
-
-        return train_ds, test_ds
+        val_ds = self._get_dataset(train_size + test_size, val_size)
+        return train_ds, test_ds, val_ds
 
 
 class AlmLoader(PatchLoader):
@@ -226,23 +219,31 @@ class AlmLoader(PatchLoader):
         if hasattr(self, "_ds"):
             raise ValueError("Dataset already initialized")
 
-        self._file = h5py.File(self.file_path, mode="r", swmr=True, locking=False)
-        self.alms = self._file["alm"]
-        self.fnls = self._file["fnl"]
-        (self._nsims, self._npol, self._ndata) = self.alms.shape
+        # we dont store the file,  it will close as soon as alms and fnls are destroyed
+        file = h5py.File(self.file_path, mode="r", swmr=True, locking=False)
+
+        # this lazy loads the alm and fnl data
+        self.alms = file["alm"]
+        self.fnls = file["fnl"]
+        (self.nsims, self.npol, self.ndata) = self.alms.shape
+        self.logger.info(
+            f"Loaded {self.file_path} with {self.nsims} sims, and {self.npol} pols"
+        )
 
         # get the shape and length that our dataset will be in
-        lmax = Alm.getlmax(self._ndata)
-        self.length = self._nsims * self._npol
+        lmax = Alm.getlmax(self.ndata)
+        self.length = self.nsims * self.npol
         self.shape = (2, lmax, lmax)
 
         # creates the index map for the data conversion from alm(i) -> alm(l, m)
         self.idx_map = np.fromfunction(
-            lambda l, m: Alm.getidx(lmax, l, m), (lmax, lmax), dtype=np.int32
+            lambda l, m: Alm.getidx(lmax, l, m),
+            (lmax, lmax),
+            dtype=np.int64,
         )
 
         # creates our positional encoding to give the model some sense of the position of the data
-        self.pos_enc = self.idx_map / self._ndata / 1000
+        self.pos_enc = self.idx_map / self.ndata / 1000
 
         # now create our dataset from generator
         self._ds = Dataset.from_generator(
@@ -256,10 +257,9 @@ class AlmLoader(PatchLoader):
 
     def __getitem__(self, index):
         # convert the index to a tuple of (i, j) indexing sim and pol
-        i, j = np.unravel_index(index, (self._nsims, self._npol))
+        i, j = np.unravel_index(index, (self.nsims, self.npol))
 
-        # now we can get the data
-        # probably the slowest part of the code
+        # now we can get the data and label
         alm = np.array(self.alms[i, j])
         fnl = self.fnls[i, j]
 
@@ -277,7 +277,13 @@ class TFDSLoader(PatchLoader):
     """
 
     def __init__(self, file_path, name="TFDSLoader", **kwargs):
+        self.logger = logging.getLogger(name)
+        if file_path.endswith(".hdf5"):
+            self.logger.info(f"Auto Converting file name {file_path} to tfds")
+            file_path = file_path.replace(".hdf5", ".tfds")
+
         super().__init__(file_path, name, **kwargs)
+        self.needs_cardinality = False
 
     def _init_ds(self):
         if hasattr(self, "_ds"):
@@ -287,5 +293,7 @@ class TFDSLoader(PatchLoader):
         self.length = self._ds.cardinality().numpy()
         self.shape = self._ds.element_spec[0].shape
 
+        self.logger.info(f"Loaded {self.file_path} with {self.length} samples, and shape {self.shape}")
+
     def __getitem__(self, index):
-        return self._ds.skip(index).take(1).as_numpy_iterator().next()
+        pass
