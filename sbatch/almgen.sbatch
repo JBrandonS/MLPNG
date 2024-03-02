@@ -8,8 +8,8 @@
 #SBATCH --array=1-10
 #SBATCH --time=12:00:00
 
-# create our logging dir
-mkdir -p logs/almgen/"$SLURM_JOB_ID"/
+# create our logging dir, if needed
+mkdir -p logs/almgen/"$SLURM_ARRAY_JOB_ID"/
 
 module purge
 module load spack conda

@@ -1,6 +1,5 @@
 import logging
 import os
-import sys
 
 import camb
 import healpy as hp
@@ -9,13 +8,13 @@ from joblib import Parallel, delayed
 from sympy.physics.units import Pa
 from ksw import Cosmology, Data
 from ksw.radial_functional import radial_func
-from numpy.random import randint, uniform
 from scipy.interpolate import CubicSpline
 from tqdm.auto import tqdm
 from utils import Config, save_data, setup_logging
 from utils.plots import plot_cl_alm
 from itertools import product
 
+logger = setup_logging("almgen")
 
 def remove_mono_dipole(alm):
     """
@@ -124,9 +123,7 @@ if __name__ == "__main__":
     $B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}$
     where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
     """
-
-    logger = setup_logging("almgen")
-    s = Config(sys.argv[1:])
+    s = Config()
 
     # check for completed alm runs if we are not forcing alm generation
     if not s.force_alm_gen:

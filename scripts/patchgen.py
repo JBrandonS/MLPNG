@@ -17,6 +17,7 @@ from tqdm.auto import tqdm
 from utils import Config, load_data, save_data, setup_logging
 from utils.plots import plot_cl_map, plot_patches
 
+logger = setup_logging("patchgen")
 
 def cutSqPatches_lenspyx(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, cl_phi, alms, fnl):
     """Uses lenspyx to generate and cut the lensed flat maps"""
@@ -119,8 +120,7 @@ if __name__ == "__main__":
     # $$B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}$$
     # where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
 
-    logger = setup_logging("patchgen")
-    s = Config(sys.argv[1:])
+    s = Config()
 
     # Load in the alm data, do this first to crash fast if data is not found
     if os.path.isfile(s.alm_file):

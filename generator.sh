@@ -10,19 +10,19 @@ SETTINGS_DIR="settings/"
 
 # list of the settings file to be used, will be ran in order
 SETTINGS=(
-  "l_128.json" 
-  # "l_256.json"
-  "l_512.json"
-  # "l_1024.json"
-  # "l_2048.json"
+  "l500_n128.json" 
+  # "l750_n256.json"
+  "l1000_n512.json"
+  # "l2000_n1024.json"
+  "l2000_n2048.json"
 )
 
 # override sim settings. These settings will take priority, see config.py for the meaning of these settings, and others
 ARGS=(
   "--nsims" "200"
-  "--disable_lensing" 
+  # "--disable_lensing" 
   # --lensing
-  "--disable_noise" 
+  # "--disable_noise" 
   # --noise
   # "--fnl_range" "-100" "100"
   "--narray" "500" # change slurm args array to match this
@@ -48,8 +48,8 @@ do
     # this uses slurms dependency system to ensure the jobs run in order and only after previous jobs have completed
     
     # generate the alms
-    # JOB0_ID=$(sbatch "${SLURM_ARGS[@]}" "sbatch/almgen.sbatch" "${ARGS[@]}" "$SETTINGSFILE" | awk '{print $4}')
-    # echo "Submitted Almgen of $x with ID $JOB0_ID"
+    JOB0_ID=$(sbatch "${SLURM_ARGS[@]}" "sbatch/almgen.sbatch" "${ARGS[@]}" "$SETTINGSFILE" | awk '{print $4}')
+    echo "Submitted Almgen of $x with ID $JOB0_ID"
 
     # Not used, but generates the patches
     # JOB1_ID=$(sbatch --dependency=afterok:$JOB0_ID "${SLURM_ARGS[@]}" "sbatch/patchgen.sbatch" "${ARGS[@]}" "$SETTINGSFILE" | awk '{print $4}')
@@ -59,12 +59,12 @@ do
     PREV_JOB_ID="${JOB1_ID:-$JOB0_ID}"
 
     # combines the data into a single file, will do alms or alms and patches
-    JOB2_ID=$(sbatch "sbatch/combiner.sbatch" "${ARGS[@]}" "$SETTINGSFILE" | awk '{print $4}')
+    JOB2_ID=$(sbatch --dependency=afterok:"$PREV_JOB_ID" "sbatch/combiner.sbatch" "${ARGS[@]}" "$SETTINGSFILE" | awk '{print $4}')
     echo "Submitted Combiner of $x with ID $JOB2_ID"
 
     # runs the estimator on the combined data
-    # JOB3_ID=$(sbatch --dependency=afterok:"$JOB2_ID" "sbatch/estimator.sbatch" "${ARGS[@]}" "$SETTINGSFILE" | awk '{print $4}')
-    # echo "Submitted Estimator of $x with ID $JOB3_ID"
+    JOB3_ID=$(sbatch --dependency=afterok:"$JOB2_ID" "sbatch/estimator.sbatch" "${ARGS[@]}" "$SETTINGSFILE" | awk '{print $4}')
+    echo "Submitted Estimator of $x with ID $JOB3_ID"
 done
 
 # Uncomment to run the heidelberg estimator test
