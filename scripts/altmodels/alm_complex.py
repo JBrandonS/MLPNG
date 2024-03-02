@@ -31,7 +31,7 @@ from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.regularizers import l2
 
 from utils import Config
-from utils.tf import dice_coefficient_loss
+from utils.tf.losses import dice_coefficient_loss
 from utils.tf.callbacks import TimedLoggingCallback
 from utils.tf.plots import plot_histogram, plot_metrics, plot_predictions
 

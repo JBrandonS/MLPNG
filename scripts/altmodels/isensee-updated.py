@@ -53,7 +53,7 @@ class PeriodicPadding2D(Layer):
         self.current_grid = current_grid
         self.indices = np.append(
             np.insert(np.arange(self.current_grid), 0, self.current_grid - 1), 0
-        ).astype(np.int32)
+        ).astype(np.int64)
 
     def call(self, x):
         x = tf.gather(x, self.indices, axis=1)

@@ -47,7 +47,7 @@ def cutSqPatches_lenspyx(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, cl_phi, alm
         hp.mollview(map2hp, min=-650.0, max=650, title=f"fnl = {fnl}")
 
         plot_dir = os.path.join(s.plot_dir, "patchgen")
-        moll_path = os.join(plot_dir, s.base_name + f"_{fnl}_fullsky.png")
+        moll_path = os.path.join(plot_dir, s.base_name + f"_{fnl}_fullsky.png")
         plt.savefig(moll_path)
 
     patches = []
@@ -68,10 +68,10 @@ def cutSqPatches_pixell(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, alms, fnl):
         hp.mollview(map2hp, min=-650.0, max=650, title=f"fnl = {fnl}")
 
         plot_dir = os.path.join(s.plot_dir, "patchgen")
-        moll_path = os.join(plot_dir, s.base_name + f"_{fnl}_fullsky.png")
+        moll_path = os.path.join(plot_dir, s.base_name + f"_{fnl}_fullsky.png")
         plt.savefig(moll_path)
 
-        map_path = os.join(plot_dir, s.base_name + f"_{fnl}_pixell_cl_map.png")
+        map_path = os.path.join(plot_dir, s.base_name + f"_{fnl}_pixell_cl_map.png")
         plot_cl_map(car_map, fs_wcs, plot_camb=True, c_ells=c_ells, save_file=map_path)
 
     patches = []

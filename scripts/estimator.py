@@ -151,7 +151,7 @@ if __name__ == "__main__":
         save_data(s.alm_file, sdata)
 
         logger.info(
-            f"Saved data in shapes {fisher.shape}, {fisher_iso.shape}, {estimates.shape}, {snr.shape}"
+            f"Saved data in shapes {fisher}, {fisher_iso}, {estimates.shape}, {snr.shape}"
         )
 
         plot_dir = os.path.join(s.plot_dir, "estimator")

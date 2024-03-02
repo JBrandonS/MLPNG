@@ -20,7 +20,7 @@ class PeriodicPadding2D(Layer):
         self.grid_size = grid_size
         self.indices = np.append(
             np.insert(np.arange(self.grid_size), 0, self.grid_size - 1), 0
-        ).astype(np.int32)
+        ).astype(np.int64)
 
     def call(self, x):
         x = tf.gather(x, self.indices, axis=1)
@@ -127,7 +127,7 @@ def rotation_layer():
     """
 
     def _work(image):
-        k = tf.random.uniform(shape=(), maxval=4, dtype=tf.int32)
+        k = tf.random.uniform(shape=(), maxval=4, dtype=tf.int64)
         return tf.image.rot90(image, k)
 
     return Lambda(lambda x: _work(x), name="rotation_layer")
