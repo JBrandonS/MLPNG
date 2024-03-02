@@ -190,9 +190,12 @@ class Config:
             dir = os.path.join("settings", "runs")
             os.makedirs(dir, exist_ok=True)
             file = os.path.join(dir, f"{self.sjob}_{self.base_name}.json")
-            logger.info(f"Saving settings to file: {file}")
-            with open(file, 'w') as f:
-                json.dump(self.settings, f)
+            if os.path.exists(file):
+                logger.info(f"Settings file, {file}, already exists, not overwriting")
+            else:
+                logger.info(f"Saving settings to file: {file}")
+                with open(file, 'w') as f:
+                    json.dump(self.settings, f)
 
     def get_noise_beam(self):
         beam_ell_pre = hp.gauss_beam(
