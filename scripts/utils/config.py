@@ -28,6 +28,7 @@ def parse_args(args):
     parser.add_argument("--force_alm_gen", action="store_true", default=None)
     parser.add_argument("--fnl_range", type=float, nargs=2)
     parser.add_argument("--base_dir", type=str)
+    parser.add_argument("--save_settings", type=bool)
     return parser.parse_args(args)
 
 
@@ -63,7 +64,7 @@ class Config:
 
         # replace the settings with the command line arguments
         for key, value in vars(args).items():
-            if value is not None:
+            if value is not None and value not in ["settings_file", "save_settings"]:
                 logger.debug(f"Overriding settings with command line args: {key}=>{value}")
                 self.settings[key] = value
 
@@ -183,6 +184,15 @@ class Config:
         self.alm_file_nc = os.path.join(self.alm_dir, f"{self.alm_str}.alms.hdf5.nc")
         self.alm_file_partial = os.path.join(self.alm_dir, f"{self.alm_str}.alms.hdf5")
         self.alm_file = os.path.join(self.alm_dir, f"{self.base_name}.alms.hdf5")
+
+        # save a copy of the settings file if needed
+        if args.save_settings is not None:
+            dir = os.path.join("settings", "runs")
+            os.makedirs(dir, exist_ok=True)
+            file = os.path.join(dir, f"{self.sjob}_{self.base_name}.json")
+            logger.info(f"Saving settings to file: {file}")
+            with open(file, 'w') as f:
+                json.dump(self.settings, f)
 
     def get_noise_beam(self):
         beam_ell_pre = hp.gauss_beam(
