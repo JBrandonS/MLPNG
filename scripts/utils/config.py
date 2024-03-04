@@ -11,24 +11,30 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+# this could be cleaned up and improved a lot but little reward
 def parse_args(args):
     # note: arguments must be stored in a var name matching the dict key
     parser = argparse.ArgumentParser()
     parser.add_argument("settings_file")
     parser.add_argument("--nsims", type=int)
     parser.add_argument("--narray", type=int)
+
+    # note sure if there is a better way to do this
     parser.add_argument("--lensing", action="store_true", default=None)
     parser.add_argument(
         "--disable_lensing", action="store_false", dest="lensing", default=None
     )
+
     parser.add_argument("--disable_noise", action="store_true", default=None)
     parser.add_argument(
         "--noise", action="store_false", dest="disable_noise", default=None
     )
+
     parser.add_argument("--force_alm_gen", action="store_true", default=None)
     parser.add_argument("--fnl_range", type=float, nargs=2)
     parser.add_argument("--base_dir", type=str)
-    parser.add_argument("--save_settings", type=bool)
+    parser.add_argument("--save_settings", action="store_true")
+    
     return parser.parse_args(args)
 
 
@@ -64,8 +70,8 @@ class Config:
 
         # replace the settings with the command line arguments
         for key, value in vars(args).items():
-            if value is not None and value not in ["settings_file", "save_settings"]:
-                logger.debug(f"Overriding settings with command line args: {key}=>{value}")
+            if value is not None and key not in ["settings_file", "save_settings"]:
+                logger.debug(f"Overriding settings with command line args: {key} -> {value}")
                 self.settings[key] = value
 
         # set the cosmological parameters defaults
@@ -185,8 +191,8 @@ class Config:
         self.alm_file_partial = os.path.join(self.alm_dir, f"{self.alm_str}.alms.hdf5")
         self.alm_file = os.path.join(self.alm_dir, f"{self.base_name}.alms.hdf5")
 
-        # save a copy of the settings file if needed
-        if args.save_settings is not None and args.save_settings is True:
+        # save a copy of the settings file if --save_settings is set
+        if args.save_settings is True:
             dir = os.path.join("settings", "runs")
             os.makedirs(dir, exist_ok=True)
             file = os.path.join(dir, f"{self.sjob}_{self.base_name}.json")
