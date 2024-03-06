@@ -3,7 +3,8 @@ import logging
 import os
 import sys
 import time
-
+import inspect
+import re
 import h5py
 import numpy as np
 
@@ -31,25 +32,29 @@ def setup_logging(
 def save_data(file_path, data_dict):
     start_time = time.perf_counter()
     logger.info("Saving data to %s", file_path)
-
     with h5py.File(file_path, "a") as hf:
         for key, value in data_dict.items():
             if isinstance(value, dict):
                 grp = hf.create_group(key)
                 for k, v in value.items():
-                    grp[k] = json.dumps(v)
+                    # grp[k] = json.dumps(v)
+                    grp.create_dataset(k, data=np.array(v))
 
                 continue
 
-            if key in hf:
-                # Resize the dataset to accommodate the new data
-                hf[key].resize((hf[key].shape[0] + value.shape[0],) + value.shape[1:])  # type: ignore
-                # Append the new data
-                hf[key][-value.shape[0] :] = value  # type: ignore
+            if isinstance(value, np.ndarray):
+                if key in hf:
+                    # Resize the dataset to accommodate the new data
+                    hf[key].resize((hf[key].shape[0] + value.shape[0],) + value.shape[1:])  # type: ignore
+                    # Append the new data
+                    hf[key][-value.shape[0] :] = value  # type: ignore
+                else:
+                    # Create a new dataset for this key
+                    hf.create_dataset(key, data=value, maxshape=(None,) + value.shape[1:])
             else:
-                # Create a new dataset for this key
-                hf.create_dataset(key, data=value, maxshape=(None,) + value.shape[1:])
-    logger.info("Finsihed saving data to %s in %s", file_path, time.perf_counter() - start_time)
+                # For other data types, create a dataset
+                hf.create_dataset(key, data=np.array(value))
+    logger.info("Finished saving data to %s in %s", file_path, time.perf_counter() - start_time)
 
 
 def load_data(data_file, keys):
@@ -70,3 +75,9 @@ def load_data(data_file, keys):
 
     logger.info("Finished loading data from %s in %s", data_file, time.perf_counter() - start_time)
     return data
+
+def log_source(func):
+    source = inspect.getsource(func)
+    source = re.sub(r"#.*", "", source)
+    source = re.sub(r"\n\s*\n", "\n", source)
+    logger.info(f"Model source:\n{source}")

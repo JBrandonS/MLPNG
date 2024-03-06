@@ -16,6 +16,7 @@ from itertools import product
 
 logger = setup_logging("almgen")
 
+
 def remove_mono_dipole(alm):
     """
     Remove the monopole and dipole terms from the alms.
@@ -31,9 +32,9 @@ def remove_mono_dipole(alm):
 def get_alm(alm, bl_div_cl, alpha_l, r, dr, nside, lmax):
     """This calculates the alms from the precalculated values"""
     Balm = hp.almxfl(alm, bl_div_cl, inplace=False)
-    B = hp.alm2map(Balm, nside=nside, lmax=lmax, pol=False, inplace=False)
-    inner = hp.map2alm(B**2, lmax=lmax, pol=False, use_pixel_weights=True)
-    kernel = hp.almxfl(inner, alpha_l, inplace=False)
+    B = hp.alm2map(Balm, nside=nside, lmax=lmax)
+    inner = hp.map2alm(B**2, lmax=lmax, use_pixel_weights=True)
+    kernel = hp.almxfl(inner, alpha_l)
     return dr * r**2 * kernel
 
 
@@ -76,7 +77,7 @@ def generate_almngs(alms):
 
     # We use joblib.parallel to generate the patches in parallel
     # by default (temp_folder=None) this will use a ram disk /dev/shm
-    # if the data files are larger than the available memory, about 1TB, it will error
+    # if the data files are larger than the available memory, it will error
     # so we give it a temp folder to use, which wont have that problem
     temp_folder = os.environ.get("SCRATCH", None)
     logger.debug(f"Using temp folder for almng generation: {temp_folder}")
@@ -88,7 +89,6 @@ def generate_almngs(alms):
         miniters=10,
     ):
 
-        # create a generator, errored when I tried context manager, TODO try again
         alm_gen = Parallel(
             n_jobs=-1, verbose=0, return_as="generator", temp_folder=temp_folder
         )(
@@ -125,7 +125,7 @@ if __name__ == "__main__":
     """
     s = Config()
 
-    # check for completed alm runs if we are not forcing alm generation
+    # check for completed alm runs if we are not forcing alm generation, and fail fast
     if not s.force_alm_gen:
         if os.path.isfile(s.alm_file):
             logger.info("Found completed alms file, skipping alm generation")
@@ -134,11 +134,6 @@ if __name__ == "__main__":
             # this allows us to stop and start the generation
             logger.info(f"Found partial alm file, skipping alm generation")
             exit(0)
-
-    # we remove the stale nc file if it exists
-    if os.path.isfile(s.alm_file_nc):
-        logger.info("Removing stale alm file: %s", s.alm_file_nc)
-        os.remove(s.alm_file_nc)
 
     # here we setup camb
     camb_params_obj = camb.set_params(**s.cosmo_params)
@@ -179,8 +174,7 @@ if __name__ == "__main__":
     logger.debug("Non-gaussian Alm shape: %s", almngs.shape)
 
     # and get the fnls
-    # TODO seed this and update to use new method
-    fnls = np.random.uniform(s.fnl_min, s.fnl_max + 1, (s.nsims, s.npol, 1)).astype(
+    fnls = s.rng.uniform(s.fnl_min, s.fnl_max + 1, (s.nsims, s.npol, 1)).astype(
         s.r_dtype
     )
 
@@ -204,7 +198,7 @@ if __name__ == "__main__":
         alm_plot_dir = os.path.join(s.plot_dir, "almgen")
         os.makedirs(alm_plot_dir, exist_ok=True)
 
-        i, j = np.random.randint(s.nsims), np.random.randint(s.npol)
+        i, j = rng.integers(s.nsims), rng.integers(s.npol)
         filebase = os.path.join(alm_plot_dir, f"{s.sjob}_{s.base_name}_alm[{i},{j}]")
         plot_cl_alm(
             complete_alms[i, j],
@@ -228,5 +222,10 @@ if __name__ == "__main__":
 
     logger.info("Saving alm and almng data")
     os.makedirs(s.alm_dir, exist_ok=True)
-    save_data(s.alm_file_nc, sdata)
-    os.replace(s.alm_file_nc, s.alm_file_partial)
+
+    # we remove the stale nc file if it exists
+    if os.path.isfile(s.alm_file_partial):
+        logger.info("Removing stale alm file: %s", s.alm_file_partial)
+        os.remove(s.alm_file_partial)
+
+    save_data(s.alm_file_partial, sdata)

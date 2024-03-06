@@ -34,6 +34,7 @@ def parse_args(args):
     parser.add_argument("--fnl_range", type=float, nargs=2)
     parser.add_argument("--base_dir", type=str)
     parser.add_argument("--save_settings", action="store_true")
+    parse.add_argument("--seed", type=int)
     
     return parser.parse_args(args)
 
@@ -96,6 +97,10 @@ class Config:
         self.fnl_min, self.fnl_max = settings.get("fnl_range", (-1, 1))
         self.lensing = settings.get("lensing", False)
         self.force_alm_gen = settings.get("force_alm_gen", False)
+
+        self.seed = settings.get("seed", np.random.default_rng().integers(0, 2**32-1))
+        self.rng = np.random.default_rng(self.seed)
+        logger.info(f"Using seed {self.seed}")
 
         # find out the number of sims
         self.nsims = settings.get("nsims", 1)
@@ -187,7 +192,6 @@ class Config:
         self.patch_file = os.path.join(self.patch_dir, f"{self.patch_str}.hdf5")
 
         self.alm_str = f"{self.base_name}{ja_str}"
-        self.alm_file_nc = os.path.join(self.alm_dir, f"{self.alm_str}.alms.hdf5.nc")
         self.alm_file_partial = os.path.join(self.alm_dir, f"{self.alm_str}.alms.hdf5")
         self.alm_file = os.path.join(self.alm_dir, f"{self.base_name}.alms.hdf5")
 
@@ -196,12 +200,10 @@ class Config:
             dir = os.path.join("settings", "runs")
             os.makedirs(dir, exist_ok=True)
             file = os.path.join(dir, f"{self.sjob}_{self.base_name}.json")
-            if os.path.exists(file):
-                logger.info(f"Settings file, {file}, already exists, not overwriting")
-            else:
+            if not os.path.exists(file):
                 logger.info(f"Saving settings to file: {file}")
                 with open(file, 'w') as f:
-                    json.dump(self.settings, f)
+                    json.dump(self.settings, f, indent=2)
 
     def get_noise_beam(self):
         beam_ell_pre = hp.gauss_beam(

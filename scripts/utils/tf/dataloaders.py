@@ -1,3 +1,4 @@
+import os
 import logging
 
 import h5py
@@ -10,10 +11,13 @@ from tensorflow.data import AUTOTUNE, Dataset
 from tensorflow.data.experimental import assert_cardinality
 from tensorflow.keras.utils import Sequence
 
+logging.getLogger("healpy").setLevel(logging.ERROR)
+import healpy as hp
 
-class PatchLoader(Sequence):
+
+class DataLoaderBase(Sequence):
     """
-    A class used to load and manage our generated patches.
+    A base class used to load and manage the datasets.
 
     Attributes
     ----------
@@ -36,8 +40,6 @@ class PatchLoader(Sequence):
         The total number of samples per batch.
     normalize : bool
         Whether to normalize the data.
-    _ds : tf.data.Dataset
-        The TensorFlow Dataset object.
 
     Methods
     -------
@@ -58,17 +60,14 @@ class PatchLoader(Sequence):
     def __init__(
         self,
         file_path,
-        name="PatchLoader",
-        batch_size=16,
-        shuffle=True,
+        name="DataLoaderBase",
+        batch_size=1,
+        shuffle=False,
         shuffle_buffer=1000,
         normalize=False,
-        cache=True,
+        cache=False,
         seed=None,
-        dtype=np.float64,
-        dataset=None,
-        shape=(None,),
-        length=0,
+        dtype=np.float32,
         num_replicas="auto",
     ):
         self.logger = logging.getLogger(name)
@@ -83,68 +82,20 @@ class PatchLoader(Sequence):
         self.normalize = normalize
         self.seed = seed if seed is not None else default_rng().integers(0, 2**32 - 1)
         self.dtype = dtype
-        self.shape = shape
-        self.length = length
-        self.needs_cardinality = True
 
         if num_replicas == "auto":
             # tested on superpod but would not be suprised if this doesnt work on other systems
             self.num_replicas = len(tf.config.list_physical_devices("GPU")) or 1
+            self.logger.debug(f"num_replicas: {self.num_replicas}")
         else:
             # make sure num_replicas is >= 1
             self.num_replicas = int(num_replicas) if int(num_replicas) > 0 else 1
 
-        if dataset is None:
-            self._init_ds()
-        else:
-            self._ds = dataset
+        self._ds = None
+        self.length = 0
+        self.shape = (None,)
 
-    def __len__(self):
-        return self.length
-
-    def __getitem__(self, index):
-        # Convert the flat index to a multidimensional index
-        i, j, k = unravel_index(index, (self._nsims, self._npol, self._npatches))
-
-        # we also need to add the channel dimension as TF expects it
-        patch = np.array(self.file["patch"][i, j, k][:, :, None])
-        fnl = np.array(self.file["fnl"][i, j])
-        return patch, fnl
-
-    def _init_ds(self):
-        if hasattr(self, "_ds"):
-            raise ValueError("Dataset already initialized")
-
-        self.file = h5py.File(self.file_path, mode="r", swmr=True, locking=False)
-        (
-            self._nsims,
-            self._npol,
-            self._npatches,
-            self._nside,
-            _,
-        ) = self.file["patch"].shape
-
-        self.length = self._nsims * self._npol * self._npatches
-        self.shape = (self._nside, self._nside, 1)
-
-        self._ds = Dataset.from_generator(
-            self.__iter__,
-            output_signature=(
-                tf.TensorSpec(shape=self.shape, dtype=self.dtype),
-                tf.TensorSpec(shape=(), dtype=self.dtype),
-            ),
-            name=self.name,
-        )
-
-    @tf.function
-    def _normalize(self, data, label):
-        """
-        Normalizes the values to be between 0 and 1.
-        """
-        min_val = tf.reduce_min(data)
-        max_val = tf.reduce_max(data)
-        data = (data - min_val) / (max_val - min_val)
-        return data, label
+        self._init_ds()
 
     def _get_dataset(self, start, step):
         """
@@ -162,8 +113,10 @@ class PatchLoader(Sequence):
         tf.data.Dataset: The processed subset of the dataset, ready for training or evaluation.
         """
         data = self._ds.skip(start).take(step)
-        if self.needs_cardinality:
-            data = data.apply(assert_cardinality(step))
+
+        # fixes an issue with tf not knowing the size of the dataset
+        data = data.apply(assert_cardinality(step))
+
         if self.normalize:
             data = data.map(self._normalize, num_parallel_calls=AUTOTUNE)
         if self.cache:
@@ -174,6 +127,8 @@ class PatchLoader(Sequence):
 
         # multiply by the number of gpus to get the correct batch size for distributed systems
         data = data.batch(
+            # with keras, self.batch_size is local batch size, but we want this to be global batch size
+            # see: https://keras.io/guides/distributed_training_with_tensorflow/
             self.batch_size * self.num_replicas,
             drop_remainder=True,  # we dont want any partial batches
             deterministic=False,  # we dont care about order
@@ -200,13 +155,102 @@ class PatchLoader(Sequence):
         test_size = int(self.length * test_frac)
         val_size = int(self.length * val_frac)
 
+        self.logger.info(
+            f"Dataset sizes: Training {train_size}, Testing {test_size}, Validation {val_size}"
+        )
+
         train_ds = self._get_dataset(0, train_size)
         test_ds = self._get_dataset(train_size, test_size)
         val_ds = self._get_dataset(train_size + test_size, val_size)
         return train_ds, test_ds, val_ds
 
+    def __len__(self):
+        return self.length
 
-class AlmLoader(PatchLoader):
+    def __getitem__(self, index):
+        raise NotImplementedError("This method must be implemented in a subclass")
+
+    def _init_ds(self):
+        raise NotImplementedError("This method must be implemented in a subclass")
+
+    def _normalize(self, data, label):
+        """
+        A simple min-max normalization which constrains the values to be between 0 and 1.
+        Change this depending on use case
+        """
+        min_val = tf.reduce_min(data)
+        max_val = tf.reduce_max(data)
+        data = (data - min_val) / (max_val - min_val)
+        return data, label
+
+
+class TFDSLoader(DataLoaderBase):
+    """
+    A class used to load and manage TensorFlow Datasets saved as tfds.
+    This assumes all preprocessing has been done and the data is ready to be used.
+    """
+
+    def __init__(self, file_path, name="TFDSLoader", **kwargs):
+        super().__init__(file_path, name, **kwargs)
+
+    def _init_ds(self):
+        if self.file_path.endswith(".hdf5"):
+            self.logger.info(f"Auto Converting file name {self.file_path} to tfds")
+            self.file_path = self.file_path.replace(".hdf5", ".tfds")
+            if not os.path.exists(self.file_path):
+                raise FileNotFoundError(f"File {self.file_path} does not exist")
+
+        self._ds = Dataset.load(self.file_path)
+        self.length = self._ds.cardinality().numpy()
+        self.shape = self._ds.element_spec[0].shape
+
+        self.logger.info(
+            f"Loaded {self.file_path} with {self.length} samples, and data shape {self.shape}"
+        )
+
+
+class PatchLoader(DataLoaderBase):
+    def __init__(
+        self,
+        file_path,
+        name="PatchLoader",
+        **kwargs,
+    ):
+        super().__init__(file_path, name, **kwargs)
+
+    def _init_ds(self):
+        self.file = h5py.File(self.file_path, mode="r", swmr=True, locking=False)
+        (
+            self._nsims,
+            self._npol,
+            self._npatches,
+            self._nside,
+            _,
+        ) = self.file["patch"].shape
+
+        self.length = self._nsims * self._npol * self._npatches
+        self.shape = (self._nside, self._nside, 1)
+
+        self._ds = Dataset.from_generator(
+            self.__iter__,
+            output_signature=(
+                tf.TensorSpec(shape=self.shape, dtype=self.dtype),
+                tf.TensorSpec(shape=(), dtype=self.dtype),
+            ),
+            name=self.name,
+        )
+
+    def __getitem__(self, index):
+        # Convert the flat index to a multidimensional index
+        i, j, k = unravel_index(index, (self._nsims, self._npol, self._npatches))
+
+        # we also need to add the channel dimension as TF expects it
+        patch = np.expand_dims(self.file["patch"][i, j, k], axis=-1)
+        fnl = self.file["fnl"][i, j]
+        return patch, fnl
+
+
+class AlmLoader(DataLoaderBase):
     def __init__(
         self,
         file_path,
@@ -216,9 +260,6 @@ class AlmLoader(PatchLoader):
         super().__init__(file_path, name, **kwargs)
 
     def _init_ds(self):
-        if hasattr(self, "_ds"):
-            raise ValueError("Dataset already initialized")
-
         # we dont store the file,  it will close as soon as alms and fnls are destroyed
         file = h5py.File(self.file_path, mode="r", swmr=True, locking=False)
 
@@ -226,6 +267,7 @@ class AlmLoader(PatchLoader):
         self.alms = file["alm"]
         self.fnls = file["fnl"]
         (self.nsims, self.npol, self.ndata) = self.alms.shape
+
         self.logger.info(
             f"Loaded {self.file_path} with {self.nsims} sims, and {self.npol} pols"
         )
@@ -243,7 +285,7 @@ class AlmLoader(PatchLoader):
         )
 
         # creates our positional encoding to give the model some sense of the position of the data
-        self.pos_enc = self.idx_map / self.ndata / 1000
+        self.pos_enc = self.idx_map / self.ndata / 1000.0
 
         # now create our dataset from generator
         self._ds = Dataset.from_generator(
@@ -270,30 +312,68 @@ class AlmLoader(PatchLoader):
         return data, fnl
 
 
-class TFDSLoader(PatchLoader):
-    """
-    A class used to load and manage TensorFlow Datasets saved as tfds.
-    This assumes all preprocessing has been done and the data is ready to be used.
-    """
-
-    def __init__(self, file_path, name="TFDSLoader", **kwargs):
-        self.logger = logging.getLogger(name)
-        if file_path.endswith(".hdf5"):
-            self.logger.info(f"Auto Converting file name {file_path} to tfds")
-            file_path = file_path.replace(".hdf5", ".tfds")
-
+class AlmLoaderV2(DataLoaderBase):
+    def __init__(
+        self,
+        file_path,
+        name="AlmLoaderV2",
+        **kwargs,
+    ):
         super().__init__(file_path, name, **kwargs)
-        self.needs_cardinality = False
 
     def _init_ds(self):
-        if hasattr(self, "_ds"):
-            raise ValueError("Dataset already initialized")
+        # we dont store the file,  it will close as soon as alms and fnls are destroyed
+        file = h5py.File(self.file_path, mode="r", swmr=True, locking=False)
 
-        self._ds = Dataset.load(self.file_path)
-        self.length = self._ds.cardinality().numpy()
-        self.shape = self._ds.element_spec[0].shape
+        # this lazy loads the alm and fnl data
+        self.alms = file["alm"]
+        self.fnls = file["fnl"]
+        (self.nsims, self.npol, self.ndata) = self.alms.shape
 
-        self.logger.info(f"Loaded {self.file_path} with {self.length} samples, and shape {self.shape}")
+        self.logger.info(
+            f"Loaded {self.file_path} with {self.nsims} sims, and {self.npol} pols"
+        )
+
+        # get the shape and length that our dataset will be in
+        lmax = Alm.getlmax(self.ndata)
+        self.length = self.nsims * self.npol
+        self.shape = (2 * lmax, lmax)
+
+        # creates the index map for the data conversion from alm(i) -> alm(l, m)
+        self.idx_map = np.fromfunction(
+            lambda l, m: Alm.getidx(lmax, l, m),
+            (lmax, lmax),
+            dtype=np.int32,
+        )
+
+        # creates our positional encoding to give the model some sense of the position of the data
+        self.pos_enc = self.idx_map / self.ndata / 1000.0
+
+        # now create our dataset from generator
+        self._ds = Dataset.from_generator(
+            self.__iter__,
+            output_signature=(
+                tf.TensorSpec(shape=self.shape, dtype=self.dtype),
+                tf.TensorSpec(shape=(1,), dtype=self.dtype),
+            ),
+            name=self.name,
+        )
 
     def __getitem__(self, index):
-        pass
+        # convert the index to a tuple of (i, j) indexing sim and pol
+        i, j = np.unravel_index(index, (self.nsims, self.npol))
+
+        # now we can get the data and label
+        alm = self.alms[i, j]
+        fnl = self.fnls[i, j]
+
+        # converts data(i) -> data(l, m), also splits the real and imaginary parts and adds the index map
+        data = np.zeros(self.shape, dtype=self.dtype)
+        data = np.concatenate(
+            (
+                np.real(alm[self.idx_map]) + self.pos_enc,
+                np.imag(alm[self.idx_map]) + self.pos_enc,
+            ),
+            axis=0,
+        )
+        return data, fnl

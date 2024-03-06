@@ -1,33 +1,35 @@
 import os
-import pprint
-import sys
 import time
 import inspect
 import re
 import json
+import logging
 
 import numpy as np
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 
+# I was getting double logging from tensorflow, this stops that
+logging.getLogger("tensorflow").setLevel(logging.ERROR)
+
 import tensorflow as tf
 from tensorflow.keras import Input, Model
-from tensorflow.keras.callbacks import (
-    EarlyStopping,
-    ModelCheckpoint,
-    TensorBoard,
-)
+from tensorflow.keras.callbacks import EarlyStopping, TerminateOnNaN
 from tensorflow.keras.layers import (
     Dense,
     Flatten,
     MultiHeadAttention,
+    Add,
+    Multiply,
+    LayerNormalization,
     Dropout,
 )
 from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.initializers import TruncatedNormal
 
-from utils import Config, setup_logging
-from utils.tf.dataloaders import AlmLoader
+from utils import Config, setup_logging, log_source
+from utils.tf.dataloaders import *
 from utils.tf.plots import plot_histogram, plot_metrics, plot_predictions
 from utils.tf.callbacks import TimedLoggingCallback, WarmupLearningRate
 
@@ -36,40 +38,48 @@ def alm_model(
     inputs,
     dropout_rate=0.3,
     name="",
-    mha_initializer=tf.keras.initializers.TruncatedNormal(stddev=0.02),
+    mha_initializer=TruncatedNormal(stddev=0.02),
+    depth=3,
 ):
-    input_layer = inputs
+    layer = inputs
+    lmax = inputs.shape[-1]
+    kr = tf.keras.regularizers.l2(1e-6)
 
-    # We start with data in (batch,2,500,500), (real/complex, l, m)
-    # This is too much data for a transformer so we collapse down the m axis using a FF
-    # We could look at something smarter to do this
-    # then we squeeze to get a final data size of (2, 500) which attention can handle
-    layer = Dense(512, activation="sigmoid")(input_layer)
-    layer = Dropout(dropout_rate)(layer)
-    layer = Dense(128, activation="sigmoid")(layer)
-    layer = Dense(1)(layer)
-    layer = tf.squeeze(layer, axis=-1)  # (batch, 2, 500)
+    for d in range(depth):
+        x = MultiHeadAttention(
+            num_heads=4,
+            key_dim=lmax,
+            kernel_initializer=mha_initializer,
+            dropout=dropout_rate
+        )(
+            layer,
+            layer,
+            use_causal_mask = d == 0
+        )
+        # Note: use the Add layer to ensure that Keras masks are propagated (the + operator does not).
+        layer = Add()([layer, x])
+        layer = LayerNormalization()(layer)
 
-    layer = MultiHeadAttention(
-        num_heads=8,
-        key_dim=64,
-        kernel_initializer=mha_initializer,
-        dropout=dropout_rate,
-    )(layer, layer)
+        # FF layer
+        x = Dense(1024, 'relu')(layer)
+        x = Dense(lmax)(x)
+        x = Dropout(dropout_rate)(x)
+        x = Add()([layer, x])
+        res = layer = LayerNormalization()(x)
 
     # Now we do a final FF to get the output as a scalar
     layer = Flatten()(layer)
-    layer = Dropout(dropout_rate)(layer)
-    layer = Dense(1024, activation="relu", kernel_initializer="he_uniform")(layer)
-    layer = Dropout(dropout_rate)(layer)
-    layer = Dense(128)(layer)
+    layer = Dense(1024, 'sigmoid', kernel_regularizer=kr)(layer)
+    layer = Dense(512)(layer)
+    layer = Dense(256)(layer)
     layer = Dense(1)(layer)
-
     return Model(inputs=inputs, outputs=layer, name=name)
 
 
 if __name__ == "__main__":
     logger = setup_logging("trainer")
+
+    s = Config()
 
     # print out the versions of the libraries
     logger.info(f"TensorFlow version: {tf.__version__}")
@@ -77,16 +87,10 @@ if __name__ == "__main__":
     logger.info(f"cuDNN version: {tf.sysconfig.get_build_info()['cudnn_version']}")
 
     # since I am changing everything so much just print the code used to create the model
-    source = inspect.getsource(alm_model)
-    source = re.sub(r"#.*", "", source)
-    source = re.sub(r"\n\s*\n", "\n", source)
-    logger.info(f"Model source:\n{source}")
+    log_source(alm_model)
 
-    # load the config
-    s = Config(sys.argv[1:])
-
-    MAX_EPOCHS = 300
-    BATCH_SIZE = 32
+    MAX_EPOCHS = 1000
+    BATCH_SIZE = 8
 
     # just some info for the model name
     timestamp = int(time.time())
@@ -112,44 +116,45 @@ if __name__ == "__main__":
         "shuffle": True,
         "seed": None,
         "batch_size": BATCH_SIZE,
-        "cache": True,
+        "cache": False,
         "shuffle_buffer": 1000,
     }
     logger.info(f"Data loader settings:\n{json.dumps(data_loader_args, indent=2)}")
 
     # additional metrics we are intrested in
     metrics = ["mean_absolute_error"]
-    logger.info(f"Looking for additional metrics: {metrics}")
+    logger.info(f"Looking at additional metrics: {metrics}")
 
     # callbacks to use during training
     callbacks = [
         # We use earlystoping to prevent overfitting
-        # EarlyStopping(
-        #     monitor="val_loss",
-        #     patience=20,
-        #     verbose=1,
-        #     restore_best_weights=True,
-        #     start_from_epoch=50
-        # ),
-        # model checkpoining to save the best model
-        ModelCheckpoint(
-            f"{s.model_dir}/{model_settings['name']}" + "-{epoch:03d}.tf",
+        EarlyStopping(
             monitor="val_loss",
-            save_best_only=True,
-            mode="auto",
-            initial_value_threshold=40000,
+            patience=10,
+            verbose=1,
+            restore_best_weights=True,
+            start_from_epoch=30,
         ),
+        # model checkpoining to save the best model
+        # ModelCheckpoint(
+        #     f"{s.model_dir}/{model_settings['name']}" + "-{epoch:03d}.tf",
+        #     monitor="val_loss",
+        #     save_best_only=True,
+        #     mode="auto",
+        #     initial_value_threshold=40000, # mse
+        # ),
         # custom logger to work a little better with text logs
         TimedLoggingCallback(print_frequency=60),
         # tensorboard for visualisation
-        TensorBoard(
-            log_dir=f"{s.tb_dir}/{model_settings['name']}",
-            histogram_freq=1,
-        ),
+        # TensorBoard(
+        #     log_dir=f"{s.tb_dir}/{model_settings['name']}",
+        #     histogram_freq=1,
+        # ),
+        TerminateOnNaN(),
     ]
 
     # enable wandb, set to false if not using
-    if True:
+    if False:
         import wandb
         from wandb.keras import WandbMetricsLogger, WandbModelCheckpoint
 
@@ -167,24 +172,20 @@ if __name__ == "__main__":
         # Add the wandb logger to the callbacks, so it is used
         callbacks.append(WandbMetricsLogger())
 
-    # get our strategy to allow multi-gpu training
-    strategy = tf.distribute.MirroredStrategy()
-    num_gpus = strategy.num_replicas_in_sync
-    logger.info(f"Number of GPUs Available: {num_gpus}")
-
     # load the data and split it
-    data_loader = AlmLoader(s.alm_file, num_replicas=num_gpus, **data_loader_args)
+    data_loader = AlmLoaderV2(s.alm_file, **data_loader_args)
     train_dataset, test_dataset, val_dataset = data_loader.get_split(0.8, 0.1, 0.1)
 
     # create and compile the model, needs to be in scope of the strategy
+    strategy = tf.distribute.MirroredStrategy()
     with strategy.scope():
         lr_schedule = WarmupLearningRate(
-            warmup_learning_rate=1e-8,  # start small
-            warmup_steps=1e6,
-            warmup_scale=1.5,
+            warmup_learning_rate=1e-7,  # start small
+            warmup_steps=5000,
+            warmup_scale=150,
             warmup_scale_steps=1,
             warmed_learning_rate=1e-3,
-            decay_steps=100000,
+            decay_steps=1e5,
             decay_rate=0.95,
             staircase=True,
         )

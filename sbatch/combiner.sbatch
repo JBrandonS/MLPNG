@@ -18,6 +18,3 @@ eval "$(conda shell.bash hook)"
 conda activate mlpng
 
 time srun python scripts/combiner.py "$@"
-
-# now convert to tfds which is just quicker
-time srun python scripts/helpers/data_to_tfds.py "$@"

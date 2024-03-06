@@ -83,13 +83,13 @@ sbatch -D "$PWD" "${CLI_ARGS[@]}" "$RUN_SCRIPT"
 
 # Wait for the SLURM job to run
 i=0
+spinner="/|\\-/|\\-"
 until [ -f .vscj.out ]
 do
-    i=$((i+1))
-    echo -n "."
-    # sleeps for 1 second for 10 seconds and then moves to 2... to keep from spamming
-    sleep $((i/10 + 1))
+    printf "\r%s" "${spinner:((i++ % 8)):1}"
+    sleep 1
 done
+printf "\rJupyter server started!"
 
 
 # Wait for the jupyter server to start once the file is created and print the URL
@@ -100,4 +100,4 @@ while [[ -z "$line" ]]; do
 done
 
 echo ""
-echo "$line"
+echo "Server URL: $line"
