@@ -34,7 +34,7 @@ def parse_args(args):
     parser.add_argument("--fnl_range", type=float, nargs=2)
     parser.add_argument("--base_dir", type=str)
     parser.add_argument("--save_settings", action="store_true")
-    parse.add_argument("--seed", type=int)
+    parser.add_argument("--seed", type=int)
     
     return parser.parse_args(args)
 
