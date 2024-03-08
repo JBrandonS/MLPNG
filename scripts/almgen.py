@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 
 import camb
 import healpy as hp
@@ -129,11 +130,11 @@ if __name__ == "__main__":
     if not s.force_alm_gen:
         if os.path.isfile(s.alm_file):
             logger.info("Found completed alms file, skipping alm generation")
-            exit(0)
+            sys.exit(0)
         elif os.path.isfile(s.alm_file_partial):
             # this allows us to stop and start the generation
             logger.info(f"Found partial alm file, skipping alm generation")
-            exit(0)
+            sys.exit(0)
 
     # here we setup camb
     camb_params_obj = camb.set_params(**s.cosmo_params)
@@ -186,19 +187,27 @@ if __name__ == "__main__":
     sdata["alm"] = complete_alms
     sdata["fnl"] = fnls
 
-    logger.debug(f"Completed Alm shape {complete_alms.shape} fnls shape {fnls.shape}")
-
     if s.is_main_job:
         # save the settings if this is the main process
         sdata["settings"] = s.settings
 
-        # plot a random alm and almng for this run
+    logger.info("Saving alm and almng data")
+    os.makedirs(s.alm_dir, exist_ok=True)
+
+    # we remove the stale nc file if it exists
+    if os.path.isfile(s.alm_file_partial):
+        logger.info("Removing stale alm file: %s", s.alm_file_partial)
+        os.remove(s.alm_file_partial)
+
+    save_data(s.alm_file_partial, sdata)
+
+    if s.is_main_job:
         logger.info("Plotting a random alm and almng")
 
         alm_plot_dir = os.path.join(s.plot_dir, "almgen")
         os.makedirs(alm_plot_dir, exist_ok=True)
 
-        i, j = rng.integers(s.nsims), rng.integers(s.npol)
+        i, j = s.rng.integers(s.nsims), s.rng.integers(s.npol)
         filebase = os.path.join(alm_plot_dir, f"{s.sjob}_{s.base_name}_alm[{i},{j}]")
         plot_cl_alm(
             complete_alms[i, j],
@@ -219,13 +228,3 @@ if __name__ == "__main__":
             save_file=filebase + f"_ng.png",
             plot_camb=False,
         )
-
-    logger.info("Saving alm and almng data")
-    os.makedirs(s.alm_dir, exist_ok=True)
-
-    # we remove the stale nc file if it exists
-    if os.path.isfile(s.alm_file_partial):
-        logger.info("Removing stale alm file: %s", s.alm_file_partial)
-        os.remove(s.alm_file_partial)
-
-    save_data(s.alm_file_partial, sdata)
