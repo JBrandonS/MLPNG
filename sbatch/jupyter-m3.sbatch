@@ -3,7 +3,7 @@
 #SBATCH --output=.vscj.out
 #SBATCH --partition=standard-s
 #SBATCH --ntasks=1
-#SBATCH --mem=512G
+#SBATCH --mem=256G
 #SBATCH --cpus-per-task=32
 #SBATCH --time=12:00:00
 
