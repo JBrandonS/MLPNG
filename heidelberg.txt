@@ -1,0 +1,40 @@
+Simulated non-Gaussian temperature and polarization CMB maps
+
+
+The non-Gaussian simulations have been generated using the algorithm
+described in Elsner and Wandelt (2009), ApJS 184 264-270, up to a
+multipole moment of l_max = 1024.
+The transfer functions were computed with CAMB version February 2009
+and RECFAST 1.5.
+
+
+Simulation parameters:
+
+We used the WMAP5+BAO+SN cosmological data provided by LAMBDA:
+
+Omega_L 	  0.721
+Omega_C h^2 	  0.1143
+Omega_B h^2 	  0.02256
+h 	          0.701
+n_s 	          0.96
+tau 	          0.084
+scalar amplitude  2.457e-9
+
+
+Description:
+
+Files are stored in FITS format. Each simulation consists of three
+files. The spherical harmonic coefficients are provided in
+dimensionless units, i. e. dT/T.
+
+You may want to use the FITS2ALMS routine of the HEALPix software
+package to load the Gaussian (alm_l_XXXX_v3.fits) and the associated
+non-Gaussian (alm_nl_XXXX_v3.fits) part of the simulations.
+
+To generate a CMB map containing non-Gaussianity of local type,
+compute alm = alm_l + f_NL * alm_nl, where f_NL can be any desired
+level of non-Gaussianity.
+
+Finally, we also provide the power spectrum in dimensionless units
+(cl_wmap5_bao_sn.dat), containing, in this order, l, C_l^TT, C_l^EE,
+and C_l^TE.
