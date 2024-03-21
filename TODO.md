@@ -2,6 +2,9 @@
 
 # file mods
 
+# generator
+Fix the settings metadata
+
 # estimator
 Figure out a way to make the estimator faster
 
