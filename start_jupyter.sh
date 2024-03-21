@@ -1,6 +1,6 @@
 #!/bin/bash
 
-### Helper script to run the sbatch/jupyter.sbatch script
+### Helper script to run the jupyter.sbatch script
 ### and wait for the jupyter server to start, before printing the URL
 ### This script will reuse the running server if it exists.
 
@@ -60,44 +60,50 @@ done
 
 # Start the service
 if [[ $(squeue --me -h -n jupyter) && -f .vscj.out ]]; then
-    echo "Found Running server, reusing:"
-    grep -m 1 -o 'http.*' .vscj.out
-    exit 0
-fi
-
-# Remove the old log file if it exists
-if [[ -f .vscj.out ]]; then
-    rm .vscj.out
-fi
-
-# need to run diffrent sbatch script based on the hostname
-if [[ $(hostname) == slogin* ]]; then
-    RUN_SCRIPT="sbatch/jupyter-mp.sbatch"
+    echo "Found running jupyter server, reusing"
 else
-    if [[ $(hostname) != m3login* ]]; then
-        echo "Running in unknown login node, $(hostname), defaulting to m3"
+    # Remove the old log file if it exists
+    if [[ -f .vscj.out ]]; then
+        rm .vscj.out
     fi
-    RUN_SCRIPT="sbatch/jupyter-m3.sbatch"
+
+    # need to run diffrent sbatch script based on the hostname
+    if [[ $(hostname) == slogin* ]]; then
+        RUN_SCRIPT="sbatch/jupyter-mp.sbatch"
+    else
+        RUN_SCRIPT="sbatch/jupyter-m3.sbatch"
+    fi
+
+    # kick off the slurm job
+    id=$(sbatch -D "$PWD" "${CLI_ARGS[@]}" "$RUN_SCRIPT" | awk '{print $4}')
+    echo "Submitted jupyter job $id"
+
+    # setup spinner and remove cursor
+    # add trap to ensure the cursor is added back
+    spinner="/|\\-/|\\-"
+    tput civis
+    trap "tput cnorm" EXIT
+
+    # Wait for the SLURM job to run
+    i=0
+    until [ -f .vscj.out ]
+    do
+        printf "\r%s" "${spinner:((i++ % 8)):1}"
+        sleep 1
+    done
+    printf "\rJupyter server started!\n"
 fi
-sbatch -D "$PWD" "${CLI_ARGS[@]}" "$RUN_SCRIPT"
 
-# Wait for the SLURM job to run
-i=0
-spinner="/|\\-/|\\-"
-until [ -f .vscj.out ]
-do
-    printf "\r%s" "${spinner:((i++ % 8)):1}"
-    sleep 1
-done
-printf "\rJupyter server started!"
+# once the file is create, get and print the URL
+url_command="grep -m 1 -o 'http.*' .vscj.out"
+line=$(eval "$url_command")
+if [[ -z "$line" ]]; then
+    printf "Waiting for server to start..."
 
-
-# Wait for the jupyter server to start once the file is created and print the URL
-line=""
-while [[ -z "$line" ]]; do
-    sleep 1
-    line=$(grep -m 1 -o 'http.*' .vscj.out)
-done
-
-echo ""
+    while [[ -z "$line" ]]; do
+        sleep 1
+        line=$(eval "$url_command")
+    done
+    printf "\r" # remove the waiting line
+fi
 echo "Server URL: $line"

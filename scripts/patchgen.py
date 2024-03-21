@@ -17,7 +17,7 @@ from tqdm.auto import tqdm
 from utils import Config, load_data, save_data, setup_logging
 from utils.plots import plot_cl_map, plot_patches
 
-logger = setup_logging("patchgen")
+logger = setup_logging(__name__)
 
 def cutSqPatches_lenspyx(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, cl_phi, alms, fnl):
     """Uses lenspyx to generate and cut the lensed flat maps"""
@@ -224,9 +224,9 @@ if __name__ == "__main__":
         patches[i, pol] = result
 
     # remove the partial file if it exists
-    if os.path.isfile(s.patch_file_nc):
-        logger.debug("Removing stale data file: %s", s.patch_file_nc)
-        os.remove(s.patch_file_nc)
+    if os.path.isfile(s.patch_file_partial):
+        logger.debug("Removing stale data file: %s", s.patch_file_partial)
+        os.remove(s.patch_file_partial)
 
     # Save data
     sdata = {}
@@ -243,6 +243,6 @@ if __name__ == "__main__":
         plot_patches(patches, 10, save_file=plot_file)
 
     os.makedirs(s.patch_dir, exist_ok=True)
-    save_data(s.patch_file_nc, sdata)
-    os.replace(s.patch_file_nc, s.patch_file)
+    save_data(s.patch_file_partial, sdata)
+    os.replace(s.patch_file_partial, s.patch_file)
     logger.info("Done with Generation!")

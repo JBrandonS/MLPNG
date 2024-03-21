@@ -1,11 +1,11 @@
 #! /bin/bash
-#SBATCH --job-name=heidelberg-estimator
-#SBATCH --partition=standard-l
-#SBATCH --ntasks=1
-#SBATCH --mem-per-cpu=40G
+#SBATCH --job-name=heidelberg
+#SBATCH --partition=standard-s
+#SBATCH --ntasks=64
+#SBATCH --mem-per-cpu=10G
 #SBATCH --cpus-per-task=1
 #SBATCH --output=logs/heidelberg/%j.log
-#SBATCH --time=7-00:00:00
+#SBATCH --time=24:00:00
 
 # create the logging dir
 mkdir -p logs/heidelberg

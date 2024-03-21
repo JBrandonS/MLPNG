@@ -6,7 +6,6 @@ import camb
 import healpy as hp
 import numpy as np
 from joblib import Parallel, delayed
-from sympy.physics.units import Pa
 from ksw import Cosmology, Data
 from ksw.radial_functional import radial_func
 from scipy.interpolate import CubicSpline
@@ -15,7 +14,7 @@ from utils import Config, save_data, setup_logging
 from utils.plots import plot_cl_alm
 from itertools import product
 
-logger = setup_logging("almgen")
+logger = setup_logging(__name__)
 
 
 def remove_mono_dipole(alm):
@@ -24,15 +23,15 @@ def remove_mono_dipole(alm):
     Note that we do not need -m's due to symmetry
     """
     lmax = hp.Alm.getlmax(len(alm))
-    alm[..., hp.Alm.getidx(lmax, 0, 0)] = 0.0  # Remove monopole
-    alm[..., hp.Alm.getidx(lmax, 1, 0)] = 0.0  # Remove dipole
-    alm[..., hp.Alm.getidx(lmax, 1, 1)] = 0.0  # Remove dipole
+    alm[..., hp.Alm.getidx(lmax, 0, 0)] = 0.0
+    alm[..., hp.Alm.getidx(lmax, 1, 0)] = 0.0
+    alm[..., hp.Alm.getidx(lmax, 1, 1)] = 0.0
     return alm
 
 
 def get_alm(alm, bl_div_cl, alpha_l, r, dr, nside, lmax):
     """This calculates the alms from the precalculated values"""
-    Balm = hp.almxfl(alm, bl_div_cl, inplace=False)
+    Balm = hp.almxfl(alm, bl_div_cl)
     B = hp.alm2map(Balm, nside=nside, lmax=lmax)
     inner = hp.map2alm(B**2, lmax=lmax, use_pixel_weights=True)
     kernel = hp.almxfl(inner, alpha_l)
@@ -52,6 +51,17 @@ def generate_almngs(alms):
     # $$\beta_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^{-1} \Delta_\phi \Delta_\ell^T(k) j_\ell(k r)$$
     # $$B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}$$
     # where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
+
+    # get some data from the KSW data
+    c_ells = ksw_data.cosmology.c_ell["unlensed_scalar"]  # type: ignore
+    tr_ell_k = ksw_data.cosmology.transfer["tr_ell_k"]
+    tr_ells = ksw_data.cosmology.transfer["ells"]
+    tr_k = ksw_data.cosmology.transfer["k"]
+
+    # we only need the ells up to lmax
+    mask = tr_ells <= s.lmax
+    tr_ell_k = tr_ell_k[mask]
+    tr_ells = tr_ells[mask]
 
     A = (3 / 5) ** 2 * 2 * np.pi**2 * s.cosmo_params["As"]
     delta_phi = (tr_k) ** ((s.cosmo_params["ns"] - 1)) / (tr_k**3)
@@ -82,17 +92,12 @@ def generate_almngs(alms):
     # so we give it a temp folder to use, which wont have that problem
     temp_folder = os.environ.get("SCRATCH", None)
     logger.debug(f"Using temp folder for almng generation: {temp_folder}")
-
+    parallel = Parallel(n_jobs=-1, return_as="generator", temp_folder=temp_folder)
     for i, pol in tqdm(
-        product(range(s.nsims), range(s.npol)),
-        total=(s.nsims * s.npol),
-        desc="Almng",
-        miniters=10,
+        product(range(s.nsims), range(s.npol)), total=(s.nsims * s.npol), desc="Almng"
     ):
-
-        alm_gen = Parallel(
-            n_jobs=-1, verbose=0, return_as="generator", temp_folder=temp_folder
-        )(
+        logger.debug("Generating almng[%d,%d]", i, pol)
+        generator = parallel(
             delayed(get_alm)(
                 alms[i, pol],
                 bl_div_cl[ri, :, pol],
@@ -104,11 +109,10 @@ def generate_almngs(alms):
             )
             for ri in range(len(s.drs))
         )
-
-        # consume
-        for alm in alm_gen:
-            almng[i, pol] += alm
-
+        logger.debug("Summing almng[%d,%d]", i, pol)
+        almng[i, pol] = sum(generator)
+        logger.debug("Almng[%d,%d] shape: %s", i, pol, almng[i, pol].shape)
+    logger.info("Non-gaussian Alm generation complete")
     return almng
 
 
@@ -126,14 +130,19 @@ if __name__ == "__main__":
     """
     s = Config()
 
+    if s.is_main_job:
+        logger.setLevel(logging.DEBUG)
+        logging.getLogger("utils.config").setLevel(logging.DEBUG)
+        logging.getLogger("utils.utils").setLevel(logging.DEBUG)
+
     # check for completed alm runs if we are not forcing alm generation, and fail fast
     if not s.force_alm_gen:
         if os.path.isfile(s.alm_file):
-            logger.info("Found completed alms file, skipping alm generation")
+            logger.warning("Found completed alms file, skipping alm generation")
             sys.exit(0)
         elif os.path.isfile(s.alm_file_partial):
             # this allows us to stop and start the generation
-            logger.info(f"Found partial alm file, skipping alm generation")
+            logger.warning(f"Found partial alm file, skipping alm generation")
             sys.exit(0)
 
     # here we setup camb
@@ -144,17 +153,6 @@ if __name__ == "__main__":
 
     # setup the KSW data
     ksw_data = Data(s.lmax, s.noise_ell, s.beam_ell, s.pols, cosmo)
-
-    # get some data from the KSW data
-    c_ells = ksw_data.cosmology.c_ell["unlensed_scalar"]  # type: ignore
-    tr_ell_k = ksw_data.cosmology.transfer["tr_ell_k"]
-    tr_ells = ksw_data.cosmology.transfer["ells"]
-    tr_k = ksw_data.cosmology.transfer["k"]
-
-    # we only need the ells up to lmax
-    mask = tr_ells <= s.lmax
-    tr_ell_k = tr_ell_k[mask]
-    tr_ells = tr_ells[mask]
 
     # Get our alms
     logger.info("Starting gaussian Alm generation")
@@ -175,56 +173,63 @@ if __name__ == "__main__":
     logger.debug("Non-gaussian Alm shape: %s", almngs.shape)
 
     # and get the fnls
-    fnls = s.rng.uniform(s.fnl_min, s.fnl_max + 1, (s.nsims, s.npol, 1)).astype(
-        s.r_dtype
-    )
+    fnls = s.rng.uniform(s.fnl_min, s.fnl_max + 1, (s.nsims, s.npol, 1))
 
     # create our combined alms, and remove the monopole and dipole
     complete_alms = alms + fnls * almngs
     complete_alms = remove_mono_dipole(complete_alms)
-
-    sdata = {}
-    sdata["alm"] = complete_alms
-    sdata["fnl"] = fnls
-
-    if s.is_main_job:
-        # save the settings if this is the main process
-        sdata["settings"] = s.settings
-
-    logger.info("Saving alm and almng data")
-    os.makedirs(s.alm_dir, exist_ok=True)
 
     # we remove the stale nc file if it exists
     if os.path.isfile(s.alm_file_partial):
         logger.info("Removing stale alm file: %s", s.alm_file_partial)
         os.remove(s.alm_file_partial)
 
+    logger.info("Saving alm and almng data")
+    os.makedirs(s.alm_dir, exist_ok=True)
+
+    sdata = {}
+    sdata["alm"] = complete_alms
+    sdata["fnl"] = fnls
+    # TODO: Fix this
+    # if s.is_main_job:
+    #     logger.info('adding settings to alm file')
+    #     import json
+    #     sdata["settings"] = json.dumps(s.settings)
     save_data(s.alm_file_partial, sdata)
 
     if s.is_main_job:
-        logger.info("Plotting a random alm and almng")
-
         alm_plot_dir = os.path.join(s.plot_dir, "almgen")
         os.makedirs(alm_plot_dir, exist_ok=True)
 
+        c_ells = ksw_data.cosmology.c_ell["unlensed_scalar"]
+
         i, j = s.rng.integers(s.nsims), s.rng.integers(s.npol)
+        logger.info("Making plots for alm[%d,%d]", i, j)
         filebase = os.path.join(alm_plot_dir, f"{s.sjob}_{s.base_name}_alm[{i},{j}]")
+
+        # plot the complete alms with noise
         plot_cl_alm(
             complete_alms[i, j],
-            save_file=filebase + f".png",
+            save_file=f"{filebase}.png",
             plot_camb=True,
             c_ells=c_ells,
+            plot_camb_noise=s.noise,
+            noise=s.noise_scale_tt,
+            beam=s.beam_width,
         )
-        # this is just the gaussian part
+
+        # plot just the gaussian part
         plot_cl_alm(
             alms[i, j],
-            save_file=filebase + f"_g.png",
+            save_file=f"{filebase}_g.png",
             plot_camb=True,
             c_ells=c_ells,
+            plot_camb_noise=s.noise,
+            noise=s.noise_scale_tt,
+            beam=s.beam_width,
         )
-        # Don't add camb to the ng plots since they are such a small scale
-        plot_cl_alm(
-            almngs[i, j],
-            save_file=filebase + f"_ng.png",
-            plot_camb=False,
-        )
+
+        # plot the ng part, we don't add camb to the plots since they are such a small scale
+        plot_cl_alm(almngs[i, j], save_file=f"{filebase}_ng.png")
+
+    logger.info("Finished %s!", s.sjob)

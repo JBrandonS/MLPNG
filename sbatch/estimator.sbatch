@@ -1,11 +1,11 @@
 #! /bin/bash
 #SBATCH --job-name=estimator
-#SBATCH --partition=standard-l
+#SBATCH --partition=standard-s
 #SBATCH --ntasks=128
-#SBATCH --mem=500G
+#SBATCH --mem-per-cpu=10G
 #SBATCH --cpus-per-task=1
 #SBATCH --output=logs/estimator/%j.log
-#SBATCH --time=7-00:00:00
+#SBATCH --time=08:00:00
 
 # create the logging dir
 mkdir -p logs/estimator

@@ -101,15 +101,15 @@ For best results use the `cleanup.sh` script to remove all incomplete files befo
 
 Filenames are generated from select settings for easy reading once you understand the format.
 
-For alms: `l[lmax]_n[nside]_[lensing][?-disable_noise]_[polarizations]_[total sim]`
-   - example: `l500_n128_l-nn_T_100000.alms.hdf5`
+For alms: `l[lmax]_n[nside]_[lensing][?-noise]_[polarizations]_[total sim]`
+   - example: `l500_n128_l-nn_T_100000.hdf5`
 
-For the patches data: `l[lmax]_n[nside]_[lensing][?-_disable_noise]_[polarizations]_[nsims]x[npatches]_fnl[fnl_low]-[fnl_high]`.
+For the patches data: `l[lmax]_n[nside]_[lensing][?-_noise]_[polarizations]_[nsims]x[npatches]_fnl[fnl_low]-[fnl_high]`.
    - example: `l500_n128_l-nn_T_100000x10_fnl-1000-1000.hdf5`
 
 with
 - `[lensing] = l | ul` for lensed or unlensed sims
-- `[?_disable_noise] = -nn` is only included if `disable_noise` is True
+- `[?_noise] = -nn` is only included if `noise` is True
 - `[polarizations]`, will be one of `T`, `E`, or `TE`
 - other values are just integers / float
 

@@ -27,9 +27,9 @@
 
     "lensing" : true,
 
-    "disable_noise" : false,
-    "noise_scale_tt" : 1,
+    "noise" : false,
+    "noise_scale_tt" : 500,
     "noise_scale_ee" : 1.41421,
     "noise_scale_te" : 0, 
-    "beam_width" : 1.4
+    "beam_width" : 10
 }

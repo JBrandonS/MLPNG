@@ -11,7 +11,7 @@ SETTINGS=(
 ARGS=(
     "--nsims" "200"
     "--disable_lensing" 
-    "--disable_noise" 
+    "--noise" 
     "--narray" "500"
 )
 

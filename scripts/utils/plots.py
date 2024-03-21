@@ -6,8 +6,6 @@ import pandas as pd
 from sklearn.metrics import r2_score
 import healpy as hp
 
-from astropy import units as u
-
 
 def plot_patches(patches, n_plots, title="Patches", save_file=None):
     patches = np.random.choice(patches, n_plots, replace=False)
@@ -51,8 +49,8 @@ def plot_cl(
     plot_camb=False,
     c_ells=None,
     plot_camb_noise=False,
-    noise_scale_tt=None,
-    beam_width=None,
+    noise=None,
+    beam=None,
 ):
     ells = np.arange(2, lmax)
     scale = ells * (ells + 1) / 2 / np.pi
@@ -66,22 +64,14 @@ def plot_cl(
         camb_cl = c_ells["c_ell"][2:lmax][:, 0]
 
         if plot_camb_noise:
-            if noise_scale_tt is None or beam_width is None:
-                raise ValueError(
-                    "Need to provide noise_scale_tt and beam_width if plt_camb_noise is True."
-                )
+            if noise is None or beam is None:
+                raise ValueError("Need to provide noise and beam")
 
-            nstt = noise_scale_tt.to_value(u.radian)
-            bwr = beam_width.to_value(u.radian)
-            noise_ell_b = np.array(
-                [
-                    nstt**2 * np.exp((l * (l + 1) * bwr**2) / (8 * np.log(2)))
-                    for l in range(2, lmax + 1)
-                ]
-            )
+            def noise_func(noise, l):
+                return noise**2 * np.exp((l * (l + 1) * beam**2) / (8 * np.log(2)))
+            noise_ell_b = np.array([noise_func(noise, l) for l in range(2, lmax)])
 
-            camb_cls_n = camb_cl + noise_ell_b
-            camb_n_inner_plt = scale * camb_cls_n
+            camb_n_inner_plt = scale * (camb_cl + noise_ell_b)
             plot_func(ells, camb_n_inner_plt, label="camb + noise")
 
         camb_inner_plt = scale * camb_cl
@@ -98,47 +88,15 @@ def plot_cl(
         plt.close()
 
 
-def plot_cl_alm(
-    alm,
-    title="Angular power spectrum from alm",
-    save_file=None,
-    plot_func=plt.semilogy,
-    plot_camb=False,
-    c_ells=None,
-    plot_camb_noise=False,
-    noise_scale_tt=None,
-    beam_width=None,
-):
+def plot_cl_alm(alm, title="Angular power spectrum from alm", **kwargs):
     from pixell import curvedsky
 
     cl = curvedsky.alm2cl(alm)
     lmax = hp.Alm.getlmax(len(alm))
-    plot_cl(
-        cl,
-        lmax,
-        title,
-        save_file,
-        plot_func,
-        plot_camb,
-        c_ells,
-        plot_camb_noise,
-        noise_scale_tt,
-        beam_width,
-    )
+    plot_cl(cl, lmax, title, **kwargs)
 
 
-def plot_cl_map(
-    map,
-    wcs,
-    title="Angular power spectrum from map",
-    save_file=None,
-    plot_func=plt.semilogy,
-    plot_camb=False,
-    c_ells=None,
-    plot_camb_noise=False,
-    noise_scale_tt=None,
-    beam_width=None,
-):
+def plot_cl_map(map, wcs, title="Angular power spectrum from map", **kwargs):
     from pixell import enmap, curvedsky
 
     tmap = enmap.ndmap(map, wcs)
@@ -146,24 +104,13 @@ def plot_cl_map(
     alm = curvedsky.map2alm(tmap, lmax=lmax)
     cl = curvedsky.alm2cl(alm)
 
-    plot_cl(
-        cl,
-        lmax,
-        title,
-        save_file,
-        plot_func,
-        plot_camb,
-        c_ells,
-        plot_camb_noise,
-        noise_scale_tt,
-        beam_width,
-    )
+    plot_cl(cl, lmax, title, **kwargs)
 
 
-def plot_ksw_predictions(fnls, preds, fisher=None, save_file=None):
+def plot_ksw_predictions(truth, preds, fisher=None, save_file=None):
     df = pd.DataFrame(
         {
-            "True Labels": np.array(fnls).flatten(),
+            "True Labels": np.array(truth).flatten(),
             "Predicted Labels": np.array(preds).flatten(),
         }
     )
@@ -173,36 +120,45 @@ def plot_ksw_predictions(fnls, preds, fisher=None, save_file=None):
     sns.scatterplot(data=df, x="True Labels", y="Predicted Labels")
 
     # Truth line
-    plt.plot(
-        [min(fnls), max(fnls)],
-        [min(fnls), max(fnls)],
-        color="red",
-        linestyle="--",
-        label="truth",
-    )
+    line = [min(truth), max(truth)]
+    plt.plot(line, line, color="red", linestyle="--", label="truth")
 
     if fisher is not None:
         std_dev = np.sqrt(1 / fisher)
-        plt.plot(
-            [min(fnls), max(fnls)],
-            [min(fnls) + std_dev, max(fnls) + std_dev],
-            color="blue",
-            linestyle="--",
-            label="Fisher",
-        )
-        plt.plot(
-            [min(fnls), max(fnls)],
-            [min(fnls) - std_dev, max(fnls) - std_dev],
-            color="blue",
-            linestyle="--",
-        )
+        plt.plot(line, line + std_dev, color="blue", linestyle="--", label="Fisher")
+        plt.plot(line, line - std_dev, color="blue", linestyle="--")
 
     # Line for perfect fit
     r2 = r2_score(df["True Labels"], df["Predicted Labels"])
-    plt.text(min(fnls), max(fnls), f"$R^2$ = {r2:.2f}", verticalalignment="top")
-
+    plt.text(min(truth), max(truth), f"$R^2$ = {r2:.2f}", verticalalignment="top")
     plt.title("Predicted vs True Labels")
 
     if save_file is not None:
         plt.savefig(save_file)
         plt.close()
+
+def plot_histogram(truth, preds, save_file=None):
+    """Plot and save a histogram of predictions with mean and std dev as title"""
+    # Calculate mean and standard deviation
+    truth = truth.flatten()
+    preds = preds.flatten()
+
+    # Create a figure with two subplots
+    fig, axs = plt.subplots(2, figsize=(12, 12))
+
+    # Plot the predictions on the first subplot
+    mean_pred = np.mean(preds)
+    std_pred = np.std(preds)
+    sns.histplot(preds, ax=axs[0], legend=False)
+    axs[0].set_title(f"Predictions - Mean: {mean_pred:.2f}, Standard Deviation: {std_pred:.2f}")
+
+    # Plot the differences on the second subplot
+    diff = preds - truth
+    mean_diff = np.mean(diff)
+    std_diff = np.std(diff)
+    sns.histplot(diff, ax=axs[1], legend=False)
+    axs[1].set_title(f"Differences - Mean: {mean_diff:.2f}, Standard Deviation: {std_diff:.2f}")
+
+    # Save the plot
+    if save_file is not None:
+        plt.savefig(save_file)

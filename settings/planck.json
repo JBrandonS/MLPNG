@@ -9,10 +9,12 @@
         "max_l": 1500,
         "lmax": 1024
     },
-    "nsims" : 1000,
+    "nsims" : 100,
+    "narray": 10,
     "fnl_range":[-1000, 1000],        
     "nside":512,
     "noise_scale_tt" : 500,
     "beam_width" : 10,
-    "lensing": false
+    "lensing": false,
+    "noise": true
 }
