@@ -12,8 +12,8 @@
 mkdir -p logs/almgen/"$SLURM_ARRAY_JOB_ID"/
 
 module purge
-module load spack conda
-module load gcc/11.2.0 gcc-11.2.0/intel-oneapi-mkl/2022.2.1-c4efjsy fftw/3.3.10-gz7qiki openmpi/4.1.6-a4ksrza
+module load conda
+module load gcc/11.2.0 intel-oneapi-mkl/2022.2.1-c4efjsy fftw/3.3.10-gz7qiki openmpi/4.1.6-a4ksrza
 
 eval "$(conda shell.bash hook)"
 conda activate mlpng
