@@ -8,13 +8,13 @@ import healpy as hp
 
 
 def plot_patches(patches, n_plots, title="Patches", save_file=None):
-    patches = np.random.choice(patches, n_plots, replace=False)
+    idxs = np.random.choice(patches.shape[0], n_plots, replace=False)
 
     nrows = int(np.ceil(n_plots / 4))
     ncols = min(n_plots, 4)
     fig, axes = plt.subplots(nrows, n_plots, figsize=(20, 20))
 
-    for idx, patch in enumerate(patches):
+    for idx, patch in enumerate(patches[idxs]):
         row = idx // n_plots
         col = idx % n_plots
         if nrows == 1:
@@ -97,11 +97,10 @@ def plot_cl_alm(alm, title="Angular power spectrum from alm", **kwargs):
     plot_cl(cl, lmax, title, **kwargs)
 
 
-def plot_cl_map(map, wcs, title="Angular power spectrum from map", **kwargs):
+def plot_cl_map(map, wcs, lmax, title="Angular power spectrum from map", **kwargs):
     from pixell import enmap, curvedsky
 
     tmap = enmap.ndmap(map, wcs)
-    lmax = tmap.lmax()
     alm = curvedsky.map2alm(tmap, lmax=lmax)
     cl = curvedsky.alm2cl(alm)
 
@@ -142,7 +141,7 @@ def plot_predictions(truth, preds, fisher=None, scaled_variance=None, save_file=
     # Line for perfect fit
     r2 = r2_score(df["True Labels"], df["Predicted Labels"])
     plt.text(min(truth), max(truth), f"$R^2$ = {r2:.2f}", verticalalignment="top")
-    plt.title("Predicted vs True Labels")
+    plt.title(title)
 
     if save_file is not None:
         plt.savefig(save_file)

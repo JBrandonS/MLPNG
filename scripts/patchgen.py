@@ -19,64 +19,95 @@ from .utils.plots import plot_cl_map, plot_patches
 
 logger = setup_logging(__name__)
 
-def cutSqPatches_lenspyx(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, cl_phi, alms, fnl):
-    """Uses lenspyx to generate and cut the lensed flat maps"""
 
-    lmax_unl = s.cosmo_params["max_l"]
-    epsilon = 1e-6  # todo: option?
-    geom_info = ("healpix", {"nside": s.nside})
+def cutSqPatches_lenspyx(
+    lmax,
+    max_l,
+    plot_dir,
+    base_name,
+    r_dtype,
+    npatches,
+    nside,
+    fs_shape,
+    fs_wcs,
+    fs_map,
+    pshapes,
+    pwcs,
+    cl_phi,
+    alm,
+    fnl,
+    plot=False,
+):
+    """Uses lenspyx to generate and cut the lensed flat maps"""
+    geom_info = ("healpix", {"nside": nside})
 
     # Create a full sky map with lenspyx
-    plm = lenspyx.utils_hp.synalm(cl_phi, lmax=lmax_unl, mmax=None)
-    fl = np.sqrt(np.arange(lmax_unl + 1) * np.arange(1, lmax_unl + 2), dtype=s.r_dtype)
+    plm = lenspyx.utils_hp.synalm(cl_phi, lmax=max_l, mmax=None)
+    fl = np.sqrt(np.arange(max_l + 1) * np.arange(1, max_l + 2), dtype=r_dtype)
     dlm = lenspyx.utils_hp.almxfl(
         plm, fl, mmax=None, inplace=False
     )  # inplace breaks, for some reason
 
     lens_map = lenspyx.alm2lenmap(
-        alms,
+        alm.copy(),
         dlm,
         geometry=geom_info,
         nthreads=4,
-        epsilon=epsilon,
+        epsilon=1e-6,
         pol=False,
     )
-    pixell_map = reproject.healpix2map(lens_map, fs_shape, fs_wcs, s.lmax)
+    pixell_map = reproject.healpix2map(lens_map, fs_shape, fs_wcs, lmax)
 
-    if s.is_main_job:
-        map2hp = reproject.map2healpix(pixell_map, s.lmax)
+    if plot:
+        map2hp = reproject.map2healpix(pixell_map, lmax)
         hp.mollview(map2hp, min=-650.0, max=650, title=f"fnl = {fnl}")
 
-        plot_dir = os.path.join(s.plot_dir, "patchgen")
-        moll_path = os.path.join(plot_dir, s.base_name + f"_{fnl}_fullsky.png")
+        plot_dir = os.path.join(plot_dir, "patchgen")
+        os.makedirs(plot_dir, exist_ok=True)
+        moll_path = os.path.join(plot_dir, f"{base_name}_{fnl}_fullsky.png")
         plt.savefig(moll_path)
 
     patches = []
-    for i in range(s.npatches):
+    for i in range(npatches):
         patch = pixell_map.project(pshapes[i], pwcs[i])
         patches.append(patch)
 
     return patches
 
 
-def cutSqPatches_pixell(s, fs_shape, fs_wcs, fs_map, pshapes, pwcs, alms, fnl):
+def cutSqPatches_pixell(
+    lmax,
+    plot_dir,
+    base_name,
+    npatches,
+    c_ells,
+    fs_shape,
+    fs_wcs,
+    fs_map,
+    pshapes,
+    pwcs,
+    alms,
+    fnl,
+    plot=False,
+):
     """Uses pixell to generate and cut the flat sky patches, unlensed"""
     fs_map = enmap.empty(fs_shape, fs_wcs)
     car_map = curvedsky.alm2map(alms, fs_map)
 
-    if s.is_main_job:
-        map2hp = reproject.map2healpix(car_map, s.lmax)
+    if plot:
+        map2hp = reproject.map2healpix(car_map, lmax)
         hp.mollview(map2hp, min=-650.0, max=650, title=f"fnl = {fnl}")
 
-        plot_dir = os.path.join(s.plot_dir, "patchgen")
-        moll_path = os.path.join(plot_dir, s.base_name + f"_{fnl}_fullsky.png")
+        plot_dir = os.path.join(plot_dir, "patchgen")
+        os.makedirs(plot_dir, exist_ok=True)
+        moll_path = os.path.join(plot_dir, f"{base_name}_{fnl}_fullsky.png")
         plt.savefig(moll_path)
 
-        map_path = os.path.join(plot_dir, s.base_name + f"_{fnl}_pixell_cl_map.png")
-        plot_cl_map(car_map, fs_wcs, plot_camb=True, c_ells=c_ells, save_file=map_path)
+        map_path = os.path.join(plot_dir, f"{base_name}_{fnl}_pixell_cl_map.png")
+        plot_cl_map(car_map, fs_wcs, lmax, plot_camb=True, c_ells=c_ells, save_file=map_path)
 
     patches = []
-    for i in range(s.npatches):
+    for i in range(npatches):
         patch = car_map.project(pshapes[i], pwcs[i])  # type: ignore
         patches.append(patch)
 
@@ -125,7 +156,7 @@ if __name__ == "__main__":
     # Load in the alm data, do this first to crash fast if data is not found
     if os.path.isfile(s.alm_file):
         logger.info(f"loading alms from completed file {s.alm_file}")
-        ldata = load_data(s.alm_file, ["alm", "fnls"])
+        ldata = load_data(s.alm_file, ["alm", "fnl"])
 
         # if using a completed file, we need to adjust the start index for generation
         start_idx = s.nsims * (int(s.job_array_index) - 1)  # we start at 1 rn
@@ -138,7 +169,7 @@ if __name__ == "__main__":
 
     elif os.path.isfile(s.alm_file_partial):
         logger.info(f"Loading alms from partial file {s.alm_file_partial}")
-        ldata = load_data(s.alm_file_partial, ["alm", "fnls"])
+        ldata = load_data(s.alm_file_partial, ["alm", "fnl"])
 
         # for partial files, we can just start at 0
         start_idx = 0
@@ -182,9 +213,29 @@ if __name__ == "__main__":
         cl_phi = ksw_data.cosmology._camb_data.get_lens_potential_cls(
             s.cosmo_params["max_l"], CMB_unit="muK", raw_cl=True
         )[:, 0]
-        cutPatches = partial(cutSqPatches_lenspyx, s, *patch_geo, cl_phi)
+
+        cutPatches = partial(
+            cutSqPatches_lenspyx,
+            s.lmax,
+            s.cosmo_params["max_l"],
+            s.plot_dir,
+            s.base_name,
+            s.r_dtype,
+            s.npatches,
+            s.nside,
+            *patch_geo,
+            cl_phi,
+        )
     else:
-        cutPatches = partial(cutSqPatches_pixell, s, *patch_geo)
+        cutPatches = partial(
+            cutSqPatches_pixell,
+            s.lmax,
+            s.plot_dir,
+            s.base_name,
+            s.npatches,
+            c_ells,
+            *patch_geo,
+        )
 
     ## Start the patch generation
     # create the array to store the patches
@@ -213,36 +264,30 @@ if __name__ == "__main__":
 
     # Get our data from the generator, only update logging every 100 runs, takes a long time
     for idx, result in enumerate(
-        tqdm(
-            patch_generator,
-            desc="patch progress",
-            total=len(args),
-            miniters=100,
-        )
+        tqdm(patch_generator, desc="patch progress", total=len(args))
     ):
         i, pol = args[idx]
         patches[i, pol] = result
 
     # remove the partial file if it exists
     if os.path.isfile(s.patch_file_partial):
-        logger.debug("Removing stale data file: %s", s.patch_file_partial)
+        logger.info("Removing stale data file: %s", s.patch_file_partial)
         os.remove(s.patch_file_partial)
 
     # Save data
     sdata = {}
     sdata["fnl"] = fnls
     sdata["patch"] = np.array(patches)
-
-    # only save 1 copy of the settings
-    if s.is_main_job:
-        sdata["settings"] = s.settings
-
-        plot_dir = os.path.join(s.plot_dir, "patchgen")
-        os.makedirs(plot_dir, exist_ok=True)
-        plot_file = os.path.join(plot_dir, s.base_name + "_patches.png")
-        plot_patches(patches, 10, save_file=plot_file)
-
+    # if s.is_main_job:
+        # sdata["settings"] = s.settings
+    
     os.makedirs(s.patch_dir, exist_ok=True)
     save_data(s.patch_file_partial, sdata)
     os.replace(s.patch_file_partial, s.patch_file)
     logger.info("Done with Generation!")
+
+    # if s.is_main_job:
+    #     plot_dir = os.path.join(s.plot_dir, "patchgen")
+    #     os.makedirs(plot_dir, exist_ok=True)
+    #     plot_file = os.path.join(plot_dir, f"{s.base_name}_patches.png")
+    #     plot_patches(patches, 10, save_file=plot_file)

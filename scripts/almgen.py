@@ -93,6 +93,7 @@ def generate_almngs(alms):
     temp_folder = os.environ.get("SCRATCH", None)
     logger.debug(f"Using temp folder for almng generation: {temp_folder}")
     parallel = Parallel(n_jobs=-1, return_as="generator", temp_folder=temp_folder)
+    
     for i, pol in tqdm(
         product(range(s.nsims), range(s.npol)), total=(s.nsims * s.npol), desc="Almng"
     ):
@@ -132,8 +133,7 @@ if __name__ == "__main__":
 
     if s.is_main_job:
         logger.setLevel(logging.DEBUG)
-        logging.getLogger("utils.config").setLevel(logging.DEBUG)
-        logging.getLogger("utils.utils").setLevel(logging.DEBUG)
+        logging.getLogger("utils").setLevel(logging.DEBUG)
 
     # check for completed alm runs if we are not forcing alm generation, and fail fast
     if not s.force_alm_gen:
@@ -163,10 +163,10 @@ if __name__ == "__main__":
     logger.debug("Gaussian Alm shape: %s", alms.shape)
 
     # KWS needs the alms to be coevolved with the beam
-    beam_ell_2d = np.atleast_2d(s.beam_ell)
-    for i, j in product(range(s.nsims), range(s.npol)):
-        alms[i, j] = hp.almxfl(alms[i, j], beam_ell_2d[j] ** -1)
-    logger.info("Gaussian Alm generation complete")
+    # beam_ell_2d = np.atleast_2d(s.beam_ell)
+    # for i, j in product(range(s.nsims), range(s.npol)):
+    #     alms[i, j] = hp.almxfl(alms[i, j], beam_ell_2d[j] ** -1)
+    # logger.info("Gaussian Alm generation complete")
 
     # get our almngs
     almngs = generate_almngs(alms)
@@ -192,8 +192,6 @@ if __name__ == "__main__":
     sdata["fnl"] = fnls
     # TODO: Fix this
     # if s.is_main_job:
-    #     logger.info('adding settings to alm file')
-    #     import json
     #     sdata["settings"] = json.dumps(s.settings)
     save_data(s.alm_file_partial, sdata)
 

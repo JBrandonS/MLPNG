@@ -38,13 +38,31 @@ def alm_step_loader(idx):
     Used in the KSW step code to init the MC
     needs a gaussian realization of signal + noise
     """
-    logger.info("Sending alm step %s", idx)
+    logger.debug("Sending alm step %s", idx)
     return data.compute_alm_sim(s.lensing)
 
 
-def beam(alm):
-    return hp.sphtfunc.smoothalm(alm, fwhm=s.beam_width)
+# def get_beamfunc(s):
+#     l, _ = hp.sphtfunc.Alm.getlm(s.lmax)
+#     sigma = s.beam_width / np.sqrt(8 * np.log(2))
+#     factor = np.exp(-(l**2) * sigma**2 / 2)
 
+#     def _beam(alm):
+#         # alm -> alm exp(-l^2 sigma^2 / 2)
+#         return alm * factor
+
+#     return _beam
+
+def get_beamfunc(s):
+    if not s.noise:
+        return lambda alm: alm
+    else:
+        beam_ell_pre = hp.gauss_beam(s.beam_width, lmax=s.lmax, pol=False)
+
+        def _beam(alm):
+            return np.array([hp.almxfl(alm[0], beam_ell_pre)])
+
+        return _beam
 
 def compute_icov_ell(N, b):
     S_ell = cosmo._camb_data.get_cmb_power_spectra(
@@ -81,26 +99,26 @@ if __name__ == "__main__":
     # setup the data and get our icov object
     data = Data(s.lmax, s.noise_ell, s.beam_ell, s.pols, cosmo)
     icov = data.icov_diag_lensed if s.lensing else data.icov_diag_nonlensed
-    ksw = KSW(cosmo.red_bispectra, icov, beam, s.lmax, s.pols, s.precision)
+    ksw = KSW(cosmo.red_bispectra, icov, get_beamfunc(s), s.lmax, s.pols, s.precision)
 
     # compute the isotropic fisher
-    logger.info("Computing isotropic fisher")
-    logger.debug("getting icov ell")
-    icov_ell = compute_icov_ell(s.noise_ell, s.beam_ell)
-    logger.debug("finished getting icov ell, starting fisher iso")
-    fisher_iso = ksw.compute_fisher_isotropic(icov_ell, comm=mpi_comm)
-    logger.info(
-        "Isotropic fisher: %s, standard deviation: %s",
-        fisher_iso,
-        np.sqrt(1 / fisher_iso),
-    )
+    # logger.info("Computing isotropic fisher")
+    # logger.debug("getting icov ell")
+    # icov_ell = compute_icov_ell(s.noise_ell, s.beam_ell)
+    # logger.debug("finished getting icov ell, starting fisher iso")
+    # fisher_iso = ksw.compute_fisher_isotropic(icov_ell, comm=mpi_comm)
+    # logger.info(
+    #     "Isotropic fisher: %s, standard deviation: %s",
+    #     fisher_iso,
+    #     np.sqrt(1 / fisher_iso),
+    # )
 
     # check for existing ksw state, if it exists, load it
     # otherwise, run the MC, can take a few hours
     use_mc_file = True  # just a quick disable
     mc_path = os.path.join(s.alm_dir, "kswmc")
     os.makedirs(mc_path, exist_ok=True)
-    mc_file = os.path.join(mc_path, f"{s.base_name}_mc")
+    mc_file = os.path.join(mc_path, f"{s.base_name}_m.hdf5")
     if use_mc_file and os.path.exists(mc_file):
         logger.info("Loading KSW state from %s", mc_file)
         ksw.start_from_read_state(mc_file, mpi_comm)
@@ -115,7 +133,7 @@ if __name__ == "__main__":
         # we dont actually need to batch the thetas, so just set it to the full amount
         thetas = int(np.floor(1.5 * s.lmax + 1))
 
-        # step the MC
+        # step the MC, actually does the work
         ksw.step_batch(alm_step_loader, idxs, comm=mpi_comm, theta_batch=thetas)
 
         # save the mc state if we are using the mc file
@@ -131,28 +149,31 @@ if __name__ == "__main__":
     fnls = alm_file["fnl"]
     logger.debug(f"using alms: {alms.shape}, fnls: {fnls.shape}")
 
+    # only do at most 1k estimates right now
+    num_est = min(1000, s.total_sims)
     logger.info(
         "Computing %s estimates in %.2f batches",
-        s.total_sims,
-        s.total_sims / mpi_size,
+        num_est,
+        num_est / mpi_size,
     )
-    idxs = range(s.total_sims)
+    idxs = range(num_est)
     estimates = ksw.compute_estimate_batch(alm_loader, idxs, comm=mpi_comm, fisher=fisher)
 
     if mpi_root:
         logger.info("Saving data")
 
         # first, need to close the existing file or we get an error
-        fnls = np.array(fnls[:]).flatten()
+        fnls = np.array(fnls[idxs]).flatten()
         alm_file.close()
 
         # save the data, this will append to the alm_file
         sdata = {}
         sdata["fisher"] = [fisher]
-        sdata["fisher_iso"] = [fisher_iso]
+        # sdata["fisher_iso"] = [fisher_iso]
+        sdata["estimate_1k"] = True
         sdata["estimate"] = estimates
         sdata["error"] = (estimates - fnls) * np.sqrt(fisher)
-        save_data(s.alm_file, sdata)
+        save_data(s.alm_file, sdata, mode='a')
 
         # make and save some plots
         plot_dir = os.path.join(s.plot_dir, "estimator")

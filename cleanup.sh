@@ -14,7 +14,7 @@ rm -rvf logs/combiner/*.log
 rm -rvf logs/estimator/*.log
 rm -rvf logs/heidelberg/*.log
 
-rm -rvf data/plots
+# rm -rvf data/plots
 rm -rvf data/models
 rm -rvf data/tensorboard
 rm -rvf data/wandb

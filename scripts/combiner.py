@@ -78,7 +78,7 @@ def combine_data(directory, base_name, ext, remove_files=True):
         return
 
     # Create a new h5py file to hold all the combined data
-    with h5py.File(os.path.join(directory, f"{base_name}{ext}.nc"), "w") as hf_combined:
+    with h5py.File(os.path.join(directory, f"{base_name}{ext}.nc"), "x") as hf_combined:
         for file in tqdm(files_to_combine, desc="processing files"):
             with h5py.File(file, "r") as hf:
                 logger.debug("Processing file %s", file)

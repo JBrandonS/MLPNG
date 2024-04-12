@@ -6,6 +6,8 @@ import healpy as hp
 import numpy as np
 from astropy import units as u
 
+import matplotlib.pyplot as plt
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -18,6 +20,7 @@ def parse_args(args):
     parser.add_argument("settings_file")
     parser.add_argument("--nsims", type=int)
     parser.add_argument("--narray", type=int)
+    parser.add_argument("--npatches", type=int)
     parser.add_argument("--lensing", action=argparse.BooleanOptionalAction)
     parser.add_argument("--noise", action=argparse.BooleanOptionalAction)
     parser.add_argument("--force_alm_gen", action=argparse.BooleanOptionalAction)
@@ -26,6 +29,8 @@ def parse_args(args):
     parser.add_argument("--save_settings", action="store_true")
     parser.add_argument("--seed", type=int)
     parser.add_argument("--base_name", type=str)
+    parser.add_argument("--noise_scale_tt", type=float)
+    parser.add_argument("--beam_width", type=float)
 
     logger.debug(f"parsing cli args: {args}")
     return parser.parse_args(args)
@@ -92,7 +97,7 @@ class Config:
         logger.info(f"Using seed {self.seed}")
 
         # find out the number of sims
-        self.nsims = settings.get("nsims", 1)
+        self.nsims = settings.get("nsims", 100)
         self.narray = settings.get("narray", 1)
         self.total_sims = self.nsims * self.npol * self.narray
 
@@ -118,12 +123,12 @@ class Config:
         # get the beam and noise
         self.noise = settings.get("noise", True)
         self.beam_width = (settings.get("beam_width", 0) * u.arcmin).to_value(u.radian)
-        self.noise_scale_tt = settings.get("noise_scale_tt", 1) * u.arcmin
-        self.noise_scale_tt = self.noise_scale_tt.to_value(u.radian)
-        self.noise_scale_ee = settings.get("noise_scale_ee", 1) * u.arcmin
-        self.noise_scale_ee = self.noise_scale_ee.to_value(u.radian)
-        self.noise_scale_te = settings.get("noise_scale_te", 1) * u.arcmin
-        self.noise_scale_te = self.noise_scale_te.to_value(u.radian)
+        noise_scale_tt = settings.get("noise_scale_tt", 1) * u.arcmin
+        self.noise_scale_tt = noise_scale_tt.to_value(u.radian)
+        noise_scale_ee = settings.get("noise_scale_ee", 1) * u.arcmin
+        self.noise_scale_ee = noise_scale_ee.to_value(u.radian)
+        noise_scale_te = settings.get("noise_scale_te", 1) * u.arcmin
+        self.noise_scale_te = noise_scale_te.to_value(u.radian)
         self.noise_ell, self.beam_ell = self.get_noise_beam()
 
         # get the radii
@@ -211,31 +216,53 @@ class Config:
         logger.debug("Config Object:\n %s", vars(self))
 
     def get_noise_beam(self):
+        if not self.noise:
+            noise_ell = np.ones((self.nell), dtype=self.r_dtype) * 10**-16
+            beam_ell = np.ones((self.nell), dtype=self.r_dtype)
+            return noise_ell, beam_ell
+        
+        def remove_mono_dipole(alm):
+            lmax = hp.Alm.getlmax(len(alm))
+            alm[..., hp.Alm.getidx(lmax, 0, 0)] = 0.0
+            alm[..., hp.Alm.getidx(lmax, 1, 0)] = 0.0
+            alm[..., hp.Alm.getidx(lmax, 1, 1)] = 0.0
+            return alm
+        
         beam_ell_pre = hp.gauss_beam(self.beam_width, lmax=self.lmax, pol=True)
         beam_ell_pre = np.swapaxes(beam_ell_pre, 0, 1)
 
         noise_ell = []
         beam_ell = []
         if "T" in self.pols:
-            noise = np.ones((self.nell), dtype=self.r_dtype) * self.noise_scale_tt**2
-            noise_ell.append(noise)
             beam_ell.append(beam_ell_pre[0])
+            noise_map = np.random.normal(0, 1, hp.nside2npix(self.nside))
+            noise_map = remove_mono_dipole(noise_map)
+            noise = hp.anafast(noise_map, lmax=self.lmax, use_pixel_weights=True)
+            noise_ell.append(noise * self.noise_scale_tt**2)
+            
+            # plt.figure()
+            # plt.loglog(noise)
+            # plt.xlabel('Multipole moment (l)')
+            # plt.ylabel('Power')
+            # plt.title('Noise power spectrum')
+            # plt.show()
 
-        if "E" in self.pols:
-            noise = np.ones((self.nell), dtype=self.r_dtype) * self.noise_scale_ee**2
-            noise_ell.append(noise)
-            beam_ell.append(beam_ell_pre[1])
+            # noise_map = hp.synalm(np.ones(nside * (nside + 1) // 2), lmax=nside - 1)
+            # noise_cl = hp.anafast(noise_map)
+            # n_ell = np.zeros((nside * (nside + 1) // 2, nside * (nside + 1) // 2))
+            # for ell in range(nside * (nside + 1) // 2):
+            #     for ell2 in range(nside * (nside + 1) // 2):
+            #         n_ell[ell, ell2] = noise_cl[ell] * noise_cl[ell2] / (2 * ell + 1)
 
-        if self.pols == ["T", "E"]:
-            noise = np.ones((self.nell), dtype=self.r_dtype) * self.noise_scale_te**2
-            noise_ell.append(noise)
+        # if "E" in self.pols:
+        #     beam_ell.append(beam_ell_pre[1])
+        #     noise = self.rng.normal(0, 1, self.nell) * self.noise_scale_ee**2
+        #     noise_ell.append(noise)
 
-        noise_ell = np.array(noise_ell).squeeze()
-        beam_ell = np.array(beam_ell).squeeze()
-
-        if not self.noise:
-            noise_ell = noise_ell * 10**-12
-            beam_ell = np.ones_like(beam_ell, dtype=self.r_dtype)
+        # if self.pols == ["T", "E"]:
+        #     beam_ell.append(beam_ell_pre[3])
+        #     noise = self.rng.normal(0, 1, self.nell) * self.noise_scale_te**2
+        #     noise_ell.append(noise)
 
         return noise_ell, beam_ell
 

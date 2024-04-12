@@ -16,7 +16,7 @@ from .utils.plots import plot_cl_alm, plot_predictions
 
 logger = setup_logging(
     name=f"heidelberg_estimator_{mpi_rank}",
-    level=logging.INFO if mpi_root else logging.ERROR,
+    level=logging.INFO if mpi_root else logging.FATAL,
 )
 
 # fix healpy logging because we will get a lot of info
@@ -29,19 +29,23 @@ logging.getLogger("astropy").setLevel(logging.ERROR)
 def alm_loader(str_idx):
     global fnls
 
-    idx = str_idx.zfill(4)
+    idx = str(str_idx).zfill(4)
     base1 = f"data/heidelberg/alm_l_{idx}_v3.fits"
     base2 = f"data/heidelberg/alm_nl_{idx}_v3.fits"
 
     alm_heidelberg_l = np.array(hp.read_alm(base1, hdu=1))
     alm_heidelberg_nl = np.array(hp.read_alm(base2, hdu=1))
-    alm_h_l = remove_mono_dipole(alm_heidelberg_l)
-    alm_h_nl = remove_mono_dipole(alm_heidelberg_nl)
 
     fnl = fnls[int(idx)]
     t_scale = 2.7255 * 10 ** (6)
     logger.info("sending fnl: %s", fnl)
-    return (alm_h_l + fnl * alm_h_nl) * t_scale
+
+    alms = (alm_h_l + fnl * alm_h_nl) * t_scale
+    alms = remove_mono_dipole(alms)
+
+    beam_ell_2d = np.atleast_2d(s.beam_ell)
+    alms = hp.almxfl(alms, beam_ell_2d[0] ** -1)
+    return alms
 
 
 def alm_step_loader(idx):
@@ -91,8 +95,9 @@ if __name__ == "__main__":
     A test script to run the KSW estimator just on the heildelberg sims.
     Probably not up to date with the latest changes in estimator.
     """
-
-    s = Config(["settings/heidelberg.json", "--base_name", "heidelberg"])
+    import sys
+    args = sys.argv[1:]
+    s = Config(["settings/heidelberg.json"] + args)
 
     logger.info("Running camb")
     camb_params_obj = camb.set_params(**s.cosmo_params)
@@ -115,7 +120,7 @@ if __name__ == "__main__":
 
     logger.info("Computing isotropic Fisher")
     icov_ell = compute_icov_ell(s.noise_ell, s.beam_ell)
-    fisher_iso = ksw.compute_fisher_isotropic(icov_ell)
+    fisher_iso = ksw.compute_fisher_isotropic(icov_ell, comm=mpi_comm)
     logger.info(
         "Fisher isotropic: %s, std dev: %s", fisher_iso, np.sqrt(1 / fisher_iso)
     )
@@ -135,15 +140,16 @@ if __name__ == "__main__":
     logger.info("Computing estimates")
     alm_strs = range(1, 1001)
     estimates = ksw.compute_estimate_batch(
-        alm_loader, alm_strs, comm=mpi_comm, verbose=mpi_root, fisher=fisher
+        alm_loader, alm_strs, comm=mpi_comm, fisher=fisher
     )
 
     if mpi_root:
-        os.makedirs(s.plot_dir, exist_ok=True)
-        pred_file = os.path.join(s.plot_dir, f"{s.sjob}-ksw_heidelberg_predictions.png")
-        plot_predictions(fnls[alm_strs], estimates, fisher, save_file=pred_file)
+        plot_dir = os.path.join(s.plot_dir, "heidelberg")
+        os.makedirs(plot_dir, exist_ok=True)
+        pred_file = os.path.join(plot_dir, f"{s.sjob}-{s.base_name}.png")
+        plot_ksw_predictions(fnls[alm_strs], estimates, fisher, save_file=pred_file)
 
-        cl_file = os.path.join(s.plot_dir, f"{s.sjob}-heidelberg_cl.png")
+        cl_file = os.path.join(plot_dir, f"{s.sjob}-{s.base_name}_cl.png")
         c_ells = data.cosmology.c_ell["unlensed_scalar"]
         plot_cl_alm(
             alm_loader("1"),
