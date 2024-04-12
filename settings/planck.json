@@ -10,11 +10,12 @@
         "lmax": 1024
     },
     "nsims" : 100,
-    "narray": 10,
+    "narray": 100,
     "fnl_range":[-1000, 1000],        
     "nside":512,
     "noise_scale_tt" : 500,
     "beam_width" : 10,
     "lensing": false,
-    "noise": true
+    "noise": true,
+    "base_name": "hei_planck_512"
 }

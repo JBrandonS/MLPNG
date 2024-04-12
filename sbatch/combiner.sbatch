@@ -5,7 +5,7 @@
 #SBATCH --mem=500G
 #SBATCH --cpus-per-task=1
 #SBATCH --output=logs/combiner/%j.log
-#SBATCH --time=6:00:00
+#SBATCH --time=1:00:00
 
 # create the logging dir
 mkdir -p logs/combiner

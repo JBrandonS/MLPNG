@@ -5,8 +5,8 @@
 #SBATCH --mem=500G
 #SBATCH --cpus-per-task=64
 #SBATCH --output=logs/almgen/%A/%j.log
-#SBATCH --array=1-10
-#SBATCH --time=12:00:00
+#SBATCH --array=1-100
+#SBATCH --time=6:00:00
 
 # create our logging dir, if needed
 mkdir -p logs/almgen/"$SLURM_ARRAY_JOB_ID"/

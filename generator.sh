@@ -14,28 +14,22 @@ SETTINGS_DIR="settings/"
 
 # list of the settings file to be used, will be ran in order
 SETTINGS=(
-  # "l500_n128.json" 
-  # "l750_n256.json"
-  # "l1000_n512.json"
-  # "l2000_n1024.json"
-  # "l2000_n2048.json"
   "planck.json"
 )
 
 # override sim settings. These settings will take priority, see config.py for the meaning of these settings, and others
 ARGS=(
   # "--nsims" "200"
-  "--no-lensing"
-  "--no-noise" 
-  # "--fnl_range" "-100" "100"
-  "--narray" "500" # change slurm args array to match this
-  # "--force_alm_gen"
-  # "--base_dir" "data-shared"
+  # "--lensing"
+  # "--noise" 
+  # "--narray" "50" # change slurm args array to match this
+  # "--base_name" "planck_fnl50"
+  # "--fnl_range" "-50" "50"
 )
 
 # override some slurm settings, only used for narray
 SLURM_ARGS=(
-  "--array" "1-500"
+  # "--array" "1-50"
 )
 
 echo "Submitting jobs with Settings overrides:" "${ARGS[@]}"
@@ -49,21 +43,22 @@ for x in "${SETTINGS[@]}"; do
     SETTINGS_FILE="$SETTINGS_DIR$x"
     
     # generate the alms
-    JOB0_ID=$(sbatch "${SLURM_ARGS[@]}" "sbatch/almgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+    # JOB0_ID=$(sbatch "${SLURM_ARGS[@]}" "sbatch/almgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
 
     ### Not used, but generates the patches
-    # JOB1_ID=$(sbatch --dependency=afterok:$JOB0_ID "${SLURM_ARGS[@]}" "sbatch/patchgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+    # JOB1_ID=$(sbatch --dependency=afterok:"$JOB0_ID" "${SLURM_ARGS[@]}" "sbatch/patchgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+    # JOB1_ID=$(sbatch "${SLURM_ARGS[@]}" "sbatch/patchgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
 
     # If we are generating patches, JOB1, then we need to use JOB1_ID, otherwise we use JOB0_ID
-    PREV_JOB_ID="${JOB1_ID:-$JOB0_ID}"
+    # PREV_JOB_ID="${JOB1_ID:-$JOB0_ID}"
 
     # combines the data into a single file
-    JOB2_ID=$(sbatch --dependency=afterok:"$PREV_JOB_ID" "sbatch/combiner.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+    # JOB2_ID=$(sbatch --dependency=afterok:"$PREV_JOB_ID" "sbatch/combiner.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
     # JOB2_ID=$(sbatch "sbatch/combiner.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
 
     # runs the estimator on the combined data
-    sbatch --dependency=afterok:"$JOB2_ID" "sbatch/estimator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" > /dev/null 2>&1
-    # sbatch "sbatch/estimator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" > /dev/null 2>&1
+    # sbatch --dependency=afterok:"$JOB2_ID" "sbatch/estimator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" > /dev/null 2>&1
+    sbatch "sbatch/estimator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" > /dev/null 2>&1
 done
 
 echo "All jobs submitted."

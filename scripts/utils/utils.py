@@ -31,9 +31,9 @@ def setup_logging(
     return logger
 
 
-def save_data(file_path, data_dict):
+def save_data(file_path, data_dict, mode="x"):
     logger.info("Saving data to %s", file_path)
-    with h5py.File(file_path, "a") as hf:
+    with h5py.File(file_path, mode) as hf:
         for key, value in data_dict.items():
             logger.debug("Processing key %s", key)
             if isinstance(value, dict):
@@ -80,7 +80,8 @@ def load_data(data_file, keys):
             kv = hdf.get(key, None)
             if kv is None:
                 raise ValueError(f"Key {key} not found in {data_file}")
-            data[key] = kv  # type: ignore
+            logger.debug("Loaded key %s, %s", key, kv.shape if isinstance(kv, np.ndarray) else kv)
+            data[key] = kv[()]  # type: ignore
 
     logger.info("Finished loading data from %s", data_file)
     return data
