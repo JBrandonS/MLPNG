@@ -4,9 +4,9 @@
 #SBATCH --ntasks=1
 #SBATCH --mem=1024G
 #SBATCH --cpus-per-task=32
-#SBATCH --gpus-per-task=4
+#SBATCH --gpus-per-task=1
 #SBATCH --output=logs/training/%j.log
-#SBATCH --time=2-00:00:00
+#SBATCH --time=06:00:00
 
 # create the logging dir
 mkdir -p logs/training

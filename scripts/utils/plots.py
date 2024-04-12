@@ -69,6 +69,7 @@ def plot_cl(
 
             def noise_func(noise, l):
                 return noise**2 * np.exp((l * (l + 1) * beam**2) / (8 * np.log(2)))
+
             noise_ell_b = np.array([noise_func(noise, l) for l in range(2, lmax)])
 
             camb_n_inner_plt = scale * (camb_cl + noise_ell_b)
@@ -107,7 +108,7 @@ def plot_cl_map(map, wcs, title="Angular power spectrum from map", **kwargs):
     plot_cl(cl, lmax, title, **kwargs)
 
 
-def plot_ksw_predictions(truth, preds, fisher=None, save_file=None):
+def plot_predictions(truth, preds, fisher=None, scaled_variance=None, save_file=None):
     df = pd.DataFrame(
         {
             "True Labels": np.array(truth).flatten(),
@@ -128,6 +129,16 @@ def plot_ksw_predictions(truth, preds, fisher=None, save_file=None):
         plt.plot(line, line + std_dev, color="blue", linestyle="--", label="Fisher")
         plt.plot(line, line - std_dev, color="blue", linestyle="--")
 
+    if scaled_variance is not None:
+        plt.plot(
+            line,
+            line + scaled_variance,
+            color="green",
+            linestyle="--",
+            label=r"Scaled Variance (1/$\sqrt{f_{sky} f}$)",
+        )
+        plt.plot(line, line - scaled_variance, color="green", linestyle="--")
+
     # Line for perfect fit
     r2 = r2_score(df["True Labels"], df["Predicted Labels"])
     plt.text(min(truth), max(truth), f"$R^2$ = {r2:.2f}", verticalalignment="top")
@@ -136,6 +147,7 @@ def plot_ksw_predictions(truth, preds, fisher=None, save_file=None):
     if save_file is not None:
         plt.savefig(save_file)
         plt.close()
+
 
 def plot_histogram(truth, preds, save_file=None):
     """Plot and save a histogram of predictions with mean and std dev as title"""
@@ -150,14 +162,18 @@ def plot_histogram(truth, preds, save_file=None):
     mean_pred = np.mean(preds)
     std_pred = np.std(preds)
     sns.histplot(preds, ax=axs[0], legend=False)
-    axs[0].set_title(f"Predictions - Mean: {mean_pred:.2f}, Standard Deviation: {std_pred:.2f}")
+    axs[0].set_title(
+        f"Predictions - Mean: {mean_pred:.2f}, Standard Deviation: {std_pred:.2f}"
+    )
 
     # Plot the differences on the second subplot
     diff = preds - truth
     mean_diff = np.mean(diff)
     std_diff = np.std(diff)
     sns.histplot(diff, ax=axs[1], legend=False)
-    axs[1].set_title(f"Differences - Mean: {mean_diff:.2f}, Standard Deviation: {std_diff:.2f}")
+    axs[1].set_title(
+        f"Differences - Mean: {mean_diff:.2f}, Standard Deviation: {std_diff:.2f}"
+    )
 
     # Save the plot
     if save_file is not None:

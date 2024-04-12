@@ -1,103 +1,301 @@
-import os
-import time
-import inspect
-import re
 import json
 import logging
+import os
+import time
+import math
 
 import numpy as np
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
-
-# I was getting double logging from tensorflow, this stops that
-logging.getLogger("tensorflow").setLevel(logging.ERROR)
+if __name__ == "__main__":
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
+    os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 
 import tensorflow as tf
-from tensorflow.keras import Input, Model
-from tensorflow.keras.callbacks import EarlyStopping, TerminateOnNaN
-from tensorflow.keras.layers import (
-    Dense,
-    Flatten,
-    MultiHeadAttention,
-    Add,
-    Multiply,
-    LayerNormalization,
-    Dropout,
-)
-from tensorflow.keras.optimizers import Adam
+from tensorflow.keras import Input, Model, Sequential, backend as K
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, TerminateOnNaN
 from tensorflow.keras.initializers import TruncatedNormal
+from tensorflow.keras.layers import (
+    Activation,
+    Add,
+    Conv1D,
+    Conv2D,
+    Conv3D,
+    Concatenate,
+    DepthwiseConv1D,
+    DepthwiseConv2D,
+    Dense,
+    Dropout,
+    Flatten,
+    BatchNormalization,
+    LayerNormalization,
+    MultiHeadAttention,
+    Multiply,
+    AveragePooling3D,
+    MaxPooling1D,
+    MaxPooling2D,
+    MaxPooling3D,
+)
+from tensorflow.keras.regularizers import l1, l2
+from tensorflow.keras.layers import *
+from tensorflow.keras.optimizers.legacy import Adam
+from tensorflow.keras.utils import get_custom_objects
 
-from utils import Config, setup_logging, log_source
-from utils.tf.dataloaders import *
-from utils.tf.plots import plot_histogram, plot_metrics, plot_predictions
-from utils.tf.callbacks import TimedLoggingCallback, WarmupLearningRate
+from .utils import Config, log_source, setup_logging
+from .utils.plots import plot_histogram, plot_predictions
+from .utils.tf.callbacks import TimedLoggingCallback, WarmupLearningRate
+from .utils.tf.dataloaders import *
+from .utils.tf.plots import plot_metrics
+
+logger = setup_logging(__name__)
 
 
-def alm_model(
-    inputs,
-    dropout_rate=0.3,
-    name="",
-    mha_initializer=TruncatedNormal(stddev=0.02),
-    depth=3,
-):
-    layer = inputs
-    lmax = inputs.shape[-1]
-    kr = tf.keras.regularizers.l2(1e-6)
-
-    for d in range(depth):
-        x = MultiHeadAttention(
-            num_heads=4,
-            key_dim=lmax,
-            kernel_initializer=mha_initializer,
-            dropout=dropout_rate
-        )(
-            layer,
-            layer,
-            use_causal_mask = d == 0
+class FeedForward(tf.keras.layers.Layer):
+    def __init__(self, d_model, dff, dropout_rate=0.1):
+        super().__init__()
+        self.seq = tf.keras.Sequential(
+            [
+                tf.keras.layers.Dense(dff, activation="relu"),
+                tf.keras.layers.Dense(d_model),
+                tf.keras.layers.Dropout(dropout_rate),
+            ]
         )
-        # Note: use the Add layer to ensure that Keras masks are propagated (the + operator does not).
-        layer = Add()([layer, x])
-        layer = LayerNormalization()(layer)
+        self.add = tf.keras.layers.Add()
+        self.layer_norm = tf.keras.layers.LayerNormalization()
 
-        # FF layer
-        x = Dense(1024, 'relu')(layer)
-        x = Dense(lmax)(x)
-        x = Dropout(dropout_rate)(x)
-        x = Add()([layer, x])
-        res = layer = LayerNormalization()(x)
+    def call(self, x):
+        x = self.add([x, self.seq(x)])
+        x = self.layer_norm(x)
+        return x
+
+
+class EncoderLayer(tf.keras.layers.Layer):
+    def __init__(
+        self,
+        num_heads,
+        d_model,
+        dff,
+        dropout_rate=0.1,
+        reduce_key_dim=False,
+        **kwargs,
+    ):
+        super().__init__()
+        self.mha = MultiHeadAttention(
+            num_heads=num_heads,
+            key_dim=d_model // num_heads if reduce_key_dim else d_model,
+            dropout=dropout_rate,
+            **kwargs,
+        )
+        self.layernorm = LayerNormalization()
+        self.add = Add()
+        self.ffn = FeedForward(d_model, dff)
+
+    def call(self, x):
+        attn = self.mha(x, x)
+        x = self.add([x, attn])
+        x = self.layernorm(x)
+        return x
+
+
+def alm_modelV1(input_layer, name="", dropout_rate=0.1):
+    """
+    Worked well at one point but not sure why
+    Use dataset loader AlmLoader
+    """
+    layer = input_layer
+    layer = Dense(512, activation="relu")(layer)
+    layer = Dense(128)(layer)
+    layer = Dense(1)(layer)
+    layer = tf.squeeze(layer, axis=-1)  # (batch, 2, 500)
+
+    x = MultiHeadAttention(num_heads=32, key_dim=layer.shape[-1], dropout=dropout_rate)(layer, layer)
+    layer = Add()([layer, x])
+    layer = LayerNormalization()(layer)
 
     # Now we do a final FF to get the output as a scalar
     layer = Flatten()(layer)
-    layer = Dense(1024, 'sigmoid', kernel_regularizer=kr)(layer)
-    layer = Dense(512)(layer)
+    layer = Dense(512, activation="relu")(layer)
+    layer = Dense(256)(layer)
+    out_layer = Dense(1)(layer)
+
+    return Model(inputs=input_layer, outputs=out_layer, name=name)
+
+
+def alm_modelV1_1(input_layer, name="", dropout_rate=0.1, depth=5, heads=64):
+    layer = input_layer
+
+    def condense_layer(layer):
+        layer = Dense(1024, activation="relu")(layer)
+        layer = Dense(256)(layer)
+        layer = Dense(64)(layer)
+        return Dense(1)(layer)
+
+    layer = condense_layer(layer)
+    layer = tf.squeeze(layer, axis=-1)  # (batch, 2, lmax)
+    layer = tf.transpose(layer, perm=[0, 2, 1])  # (batch, lmax, 2)
+
+    d_model = layer.shape[-1]
+    for _ in range(depth):
+        x = MultiHeadAttention(num_heads=heads, key_dim=d_model, dropout=dropout_rate)(
+            layer, layer
+        )
+        layer = Add()([layer, x])
+        layer = LayerNormalization()(layer)
+        layer = FeedForward(d_model, 128)(layer)
+
+    # Now we do a final FF to get the output as a scalar
+    layer = Flatten()(layer)
+    out_layer = condense_layer(layer)
+
+    return Model(inputs=input_layer, outputs=out_layer, name=name)
+
+def alm_modelV1_2(input_layer, name="", dropout_rate=0.1, depth=1, heads=8):
+    layer = input_layer
+
+    def condense_layer(layer):
+        layer = Dense(1024)(layer)
+        layer = Dense(512)(layer)
+        return Dense(1)(layer)
+
+    layer = Dense(32)(layer)
+    layer = Dense(128, activation='relu')(layer)
+    layer = Dense(1)(layer)
+    layer = tf.squeeze(layer, axis=-1)  # (batch, 2, lmax)
+
+    layer = Dense(512, activation='relu')(layer)
+    layer = Dense(256, activation='relu')(layer)
+
+    for _ in range(depth):
+        d_model = layer.shape[-1]
+        x = MultiHeadAttention(num_heads=heads, key_dim=d_model // heads, dropout=dropout_rate)(
+            layer, layer
+        )
+        layer = Add()([layer, x])
+        layer = LayerNormalization()(layer)
+        
+        # FF layer
+        x = Dense(1024, activation='relu')(layer)
+        x = Dense(d_model)(x)
+        x = Dropout(dropout_rate)(x)
+        layer = Add()([layer, x])
+        # layer = LayerNormalization()(x)
+
+
+    # Now we do a final FF to get the output as a scalar
+    layer = Flatten()(layer)
+    out_layer = condense_layer(layer)
+
+    return Model(inputs=input_layer, outputs=out_layer, name=name)
+
+
+def alm_modelV3(input_layer, name="", dropout_rate=0.1, depth=1, heads=32):
+    layer = input_layer
+
+    # shape = tf.shape(input_layer)
+    # new_shape = tf.concat([shape[:1], [-1], shape[3:]], axis=0)
+    # layer = tf.reshape(input_layer, new_shape)
+
+    d_model = layer.shape[-1]
+
+    max_level = math.floor(math.log(d_model, 2))
+    depth = min(depth, max_level)
+    for level in range(depth):
+        # layer = EncoderLayer(heads, 1024, 2048, dropout_rate)(layer)
+        x = MultiHeadAttention(
+            num_heads=heads,
+            key_dim=d_model // heads,
+            dropout=dropout_rate,
+            kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=0.02),
+            # attention_axes=(1, 2),
+        )(layer, layer)
+        layer = Add()([layer, x])
+        layer = LayerNormalization()(layer)
+
+        # FF
+        x = Dense(2 ** (max_level + 2 - level), activation="relu")(layer)
+        x = Dense(d_model)(x)
+        x = Dropout(dropout_rate)(x)
+        layer = Add()([layer, x])
+        layer = LayerNormalization()(layer)
+
+        # redux
+        d_model = 2 ** (max_level - 2 * level)
+        layer = Dense(d_model)(layer)
+
+    layer = Flatten()(layer)
+    layer = Dropout(dropout_rate)(layer)
+    # layer = Dense(512, activation="relu")(layer)
+    layer = Dense(1, activation="relu")(layer)
+
+    return Model(inputs=input_layer, outputs=layer, name=name)
+
+def alm_modelV4(input_layer, name="", droupout_rate=0.1):
+    layer = input_layer
+
+    def conv(layer, filters, kernel, depth=1, pooling_size=2):
+        for _ in range(depth):
+            layer = Conv2D(filters, kernel, padding='same')(layer)
+            layer = Conv2D(filters, kernel, padding='same')(layer)
+            layer = BatchNormalization()(layer)
+            layer = Activation('relu')(layer)
+            layer = Dropout(droupout_rate)(layer)
+
+        layer = MaxPooling2D(pooling_size)(layer)
+        return layer
+
+    layer = Dense(32, activation='relu')(layer)
+    layer = conv(layer, 64, 7, 1, 4)
+    # layer = conv(layer, 64, 7, 1, 4)
+    layer = conv(layer, 128, 5, 1, 4)
+    # layer = conv(layer, 256, 5, 1)
+    layer = conv(layer, 256, 3, 1)
+    # layer = conv(layer, 512, 3, 2)
+
+    layer = Flatten()(layer)
+    layer = Dense(1024, activation='relu')(layer)
     layer = Dense(256)(layer)
     layer = Dense(1)(layer)
-    return Model(inputs=inputs, outputs=layer, name=name)
+    return Model(inputs=input_layer, outputs=layer, name=name)
 
+def patch_modelV1(input_layer, name="", droupout_rate=0.1):
+    # taken from nagarajappa
+    layer = input_layer
+
+    layer = Conv2D(32, 3, activation='relu')(layer)
+    layer = MaxPooling2D(2)(layer)
+
+    layer = Conv2D(64, 3, activation='relu')(layer)
+    layer = MaxPooling2D(2)(layer)
+
+    layer = Flatten()(layer)
+    layer = Dense(256, activation='relu')(layer)
+    layer = Dense(128, activation='relu')(layer)
+    layer = Dense(64, activation='relu')(layer)
+    layer = Dense(1)(layer)
+
+    return Model(inputs=input_layer, outputs=layer, name=name)
 
 if __name__ == "__main__":
-    logger = setup_logging("trainer")
+    # I was getting double logging from tensorflow, this stops that
+    logging.getLogger("tensorflow").setLevel(logging.ERROR)
 
-    s = Config()
-
-    # print out the versions of the libraries
     logger.info(f"TensorFlow version: {tf.__version__}")
     logger.info(f"CUDA version: {tf.sysconfig.get_build_info()['cuda_version']}")
     logger.info(f"cuDNN version: {tf.sysconfig.get_build_info()['cudnn_version']}")
 
+    s = Config()
+
     # since I am changing everything so much just print the code used to create the model
-    log_source(alm_model)
+    # log_source(alm_modelV2)
 
     MAX_EPOCHS = 1000
-    BATCH_SIZE = 8
+    BATCH_SIZE = 1
 
     # just some info for the model name
     timestamp = int(time.time())
 
     # Just gather some more info for the wandb logs
     extra_info = {
-        "slurm_job_id": os.getenv("SLURM_JOB_ID", 0),
+        "slurm_job_id": s.sjob,
         "start_time": timestamp,
         "max_epochs": MAX_EPOCHS,
         "comment": """attention only model with alm inputs""",
@@ -106,7 +304,7 @@ if __name__ == "__main__":
 
     # settings that get passed into the model
     model_settings = {
-        "dropout_rate": 0.3,
+        # "dropout_rate": 0.1,
         "name": f"{extra_info['slurm_job_id']}_Attn_Alm_{s.base_name}-{timestamp}",
         # "mha_initializer": None,
     }
@@ -116,7 +314,7 @@ if __name__ == "__main__":
         "shuffle": True,
         "seed": None,
         "batch_size": BATCH_SIZE,
-        "cache": False,
+        "cache": True,
         "shuffle_buffer": 1000,
     }
     logger.info(f"Data loader settings:\n{json.dumps(data_loader_args, indent=2)}")
@@ -135,14 +333,14 @@ if __name__ == "__main__":
             restore_best_weights=True,
             start_from_epoch=30,
         ),
-        # model checkpoining to save the best model
-        # ModelCheckpoint(
-        #     f"{s.model_dir}/{model_settings['name']}" + "-{epoch:03d}.tf",
-        #     monitor="val_loss",
-        #     save_best_only=True,
-        #     mode="auto",
-        #     initial_value_threshold=40000, # mse
-        # ),
+        # model checkpointing to save the best model
+        ModelCheckpoint(
+            f"{s.model_dir}/{model_settings['name']}" + "-{epoch:03d}.tf",
+            monitor="val_loss",
+            save_best_only=True,
+            mode="auto",
+            initial_value_threshold=40000,  # mse
+        ),
         # custom logger to work a little better with text logs
         TimedLoggingCallback(print_frequency=60),
         # tensorboard for visualisation
@@ -156,7 +354,7 @@ if __name__ == "__main__":
     # enable wandb, set to false if not using
     if False:
         import wandb
-        from wandb.keras import WandbMetricsLogger, WandbModelCheckpoint
+        from wandb.keras import WandbMetricsLogger
 
         wandb.tensorboard.patch(root_logdir=s.tb_dir)
 
@@ -179,19 +377,10 @@ if __name__ == "__main__":
     # create and compile the model, needs to be in scope of the strategy
     strategy = tf.distribute.MirroredStrategy()
     with strategy.scope():
-        lr_schedule = WarmupLearningRate(
-            warmup_learning_rate=1e-7,  # start small
-            warmup_steps=5000,
-            warmup_scale=150,
-            warmup_scale_steps=1,
-            warmed_learning_rate=1e-3,
-            decay_steps=1e5,
-            decay_rate=0.95,
-            staircase=True,
-        )
+        lr_schedule = WarmupLearningRate()
         opt = Adam(learning_rate=lr_schedule)
 
-        model = alm_model(Input(data_loader.shape), **model_settings)
+        model = alm_modelV2(Input(data_loader.shape), **model_settings)  # type: ignore
         model.compile(optimizer=opt, loss=tf.keras.losses.mse, metrics=metrics)
         model.summary()
 

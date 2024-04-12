@@ -11,8 +11,8 @@ mpi_comm = MPI.COMM_WORLD
 mpi_rank = mpi_comm.rank
 mpi_root = mpi_rank == 0
 
-from utils import Config, setup_logging
-from utils.plots import plot_cl_alm, plot_ksw_predictions
+from .utils import Config, setup_logging
+from .utils.plots import plot_cl_alm, plot_predictions
 
 logger = setup_logging(
     name=f"heidelberg_estimator_{mpi_rank}",
@@ -141,7 +141,7 @@ if __name__ == "__main__":
     if mpi_root:
         os.makedirs(s.plot_dir, exist_ok=True)
         pred_file = os.path.join(s.plot_dir, f"{s.sjob}-ksw_heidelberg_predictions.png")
-        plot_ksw_predictions(fnls[alm_strs], estimates, fisher, save_file=pred_file)
+        plot_predictions(fnls[alm_strs], estimates, fisher, save_file=pred_file)
 
         cl_file = os.path.join(s.plot_dir, f"{s.sjob}-heidelberg_cl.png")
         c_ells = data.cosmology.c_ell["unlensed_scalar"]

@@ -2,7 +2,6 @@ import json
 import os
 import argparse
 
-from attr import s
 import healpy as hp
 import numpy as np
 from astropy import units as u
@@ -199,7 +198,7 @@ class Config:
         if args.save_settings:
             dir = os.path.join("settings", "runs")
             os.makedirs(dir, exist_ok=True)
-            
+
             file = os.path.join(dir, f"{self.sjob}_{self.base_name}.json")
             if not os.path.exists(file):
                 logger.info(f"Saving run settings to file: {file}")

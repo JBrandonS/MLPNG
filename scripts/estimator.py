@@ -7,8 +7,8 @@ import healpy as hp
 import numpy as np
 from ksw import KSW, Cosmology, Data, Shape
 from mpi4py import MPI
-from utils import Config, save_data, setup_logging
-from utils.plots import plot_histogram, plot_ksw_predictions
+from .utils import Config, save_data, setup_logging
+from .utils.plots import plot_histogram, plot_predictions
 
 mpi_comm = MPI.COMM_WORLD
 mpi_rank = mpi_comm.Get_rank()
@@ -159,7 +159,7 @@ if __name__ == "__main__":
         os.makedirs(plot_dir, exist_ok=True)
         pred_file = os.path.join(plot_dir, f"{s.sjob}_{s.base_name}_preds.png")
         hist_file = os.path.join(plot_dir, f"{s.sjob}_{s.base_name}_hist.png")
-        plot_ksw_predictions(fnls, estimates, fisher, save_file=pred_file)
+        plot_predictions(fnls, estimates, fisher, save_file=pred_file)
         plot_histogram(fnls, estimates, save_file=hist_file)
 
     logger.info("Finished %s!", mpi_rank)

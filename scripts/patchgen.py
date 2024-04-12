@@ -14,8 +14,8 @@ from numpy.random import randint, uniform
 from pixell import curvedsky, enmap, reproject
 from tqdm.auto import tqdm
 
-from utils import Config, load_data, save_data, setup_logging
-from utils.plots import plot_cl_map, plot_patches
+from .utils import Config, load_data, save_data, setup_logging
+from .utils.plots import plot_cl_map, plot_patches
 
 logger = setup_logging(__name__)
 
