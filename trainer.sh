@@ -3,16 +3,17 @@
 JOB="sbatch/trainer.sbatch"
 SETTINGS_DIR="settings/"
 SETTINGS=(
-    "l500_n128.json"      
+    # "l500_n128.json"      
     # "l750_n256.json"      
     # "l1000_n512.json"      
     # "l2000_n2048.json"
+    "planck.json"
 )
 ARGS=(
-    "--nsims" "200"
-    "--disable_lensing" 
-    "--noise" 
-    "--narray" "500"
+    # "--nsims" "200"
+    "--lensing" 
+    # "--noise" 
+    # "--narray" "500"
 )
 
 for x in "${SETTINGS[@]}"
@@ -23,5 +24,5 @@ do
     # JOB1_ID=$(sbatch $JOB "scripts/isensee_attn.py" "$SETTINGSFILE" | awk '{print $4}')
     # JOB2_ID=$(sbatch $JOB "scripts/dcnn.py" "$SETTINGSFILE" | awk '{print $4}')
     # JOB3_ID=$(sbatch $JOB "scripts/alm.py" "$SETTINGSFILE" | awk '{print $4}')
-    JOB3_ID=$(sbatch $JOB "scripts/trainer.py" "${ARGS[@]}" "$SETTINGSFILE" | awk '{print $4}')
+    sbatch $JOB "scripts/trainer.py" "${ARGS[@]}" "$SETTINGSFILE"
 done

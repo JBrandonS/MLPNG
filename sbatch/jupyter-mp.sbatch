@@ -3,8 +3,8 @@
 #SBATCH --output=.vscj.out
 #SBATCH --partition=batch
 #SBATCH --ntasks=1
-#SBATCH --mem=1000G
-#SBATCH --cpus-per-task=64
+#SBATCH --mem=500G
+#SBATCH --cpus-per-task=32
 #SBATCH --gpus-per-task=4
 #SBATCH --time=12:00:00
 

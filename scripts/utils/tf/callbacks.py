@@ -1,5 +1,6 @@
 import time
 import logging
+logger = logging.getLogger(__name__)
 
 import tensorflow as tf
 from tensorflow.config import list_physical_devices
@@ -29,19 +30,18 @@ class WarmupLearningRate(LearningRateSchedule):
 
     def __init__(
         self,
-        warmup_learning_rate,
-        warmup_steps,
-        warmup_scale,
-        warmup_scale_steps,
-        warmed_learning_rate,
-        decay_steps,
-        decay_rate,
+        warmup_learning_rate=1e-6,
+        warmup_steps=10000,
+        warmup_scale=1.5,
+        warmup_scale_steps=10,
+        warmed_learning_rate="auto",
+        decay_steps=10000,
+        decay_rate=0.95,
         staircase=True,
         ftype=tf.float32,
         itype=tf.int32,
     ):
-        self.logger = logging.getLogger("WarmupLearningRate")
-        self.logger.setLevel(logging.INFO)
+        logger = logging.getLogger("WarmupLearningRate")
 
         self.ftype = ftype
         self.itype = itype
@@ -55,7 +55,7 @@ class WarmupLearningRate(LearningRateSchedule):
         max_warmup = warmup_learning_rate * (
             1 + warmup_scale * (warmup_steps / warmup_scale_steps)
         )
-        self.logger.info(f"Warmup Range: {warmup_learning_rate} -> {max_warmup}")
+        logger.info(f"Warmup Range: {warmup_learning_rate} -> {max_warmup}")
 
         # these should follow the ExponentialDecay function
         if warmed_learning_rate == "auto":
@@ -111,13 +111,13 @@ class TimedLoggingCallback(Callback):
         epoch_start_time (float): The start time of the current epoch.
     """
 
-    def __init__(self, print_frequency=60):
+    def __init__(self, print_frequency=60.):
         super().__init__()
 
         self.print_frequency = print_frequency
-        self.last_print_time = 0
-        self.batch_start_time = 0
-        self.epoch_start_time = 0
+        self.last_print_time = 0.
+        self.batch_start_time = 0.
+        self.epoch_start_time = 0.
 
     def set_params(self, params):
         super().set_params(params)
@@ -164,7 +164,7 @@ class TimedLoggingCallback(Callback):
         if current_time - self.last_print_time >= self.print_frequency:
             steps = self.params["steps"]
 
-            batch_str = f"{str(batch).rjust(self._steps_str_len)}/{steps}"
+            batch_str = f"{str(batch + 1).rjust(self._steps_str_len)}/{steps}"
 
             progress = batch / steps
             progress_bar_val = int(progress * 30)
@@ -175,23 +175,22 @@ class TimedLoggingCallback(Callback):
             eta = (
                 (steps - batch)
                 * (current_time - self.batch_start_time)
-                / self.num_replicas
+                # / self.num_replicas
             )
             eta = self._get_time_str(eta)
 
             print(
                 f"\r{batch_str} [{progress_bar}] - ETA: {eta} - {metrics_log} - {self._lr_str()}",
-                end=''
+                end="",
             )
             self.last_print_time = current_time
 
     def on_epoch_begin(self, epoch, logs=None):
         self.last_print_time = self.epoch_start_time = time.time()
-        # print(f"Starting epoch {epoch + 1}/{self.params['epochs']}...")
 
     def on_epoch_end(self, epoch, logs=None):
         current_time = time.time()
-        epoch_str = f"{str(epoch).rjust(self._epoch_str_len)}/{self.params['epochs']}"
+        epoch_str = f"{str(epoch + 1).rjust(self._epoch_str_len)}/{self.params['epochs']}"
         elapsed_time = self._get_time_str(current_time - self.epoch_start_time)
         metrics_log = self._get_log_line(logs)
         print(

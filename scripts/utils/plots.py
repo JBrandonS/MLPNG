@@ -84,7 +84,7 @@ def plot_cl_map(map, wcs, lmax, title="Angular power spectrum from map", **kwarg
     plot_cl(cl, lmax, title, **kwargs)
 
 
-def plot_ksw_predictions(truth, preds, fisher=None, save_file=None, title="Predicted vs True Labels"):
+def plot_predictions(truth, preds, fisher=None, scaled_variance=None, save_file=None):
     df = pd.DataFrame(
         {
             "True Labels": np.array(truth).flatten(),
@@ -104,6 +104,16 @@ def plot_ksw_predictions(truth, preds, fisher=None, save_file=None, title="Predi
         std_dev = np.sqrt(1 / fisher)
         plt.plot(line, line + std_dev, color="blue", linestyle="--", label="Fisher")
         plt.plot(line, line - std_dev, color="blue", linestyle="--")
+
+    if scaled_variance is not None:
+        plt.plot(
+            line,
+            line + scaled_variance,
+            color="green",
+            linestyle="--",
+            label=r"Scaled Variance (1/$\sqrt{f_{sky} f}$)",
+        )
+        plt.plot(line, line - scaled_variance, color="green", linestyle="--")
 
     # Line for perfect fit
     r2 = r2_score(df["True Labels"], df["Predicted Labels"])
@@ -129,14 +139,18 @@ def plot_histogram(truth, preds, save_file=None):
     mean_pred = np.mean(preds)
     std_pred = np.std(preds)
     sns.histplot(preds, ax=axs[0], legend=False)
-    axs[0].set_title(f"Predictions - Mean: {mean_pred:.2f}, Standard Deviation: {std_pred:.2f}")
+    axs[0].set_title(
+        f"Predictions - Mean: {mean_pred:.2f}, Standard Deviation: {std_pred:.2f}"
+    )
 
     # Plot the differences on the second subplot
     diff = preds - truth
     mean_diff = np.mean(diff)
     std_diff = np.std(diff)
     sns.histplot(diff, ax=axs[1], legend=False)
-    axs[1].set_title(f"Differences - Mean: {mean_diff:.2f}, Standard Deviation: {std_diff:.2f}")
+    axs[1].set_title(
+        f"Differences - Mean: {mean_diff:.2f}, Standard Deviation: {std_diff:.2f}"
+    )
 
     # Save the plot
     if save_file is not None:
