@@ -11,3 +11,5 @@ settings/runs/
 # compiled files
 *.out
 *.pyc
+*.pdf
+*.html
