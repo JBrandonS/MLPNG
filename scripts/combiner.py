@@ -98,9 +98,7 @@ def combine_data(directory, base_name, ext, remove_files=True):
 
 if __name__ == "__main__":
     # need patchgen to get the filepaths
-    s = Core(patch=True)
+    s = Core()
 
     combine_data(s.alm_dir, s.base_name, ".hdf5")
-
-    if s.patch_dir is not None:
-        combine_data(s.patch_dir, s.patch_str, ".hdf5")
+    combine_data(s.patch_dir, s.patch_str, ".hdf5")

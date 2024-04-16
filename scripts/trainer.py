@@ -184,8 +184,6 @@ if __name__ == "__main__":
     logger.info(f"CUDA version: {tf.sysconfig.get_build_info()['cuda_version']}")
     logger.info(f"cuDNN version: {tf.sysconfig.get_build_info()['cudnn_version']}")
 
-    s = Config()
-
     # since I am changing everything so much just print the code used to create the model
     # log_source(alm_modelV2)
 

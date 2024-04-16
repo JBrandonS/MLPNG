@@ -11,8 +11,9 @@ mpi_comm = MPI.COMM_WORLD
 mpi_rank = mpi_comm.rank
 mpi_root = mpi_rank == 0
 
+import Core
 from utils import setup_logging, remove_mono_dipole
-from utils.plots import plot_cl_alm, plot_ksw_predictions
+from utils.plots import plot_cl_alm, plot_predictions
 
 logger = setup_logging(
     name=f"heidelberg_estimator_{mpi_rank}",
@@ -40,7 +41,7 @@ def alm_loader(str_idx):
     t_scale = 2.7255 * 10 ** (6)
     logger.info("sending fnl: %s", fnl)
 
-    alms = (alm_h_l + fnl * alm_h_nl) * t_scale
+    alms = (alm_heidelberg_l + fnl * alm_heidelberg_nl) * t_scale
     alms = remove_mono_dipole(alms)
 
     beam_ell_2d = np.atleast_2d(s.beam_ell)
@@ -136,7 +137,7 @@ if __name__ == "__main__":
         plot_dir = os.path.join(s.plot_dir, "heidelberg")
         os.makedirs(plot_dir, exist_ok=True)
         pred_file = os.path.join(plot_dir, f"{s.sjob}-{s.base_name}.png")
-        plot_ksw_predictions(fnls[alm_strs], estimates, fisher, save_file=pred_file)
+        plot_predictions(fnls[alm_strs], estimates, fisher, save_file=pred_file)
 
         cl_file = os.path.join(plot_dir, f"{s.sjob}-{s.base_name}_cl.png")
         c_ells = data.cosmology.c_ell["unlensed_scalar"]

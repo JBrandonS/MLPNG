@@ -145,7 +145,7 @@ def get_fs_patch_geo():
 
 
 if __name__ == "__main__":
-    s = Core(patch_generator=True)
+    s = Core()
     if s.is_main_job:
         logger.setLevel(logging.DEBUG)
         logging.getLogger("utils").setLevel(logging.DEBUG)
@@ -238,17 +238,16 @@ if __name__ == "__main__":
         patches[i, pol] = result
 
     # remove the partial file if it exists
-    if os.path.isfile(s.patch_file_partial):
-        logger.info("Removing stale data file: %s", s.patch_file_partial)
-        os.remove(s.patch_file_partial)
+    if os.path.isfile(s.patch_file):
+        logger.info("Removing stale data file: %s", s.patch_file)
+        os.remove(s.patch_file)
 
     # Save data
     os.makedirs(s.patch_dir, exist_ok=True)
     sdata = {}
     sdata["fnl"] = fnls
     sdata["patch"] = patches
-    save_data(s.patch_file_partial, sdata)
-    os.replace(s.patch_file_partial, s.patch_file)
+    save_data(s.patch_file, sdata)
 
     if s.is_main_job:
         plot_dir = os.path.join(s.plot_dir, "patchgen")

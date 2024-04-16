@@ -1,27 +1,23 @@
-import json
-import os
 import argparse
-
-import healpy as hp
-import numpy as np
-from astropy import units as u
+import json
+import logging
+import os
+from itertools import product
 from typing import Any
 
 import camb
+import healpy as hp
+import numpy as np
+from astropy import units as u
 from ksw import KSW, Cosmology, Data, Shape
-
-import matplotlib.pyplot as plt
-from itertools import product
-
-from utils import remove_mono_dipole
-import logging
+from numpy.typing import NDArray
 
 logger = logging.getLogger(__name__)
 
 
 class Core:
     @staticmethod
-    def parse_args(args):
+    def parse_args(args=None):
         parser = argparse.ArgumentParser()
 
         parser.add_argument("settings_file")
@@ -46,7 +42,7 @@ class Core:
         # only really useful for debugging, must be provided by the CLI and not in the settings file
         parser.add_argument("--save_settings", action="store_true")
 
-        logger.debug(f"parsing cli args: {args}")
+        logger.debug(f"Parsing CLI args: {args}")
         return parser.parse_args(args)
 
     @staticmethod
@@ -59,13 +55,7 @@ class Core:
             "lmax": 500,
         }
 
-    def __init__(
-        self,
-        argv=None,
-        alm=False,
-        patch=False,
-        estimator=False,
-    ):
+    def __init__(self, argv=None):
         args = Core.parse_args(argv)
 
         ## We start by loading in the settings from the provided file
@@ -114,7 +104,8 @@ class Core:
         self.lensing = self._get("lensing", False)
         self.npol = len(self.pols)
 
-        # we setup a RNG here to help with reproducibility, not tested def needs more implementation
+        # we setup a RNG here to help with reproducibility, not tested def
+        # TODO: needs more implementation, and testing of reproducibility
         self.seed = self._get("seed", np.random.default_rng().integers(0, 2**32 - 1))
         self.rng = np.random.default_rng(self.seed)
         logger.debug(f"Using seed {self.seed}")
@@ -139,7 +130,7 @@ class Core:
         self.ells = np.arange(self.nell)
 
         # setup our prevision types to be consistent
-        # TODO: More double testing
+        # TODO: More testing
         if self._get("double_precision", False):
             self.r_dtype = np.float64
             self.c_dtype = np.complex128
@@ -148,36 +139,29 @@ class Core:
             self.r_dtype = np.float32
             self.c_dtype = np.complex64
             self.precision = "single"
+        logger.debug(f"Using {self.precision} precision, where possible")
 
-        # setup various things that I split off for readability
+        # setup various complex things that I split off for readability
         self._setup_noise_beam()
         self._setup_radii()
+
+        # setup the rest of the run, split for readability
         self._init_slurm()
         self._init_paths()
-
-        # setup sim specific data
         self._init_cosmo_data()
-        self._init_almgen(alm)
-        self._init_patchgen(patch)
-        self._init_ksw(estimator)
+        self._init_almgen()
+        self._init_patchgen()
+        self._init_ksw()
 
         # save a copy of the settings file iff --save_settings is set
         if args.save_settings:
-            dir = os.path.join("settings", "runs")
-            file = os.path.join(dir, f"{self.sjob}_{self.base_name}.json")
-            os.makedirs(dir, exist_ok=True)
-            if not os.path.exists(file):
-                logger.info(f"Saving run settings to file: {file}")
-                with open(file, "w") as f:
-                    json.dump(self.settings, f, indent=2)
-            else:
-                logger.warning(f"Settings file already exists: {file}, not overwriting")
+            self._save_settings()
 
         logger.debug("Core Object:\n %s", vars(self))
 
     def _get(self, name, default: Any = None):
         """
-        Retrieves the value of a setting from the instance's settings.
+        Retrieves the value of a setting from the instance's settings but, with debug info.
 
         Args:
             name (str): The name of the setting.
@@ -200,20 +184,8 @@ class Core:
     def _init_slurm(self):
         """
         Sets up the SLURM job information for the instance.
-
-        The method retrieves the SLURM job ID from the environment and logs it. It then retrieves the number of tasks in
-        the SLURM job array from the environment. If the number of tasks is not None, it checks if it matches the instance's
-        narray attribute and raises a ValueError if it doesn't. It then retrieves the SLURM array task ID and the SLURM
-        array job ID from the environment, logs them, and sets the instance's job_array_index attribute to the task ID.
-        If the task ID is 1, it sets the instance's is_main_job attribute to True, otherwise it sets it to False. If the
-        number of tasks is None, it sets the instance's job_array_index attribute to None and its is_main_job attribute to True.
-
-        Side Effects:
-            Modifies the instance's sjob, job_array_index, and is_main_job attributes.
-            May log information about the SLURM job and array.
-            May raise a ValueError if the number of tasks in the SLURM job array does not match the instance's narray attribute.
         """
-        self.sjob = os.getenv("SLURM_JOB_ID", "0")
+        self.sjob = os.getenv("SLURM_JOB_ID", "-1")
         logger.info(f"SLURM job id: {self.sjob}")
 
         job_tasks = os.getenv("SLURM_ARRAY_TASK_COUNT")
@@ -225,16 +197,13 @@ class Core:
                 )
 
             self.job_array_index = int(os.getenv("SLURM_ARRAY_TASK_ID", "-1"))
-            self.ja_str = f"_{self.job_array_index}"
-            jobid = int(os.getenv("SLURM_ARRAY_JOB_ID", "-1"))
             logger.info(
-                f"SLURM array id: {jobid}, index: {self.job_array_index} / {job_tasks}"
+                f"SLURM array id: {os.getenv('SLURM_ARRAY_JOB_ID')}, index: {self.job_array_index} / {job_tasks}"
             )
 
             self.is_main_job = self.job_array_index == 1
         else:
             self.job_array_index = None
-            self.ja_str = ""
             self.is_main_job = True
 
     def _init_paths(self):
@@ -245,29 +214,99 @@ class Core:
             Modifies the instance's base_dir, alm_dir, plot_dir, tb_dir, model_dir, patch_dir, base_name, patch_str,
             patch_file_partial, patch_file, alm_file_partial, and alm_file attributes.
         """
-        self.base_dir = str(self._get("base_dir", "data"))
+        l = "l" if self.lensing else "ul"
+        nn = "-nn" if not self.noise else ""
+        j = "" if self.job_array_index is None else f"_{self.job_array_index}"
+        pol = "".join(self.pols)
+
+        self.base_dir = self._get("base_dir", "data")
+        self.base_name = self._get(
+            "base_name",
+            f"l{self.lmax}_n{self.nside}_{l}{nn}_{pol}_{self.total_sims}",
+        )
 
         join_paths = lambda *args: os.path.join(self.base_dir, *args)
-        self.alm_dir = join_paths(self._get("alm_dir", "alms"))
         self.plot_dir = join_paths(self._get("plot_dir", "plots"))
         self.tb_dir = join_paths(self._get("tb_dir", "tensorboard"))
         self.model_dir = join_paths(self._get("model_dir", "models"))
+        self.alm_dir = join_paths(self._get("alm_dir", "alms"))
+        self.patch_dir = join_paths(self._get("patch_dir", "patches"))
 
-        # add info to the strings
-        l_str = "l" if self.lensing else "ul"
-        nn_str = "-nn" if not self.noise else ""
-
-        # set up the file names
-        pol_str = "".join(self.pols)
-        self.base_name = self._get(
-            "base_name",
-            f"l{self.lmax}_n{self.nside}_{l_str}{nn_str}_{pol_str}_{self.total_sims}",
-        )
-
-        self.alm_file_partial = os.path.join(
-            self.alm_dir, f"{self.base_name}{self.ja_str}.hdf5"
-        )
+        self.alm_file_partial = os.path.join(self.alm_dir, f"{self.base_name}{j}.hdf5")
         self.alm_file = os.path.join(self.alm_dir, f"{self.base_name}.hdf5")
+
+        self.patch_str = f"{self.base_name}x{self.npatches}"
+        self.patch_file = os.path.join(self.patch_dir, f"{self.patch_str}{j}.hdf5")
+
+    def _init_cosmo_data(self):
+        camb_params_obj = camb.set_params(**self.cosmo_params)
+        cosmo: Cosmology = Cosmology(camb_params_obj)
+        cosmo.compute_transfer(self.cosmo_params["max_l"])
+        cosmo.compute_c_ell()
+
+        # We only should need the shape information for the estimator, but we can add it here
+        loc_shape = Shape.prim_local(
+            self.cosmo_params["ns"], self.cosmo_params["pivot_scalar"]
+        )
+        cosmo.add_prim_reduced_bispectrum(loc_shape, self.radii)
+
+        self.cosmo = cosmo
+        self.data = Data(self.lmax, self.noise_ell, self.beam_ell, self.pols, cosmo)
+        self.c_ells = cosmo.c_ell[f"{'' if self.lensing else 'un'}lensed_scalar"]  # type: ignore
+
+    def _init_almgen(self):
+        tr_ells = self.cosmo.transfer["ells"]
+        mask = tr_ells <= self.lmax
+
+        self.alm_shape = (self.nsims, self.npol, self.nelem)
+        self.force_alm_gen = self._get("force_alm_gen", False)
+        self.tr_ell_k = self.cosmo.transfer["tr_ell_k"][mask]
+        self.tr_ells = tr_ells[mask]
+        self.tr_k = self.cosmo.transfer["k"]
+
+    def _init_patchgen(self):
+        self.patch_side_deg = self._get("patch_side_deg", 10)
+        self.npatches = self._get("npatches", 10)
+        self.total_patches = self.npatches * self.total_sims
+        self.patch_shape = (
+            self.nsims,
+            self.npol,
+            self.npatches,
+            self.nside,
+            self.nside,
+        )
+
+    def _init_ksw(self):
+        """
+        Sets up the KSW estimator for the instance by setting the icov attribute and create a KSW object.
+
+        Side Effects:
+            Modifies the instance's icov and ksw attributes.
+        """
+        if self.lensing:
+            self.icov = self.data.icov_diag_lensed
+        else:
+            self.icov = self.data.icov_diag_nonlensed
+
+        self.ksw = KSW(
+            self.cosmo.red_bispectra,
+            self.icov,
+            self.conv_beam,
+            self.lmax,
+            self.pols,
+            self.precision,
+        )
+
+    def _save_settings(self):
+        dir = os.path.join("settings", "runs")
+        file = os.path.join(dir, f"{self.sjob}_{self.base_name}.json")
+        os.makedirs(dir, exist_ok=True)
+        if not os.path.exists(file):
+            logger.info(f"Saving run settings to file: {file}")
+            with open(file, "w") as f:
+                json.dump(self.settings, f, indent=2)
+        else:
+            logger.warning(f"Settings file already exists: {file}, not overwriting")
 
     def _noise_ell(self, scale=1.0):
         """
@@ -280,7 +319,10 @@ class Core:
             numpy.ndarray: The scaled noise power spectrum.
         """
         noise_map = np.random.normal(0, 1, hp.nside2npix(self.nside))
-        noise = hp.anafast(noise_map, lmax=self.lmax, use_pixel_weights=True)
+        # returns noise in order [T, E, B, TE, ...]
+        # TODO: pol support
+        noise: NDArray = hp.anafast(noise_map, lmax=self.lmax, pol=True, use_pixel_weights=True)  # type: ignore
+        logger.debug("Noise shape: %s", noise.shape)
         return noise * scale**2
 
     def _beam(self, width, lmax, pol):
@@ -297,10 +339,10 @@ class Core:
             pol (bool): Whether to compute the full beam (including polarization) or just the temperature part.
 
         Returns:
-            ndarray: The computed beam. If `pol` is True, the first dimension is polarization; otherwise, the array
-            represents the temperature part of the beam.
+            ndarray: The computed beam. If `pol` is True, the first dimension is polarization in order of [T, E, B, TE]; otherwise, just returns [T].
         """
         beam = hp.gauss_beam(width, lmax=lmax, pol=pol)
+        logger.debug("Beam shape: %s", beam.shape)
 
         if pol:
             return np.swapaxes(beam, 0, 1)
@@ -327,6 +369,7 @@ class Core:
 
             def __beam(alm):
                 for i in range(self.npol):
+                    # TODO: Pol, check alignment between alm pol and beam pol
                     alm[i] = hp.almxfl(alm[i], beam[i])
 
         return __beam
@@ -360,6 +403,8 @@ class Core:
 
         self.noise_ell = []
         self.beam_ell = []
+        # NOTE: We make the decision here that beam and nosie are in order [TT, EE, TE]
+        # watch this in the code
         if "T" in self.pols:
             self.beam_ell.append(beam[0])
             self.noise_ell.append(self._noise_ell(self.noise_scale_tt))
@@ -415,98 +460,3 @@ class Core:
 
         self.radii = np.array([r for r in radii if r_min <= r < r_max])
         self.drs = np.diff(radii) / 2.0
-
-    def _init_cosmo_data(self):
-        """
-        Sets up the base cosmological parameters and data for the instance, used for all sim types
-
-        Side Effects:
-            Modifies the instance's cosmo, data, and c_ells attributes.
-        """
-        camb_params_obj = camb.set_params(**self.cosmo_params)
-        cosmo = Cosmology(camb_params_obj)
-        cosmo.compute_transfer(self.cosmo_params["max_l"])
-        cosmo.compute_c_ell()
-
-        # We only should need the shape infomation for the estimator, but we can add it here
-        loc_shape = Shape.prim_local(
-            self.cosmo_params["ns"], self.cosmo_params["pivot_scalar"]
-        )
-        cosmo.add_prim_reduced_bispectrum(loc_shape, self.radii)
-
-        self.cosmo = cosmo
-        self.data = Data(
-            self.lmax, self.noise_ell, self.beam_ell, self.pols, self.cosmo
-        )
-        self.c_ells = self.cosmo.c_ell[f"{'' if self.lensing else 'un'}lensed_scalar"]
-
-    def _init_almgen(self, setup):
-        self.alm_shape = (self.nsims, self.npol, self.nelem)
-
-        if not setup:
-            self.force_alm_gen = None
-            self.tr_ell_k = None
-            self.tr_ells = None
-            self.tr_k = None
-            return
-
-        tr_ells = self.cosmo.transfer["ells"]
-        mask = tr_ells <= self.lmax
-
-        self.force_alm_gen = self._get("force_alm_gen", False)
-        self.tr_ell_k = self.cosmo.transfer["tr_ell_k"][mask]
-        self.tr_ells = tr_ells[mask]
-        self.tr_k = self.cosmo.transfer["k"]
-
-    def _init_patchgen(self, setup):
-        if not setup:
-            self.patch_dir = None
-            self.patch_side_deg = None
-            self.npatches: Any = None
-            self.total_patches = None
-            self.patch_str = self.patch_file_partial = self.patch_file = None
-            return
-
-        self.patch_side_deg = self._get("patch_side_deg", 10)
-        self.npatches = int(self._get("npatches", 10))
-        self.total_patches = self.npatches * self.total_sims
-
-        self.patch_dir = os.path.join(self.base_dir, self._get("patch_dir", "patches"))
-        self.patch_str = f"{self.base_name}x{self.npatches}"
-        self.patch_file_partial = os.path.join(
-            self.patch_dir, f"{self.patch_str}{self.ja_str}.hdf5"
-        )
-        self.patch_file = os.path.join(self.patch_dir, f"{self.patch_str}.hdf5")
-        self.patch_shape = (
-            self.nsims,
-            self.npol,
-            self.npatches,
-            self.nside,
-            self.nside,
-        )
-
-    def _init_ksw(self, setup):
-        """
-        Sets up the KSW estimator for the instance by setting the icov attribute and create a KSW object.
-
-        Side Effects:
-            Modifies the instance's icov and ksw attributes.
-        """
-        if not setup:
-            self.icov = None
-            self.ksw = None
-            return
-
-        if self.lensing:
-            self.icov = self.data.icov_diag_lensed
-        else:
-            self.icov = self.data.icov_diag_nonlensed
-
-        self.ksw = KSW(
-            self.cosmo.red_bispectra,
-            self.icov,
-            self.conv_beam,
-            self.lmax,
-            self.pols,
-            self.precision,
-        )

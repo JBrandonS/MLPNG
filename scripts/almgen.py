@@ -98,7 +98,7 @@ if __name__ == "__main__":
     $B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}$
     where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
     """
-    s = Core(alm=True)
+    s = Core()
 
     if s.is_main_job:
         logger.setLevel(logging.DEBUG)

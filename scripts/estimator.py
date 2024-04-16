@@ -9,7 +9,7 @@ from ksw import KSW, Cosmology, Data, Shape
 from mpi4py import MPI
 import Core
 from utils import save_data, setup_logging
-from utils.plots import plot_histogram, plot_ksw_predictions
+from utils.plots import plot_histogram, plot_predictions
 
 mpi_comm = MPI.COMM_WORLD
 mpi_rank = mpi_comm.Get_rank()
@@ -19,7 +19,7 @@ mpi_root = mpi_rank == 0
 logger = setup_logging(name=f"{__name__}_{mpi_rank}")
 if mpi_root:
     logging.getLogger("Core").setLevel(logging.DEBUG)
-    logging.getLogger("utils.utils").setLevel(logging.DEBUG)
+    logging.getLogger("utils").setLevel(logging.DEBUG)
 
 logging.getLogger("healpy").setLevel(logging.ERROR)
 logging.getLogger("astropy").setLevel(logging.ERROR)
@@ -76,7 +76,7 @@ def alm_step_loader(idx):
 
 
 if __name__ == "__main__":
-    s = Core(estimator=True)
+    s = Core()
 
     # there is a major bug in the KSW code that requires the total_sims to be >= mpi_size
     assert s.total_sims >= mpi_size, "total_sims < mpi_size, lower ntasks"

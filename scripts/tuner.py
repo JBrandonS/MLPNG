@@ -23,7 +23,8 @@ from tensorflow.keras import Input
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.optimizers import Adam
 from trainer import alm_model
-from .utils import Config, log_source, setup_logging
+import Core
+from .utils import log_source, setup_logging
 from .utils.tf.callbacks import WarmupLearningRate
 from .utils.tf.dataloaders import *
 
@@ -80,7 +81,7 @@ def model_builder(hp):
 
 
 if __name__ == "__main__":
-    s = Config()
+    s = Core()
 
     data_loader = AlmLoaderV2(s.alm_file, shuffle=True, batch_size=1, cache=True)
     train, test, val = data_loader.get_split(0.8, 0.1, 0.1)
