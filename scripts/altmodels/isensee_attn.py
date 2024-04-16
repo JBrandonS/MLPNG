@@ -54,9 +54,8 @@ from utils.tf.plots import (
     plot_histogram,
 )
 
+import Core
 from utils.tf.dataloaders import PatchLoader, TFDSLoader
-from utils import Config
-
 
 def isensee_attn(
     inputs,
@@ -186,7 +185,7 @@ def isensee_attn(
 
 
 if __name__ == "__main__":
-    s = Config(sys.argv[1:])
+    s = Core(sys.argv[1:])
 
     MAX_EPOCHS = 30
 

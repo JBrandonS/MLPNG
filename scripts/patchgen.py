@@ -14,26 +14,28 @@ from numpy.random import randint, uniform
 from pixell import curvedsky, enmap, reproject
 from tqdm.auto import tqdm
 
-from utils import Config, load_data, save_data, setup_logging
-from utils.plots import plot_cl_map, plot_patches
+import Core
+from utils import load_data, save_data, setup_logging
+from utils.plots import plot_cl_map, plot_patches, plot_cl
 
 logger = setup_logging(__name__)
 
 
 def cutSqPatches_lenspyx(
     lmax,
-    max_l,
     plot_dir,
     base_name,
-    r_dtype,
     npatches,
-    nside,
+    c_ells,
     fs_shape,
     fs_wcs,
     fs_map,
     pshapes,
     pwcs,
+    max_l,
     cl_phi,
+    nside,
+    r_dtype,
     alm,
     fnl,
     plot=False,
@@ -58,19 +60,23 @@ def cutSqPatches_lenspyx(
     )
     pixell_map = reproject.healpix2map(lens_map, fs_shape, fs_wcs, lmax)
 
-    if plot:
-        map2hp = reproject.map2healpix(pixell_map, lmax)
-        hp.mollview(map2hp, min=-650.0, max=650, title=f"fnl = {fnl}")
-
-        plot_dir = os.path.join(plot_dir, "patchgen")
-        os.makedirs(plot_dir, exist_ok=True)
-        moll_path = os.path.join(plot_dir, f"{base_name}_{fnl}_fullsky.png")
-        plt.savefig(moll_path)
-
     patches = []
     for i in range(npatches):
         patch = pixell_map.project(pshapes[i], pwcs[i])
         patches.append(patch)
+
+    if plot:
+        plot_dir = os.path.join(plot_dir, "patchgen")
+        os.makedirs(plot_dir, exist_ok=True)
+        moll_path = os.path.join(plot_dir, f"{base_name}_{fnl}_fullsky.png")
+        map2hp = reproject.map2healpix(pixell_map, lmax)
+        hp.mollview(map2hp, min=-650.0, max=650, title=f"fnl = {fnl}")
+        plt.savefig(moll_path)
+        plt.close()
+
+        map_path = os.path.join(plot_dir, f"{base_name}_{fnl}_pixell_cl_map.png")
+        cls = hp.anafast(map2hp, lmax=lmax)
+        plot_cl(cls, lmax, plot_camb=True, c_ells=c_ells, save_file=map_path)
 
     return patches
 
@@ -94,37 +100,37 @@ def cutSqPatches_pixell(
     fs_map = enmap.empty(fs_shape, fs_wcs)
     car_map = curvedsky.alm2map(alms, fs_map)
 
-    if plot:
-        map2hp = reproject.map2healpix(car_map, lmax)
-        hp.mollview(map2hp, min=-650.0, max=650, title=f"fnl = {fnl}")
-
-        plot_dir = os.path.join(plot_dir, "patchgen")
-        os.makedirs(plot_dir, exist_ok=True)
-        moll_path = os.path.join(plot_dir, f"{base_name}_{fnl}_fullsky.png")
-        plt.savefig(moll_path)
-
-        map_path = os.path.join(plot_dir, f"{base_name}_{fnl}_pixell_cl_map.png")
-        plot_cl_map(car_map, fs_wcs, lmax, plot_camb=True, c_ells=c_ells, save_file=map_path)
-
     patches = []
     for i in range(npatches):
         patch = car_map.project(pshapes[i], pwcs[i])  # type: ignore
         patches.append(patch)
+
+    if plot:
+        plot_dir = os.path.join(plot_dir, "patchgen")
+        os.makedirs(plot_dir, exist_ok=True)
+        map2hp = reproject.map2healpix(car_map, lmax)
+        hp.mollview(map2hp, min=-650.0, max=650, title=f"fnl = {fnl}")
+        plt.savefig(os.path.join(plot_dir, f"{base_name}_{fnl}_fullsky.png"))
+        plt.close()
+
+        map_path = os.path.join(plot_dir, f"{base_name}_{fnl}_pixell_cl_map.png")
+        plot_cl_map(
+            car_map, fs_wcs, lmax, plot_camb=True, c_ells=c_ells, save_file=map_path
+        )
 
     return patches
 
 
 def get_fs_patch_geo():
     """Generates the patch geometry using pixell"""
+    ps_rad = np.deg2rad(s.patch_side_deg)
     res = np.deg2rad(s.patch_side_deg / s.nside)
     fs_shape, fs_wcs = enmap.fullsky_geometry(res, proj="car")
     fs_map = enmap.empty(fs_shape, fs_wcs)
 
-    ps_rad = np.deg2rad(s.patch_side_deg)
-
     patch_shapes = []
     patch_wcss = []
-    for counter in np.arange(s.npatches // 2):
+    for counter in range(s.npatches // 2):
         # [[dec_min,ra_min],[dec_max,ra_max]]
         top = [[0, ps_rad * counter], [ps_rad, ps_rad * (counter + 1)]]
         gs, w = enmap.geometry(pos=top, res=res, proj="car")
@@ -139,19 +145,10 @@ def get_fs_patch_geo():
 
 
 if __name__ == "__main__":
-    # This code primarily generates non-gaussian cmb maps. These get stored in a data file with the fnls, and patches.
-    # The full-sky maps are generated using the method discussed in [CMB lensing and primordial non-gaussianity](https://arxiv.org/abs/0905.4732), where we find (eq. 6)
-    # $$a_{\ell m} = a_{\ell m}^{{G}} + f_{NL}^X a_{\ell m}^{NG}$$
-    # and generated the full sky map from the $a_{\ell m}$.
-    # Most of this code is to calculate the term (eq. 27)
-    # $$a_{\ell m}^{NG,loc'} = \int dr r^2 \left[ \alpha_\ell(r)\left(\int d^2 \hat{n} Y_{\ell m}^\star (\hat{n}) B(r,\hat{n})^2 \right)\right]$$
-    # and
-    # $$\alpha_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^2 \Delta_\ell^T(k) j_\ell(k r)$$
-    # $$\beta_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^{-1} \Delta_\phi \Delta_\ell^T(k) j_\ell(k r)$$
-    # $$B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}$$
-    # where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
-
-    s = Config()
+    s = Core(patch_generator=True)
+    if s.is_main_job:
+        logger.setLevel(logging.DEBUG)
+        logging.getLogger("utils").setLevel(logging.DEBUG)
 
     # Load in the alm data, do this first to crash fast if data is not found
     if os.path.isfile(s.alm_file):
@@ -181,27 +178,6 @@ if __name__ == "__main__":
     alms = ldata["alm"]
     fnls = ldata["fnl"]
 
-    # here we setup camb since it is needed for the sims in the patch generation
-    camb_params_obj = camb.set_params(**s.cosmo_params)
-    cosmo = Cosmology(camb_params_obj)
-    cosmo.compute_transfer(s.cosmo_params["max_l"])
-    cosmo.compute_c_ell()
-
-    # get our ksw object
-    ksw_data = Data(s.lmax, s.noise_ell, s.beam_ell, s.pols, cosmo)
-
-    # Get the transfer data from ksw
-    c_ells = ksw_data.cosmology.c_ell["unlensed_scalar"]  # type: ignore
-    tr_ell_k = ksw_data.cosmology.transfer["tr_ell_k"]
-    tr_ells = ksw_data.cosmology.transfer["ells"]
-    tr_k = ksw_data.cosmology.transfer["k"]
-
-    # CAMB will use max_l to generate the transfer functions, this is more than we need
-    # so we need to mask the transfer functions to the lmax we are using
-    mask = tr_ells <= s.lmax
-    tr_ell_k = tr_ell_k[mask]
-    tr_ells = tr_ells[mask]
-
     # Here we get the geometry of our patches in a tuple
     patch_geo = get_fs_patch_geo()
 
@@ -209,37 +185,29 @@ if __name__ == "__main__":
     # depending on if we are doing lensing or not, and provide a lot of
     # arguments that are needed and will stay constant
     # we cannot abuse the python scope here since these will need to be pickled
+    common_settings = [
+        s.lmax,
+        s.plot_dir,
+        s.base_name,
+        s.npatches,
+        s.c_ells,
+        *patch_geo,
+    ]
     if s.lensing:
-        cl_phi = ksw_data.cosmology._camb_data.get_lens_potential_cls(
-            s.cosmo_params["max_l"], CMB_unit="muK", raw_cl=True
+        max_l = s.cosmo_params["max_l"]
+        cl_phi = s.data.cosmology._camb_data.get_lens_potential_cls(
+            max_l, CMB_unit="muK", raw_cl=True
         )[:, 0]
 
         cutPatches = partial(
-            cutSqPatches_lenspyx,
-            s.lmax,
-            s.cosmo_params["max_l"],
-            s.plot_dir,
-            s.base_name,
-            s.r_dtype,
-            s.npatches,
-            s.nside,
-            *patch_geo,
-            cl_phi,
+            cutSqPatches_lenspyx, *common_settings, max_l, cl_phi, s.nside, s.r_dtype
         )
     else:
-        cutPatches = partial(
-            cutSqPatches_pixell,
-            s.lmax,
-            s.plot_dir,
-            s.base_name,
-            s.npatches,
-            c_ells,
-            *patch_geo,
-        )
+        cutPatches = partial(cutSqPatches_pixell, *common_settings)
 
     ## Start the patch generation
     # create the array to store the patches
-    patches = np.empty((s.nsims, s.npol, s.npatches, s.nside, s.nside), dtype=s.r_dtype)
+    patches = np.empty(s.patch_shape, dtype=s.r_dtype)
 
     # We setup an array with all our possible arguments to pass to the function
     # if we are using a completed alm file, we offset our sim index by the start index
@@ -258,15 +226,15 @@ if __name__ == "__main__":
         return_as="generator",
         temp_folder=temp_folder,
     )(
-        delayed(lambda i, pol: np.array(cutPatches(alms[i, pol], fnls[i, pol])))(*arg)
-        for arg in args
+        delayed(cutPatches)(alms[i, j], fnls[i, j], s.is_main_job and i == 0)
+        for i, j in s.sim_pol
     )
 
     # Get our data from the generator, only update logging every 100 runs, takes a long time
     for idx, result in enumerate(
-        tqdm(patch_generator, desc="patch progress", total=len(args))
+        tqdm(patch_generator, desc="patch progress", total=s.sim_pol_len)
     ):
-        i, pol = args[idx]
+        i, pol = s.sim_pol[idx]
         patches[i, pol] = result
 
     # remove the partial file if it exists
@@ -275,19 +243,18 @@ if __name__ == "__main__":
         os.remove(s.patch_file_partial)
 
     # Save data
+    os.makedirs(s.patch_dir, exist_ok=True)
     sdata = {}
     sdata["fnl"] = fnls
-    sdata["patch"] = np.array(patches)
-    # if s.is_main_job:
-        # sdata["settings"] = s.settings
-    
-    os.makedirs(s.patch_dir, exist_ok=True)
+    sdata["patch"] = patches
     save_data(s.patch_file_partial, sdata)
     os.replace(s.patch_file_partial, s.patch_file)
-    logger.info("Done with Generation!")
 
-    # if s.is_main_job:
-    #     plot_dir = os.path.join(s.plot_dir, "patchgen")
-    #     os.makedirs(plot_dir, exist_ok=True)
-    #     plot_file = os.path.join(plot_dir, f"{s.base_name}_patches.png")
-    #     plot_patches(patches, 10, save_file=plot_file)
+    if s.is_main_job:
+        plot_dir = os.path.join(s.plot_dir, "patchgen")
+        os.makedirs(plot_dir, exist_ok=True)
+        plot_file = os.path.join(plot_dir, f"{s.base_name}_patches.png")
+        i, j = s.rng.integers(s.nsims), s.rng.integers(s.npol)
+        plot_patches(patches[i, j], 10, save_file=plot_file)
+
+    logger.info("Done with Generation!")

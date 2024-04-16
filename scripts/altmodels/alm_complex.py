@@ -30,7 +30,7 @@ from tensorflow.keras.optimizers.legacy import Adam
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.regularizers import l2
 
-from utils import Config
+import Core
 from utils.tf.losses import dice_coefficient_loss
 from utils.tf.callbacks import TimedLoggingCallback
 from utils.tf.plots import plot_histogram, plot_metrics, plot_predictions
@@ -105,7 +105,7 @@ def alm_model(
 
 
 if __name__ == "__main__":
-    s = Config(sys.argv[1:])
+    s = Core(sys.argv[1:])
 
     MAX_EPOCHS = 300
     BATCH_SIZE = 32

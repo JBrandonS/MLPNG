@@ -11,7 +11,7 @@ mpi_comm = MPI.COMM_WORLD
 mpi_rank = mpi_comm.rank
 mpi_root = mpi_rank == 0
 
-from utils import Config, setup_logging
+from utils import setup_logging, remove_mono_dipole
 from utils.plots import plot_cl_alm, plot_ksw_predictions
 
 logger = setup_logging(
@@ -63,17 +63,6 @@ def alm_step_loader2(str_idx):
     return alm_h_l * t_scale
 
 
-def remove_mono_dipole(alm):
-    """
-    Remove the monopole and dipole terms from the alms.
-    """
-    lmax = hp.Alm.getlmax(len(alm))
-    alm[hp.Alm.getidx(lmax, 0, 0)] = 0.0  # Remove monopole
-    alm[hp.Alm.getidx(lmax, 1, 0)] = 0.0  # Remove dipole
-    alm[hp.Alm.getidx(lmax, 1, 1)] = 0.0  # Remove dipole
-    return alm
-
-
 def compute_icov_ell(N, b):
     S_ell = cosmo._camb_data.get_cmb_power_spectra(
         cosmo.camb_params,
@@ -97,7 +86,7 @@ if __name__ == "__main__":
     """
     import sys
     args = sys.argv[1:]
-    s = Config(["settings/heidelberg.json"] + args)
+    s = Core(["settings/heidelberg.json"] + args)
 
     logger.info("Running camb")
     camb_params_obj = camb.set_params(**s.cosmo_params)
@@ -155,10 +144,7 @@ if __name__ == "__main__":
             alm_loader("1"),
             save_file=cl_file,
             plot_camb=True,
-            c_ells=c_ells,
-            plot_camb_noise=True,
-            noise=s.noise_scale_tt,
-            beam=s.beam_width,
+            c_ells=c_ells
         )
 
     logger.info("Finished %s!", mpi_rank)

@@ -28,7 +28,8 @@ from tensorflow.keras.layers import (
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.initializers import TruncatedNormal
 
-from utils import Config, setup_logging, log_source
+import Core
+from utils import setup_logging, log_source
 from utils.tf.dataloaders import *
 from utils.tf.plots import plot_histogram, plot_metrics, plot_predictions
 from utils.tf.callbacks import TimedLoggingCallback, WarmupLearningRate
@@ -79,7 +80,7 @@ def alm_model(
 if __name__ == "__main__":
     logger = setup_logging("trainer")
 
-    s = Config()
+    s = Core()
 
     # print out the versions of the libraries
     logger.info(f"TensorFlow version: {tf.__version__}")

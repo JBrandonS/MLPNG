@@ -50,7 +50,8 @@ from tensorflow.keras.optimizers import SGD, Adam
 from tensorflow.keras.optimizers.legacy import Adam
 from tensorflow.keras.optimizers.schedules import ExponentialDecay, LearningRateSchedule
 from tensorflow.keras.regularizers import l2
-from utils import Config, get_fisher
+import Core
+from utils import get_fisher
 from utils.tf import dice_coefficient_loss
 from utils.tf.callbacks import TimedLoggingCallback
 from utils.tf.layers import (
@@ -142,7 +143,7 @@ def resnet_model(
 if __name__ == "__main__":
     # Get the config file from the command line
     # you can manually set it here if you want
-    s = Config(sys.argv[1:])
+    s = Core(sys.argv[1:])
 
     MAX_EPOCHS = 300
 
