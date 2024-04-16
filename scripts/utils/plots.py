@@ -2,42 +2,39 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
+from pixell import enmap, curvedsky
 
 from sklearn.metrics import r2_score
 import healpy as hp
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 def plot_patches(patches, n_plots, title="Patches", save_file=None):
-    idxs = np.random.choice(patches.shape[0], n_plots, replace=False)
-
     nrows = int(np.ceil(n_plots / 4))
     ncols = min(n_plots, 4)
-    fig, axes = plt.subplots(nrows, n_plots, figsize=(20, 20))
+    idxs = range(min(patches.shape[0], n_plots, nrows*ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(20, 20))
+    axes = axes.flatten()  # Flatten the axes array for easier indexing
 
     for idx, patch in enumerate(patches[idxs]):
-        row = idx // n_plots
-        col = idx % n_plots
-        if nrows == 1:
-            if n_plots == 1:
-                ax = axes
-            else:
-                ax = axes[col]
-        else:
-            ax = axes[row, col]
+        ax = axes[idx]
         ax.imshow(patch)
         ax.axis("off")
 
-    # Remove empty subplots
-    for idx in range(0, nrows * ncols):
-        fig.delaxes(axes.flatten()[idx])
+    for idx in range(n_plots, nrows * ncols):
+        fig.delaxes(axes[idx])
 
-    plt.title(title)
+    plt.suptitle(title)
+    plt.subplots_adjust(wspace=0, hspace=0)
     plt.tight_layout()
-    plt.show()
 
     if save_file is not None:
         plt.savefig(save_file)
         plt.close()
+    else:
+        plt.show()
 
 
 def plot_cl(
@@ -47,14 +44,10 @@ def plot_cl(
     save_file=None,
     plot_func=plt.semilogy,
     plot_camb=False,
-    c_ells=None,
-    plot_camb_noise=False,
-    noise=None,
-    beam=None,
+    c_ells=None
 ):
     ells = np.arange(2, lmax)
     scale = ells * (ells + 1) / 2 / np.pi
-
     plot_func(ells, scale * cl[2:lmax], label="data")
 
     if plot_camb:
@@ -62,18 +55,6 @@ def plot_cl(
             raise ValueError("Need to provide c_ells if plt_camb is True.")
 
         camb_cl = c_ells["c_ell"][2:lmax][:, 0]
-
-        if plot_camb_noise:
-            if noise is None or beam is None:
-                raise ValueError("Need to provide noise and beam")
-
-            def noise_func(noise, l):
-                return noise**2 * np.exp((l * (l + 1) * beam**2) / (8 * np.log(2)))
-            noise_ell_b = np.array([noise_func(noise, l) for l in range(2, lmax)])
-
-            camb_n_inner_plt = scale * (camb_cl + noise_ell_b)
-            plot_func(ells, camb_n_inner_plt, label="camb + noise")
-
         camb_inner_plt = scale * camb_cl
         plot_func(ells, camb_inner_plt, label="camb")
 
@@ -86,23 +67,20 @@ def plot_cl(
     if save_file is not None:
         plt.savefig(save_file)
         plt.close()
+    else:
+        plt.show()
 
 
-def plot_cl_alm(alm, title="Angular power spectrum from alm", **kwargs):
-    from pixell import curvedsky
-
+def plot_cl_alm(alm, lmax=None, title="Angular power spectrum from alm", **kwargs):
     cl = curvedsky.alm2cl(alm)
-    lmax = hp.Alm.getlmax(len(alm))
+    lmax = lmax if lmax else hp.Alm.getlmax(len(alm))
     plot_cl(cl, lmax, title, **kwargs)
 
 
 def plot_cl_map(map, wcs, lmax, title="Angular power spectrum from map", **kwargs):
-    from pixell import enmap, curvedsky
-
     tmap = enmap.ndmap(map, wcs)
     alm = curvedsky.map2alm(tmap, lmax=lmax)
     cl = curvedsky.alm2cl(alm)
-
     plot_cl(cl, lmax, title, **kwargs)
 
 
@@ -135,6 +113,8 @@ def plot_ksw_predictions(truth, preds, fisher=None, save_file=None, title="Predi
     if save_file is not None:
         plt.savefig(save_file)
         plt.close()
+    else:
+        plt.show()
 
 def plot_histogram(truth, preds, save_file=None):
     """Plot and save a histogram of predictions with mean and std dev as title"""
@@ -161,3 +141,6 @@ def plot_histogram(truth, preds, save_file=None):
     # Save the plot
     if save_file is not None:
         plt.savefig(save_file)
+        plt.close()
+    else:
+        plt.show()

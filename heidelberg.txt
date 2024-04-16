@@ -38,3 +38,21 @@ level of non-Gaussianity.
 Finally, we also provide the power spectrum in dimensionless units
 (cl_wmap5_bao_sn.dat), containing, in this order, l, C_l^TT, C_l^EE,
 and C_l^TE.
+
+Scrapped with:
+
+```python
+import requests
+
+for num in range(1, 1001):
+    URL1 = "https://dc.zah.uni-heidelberg.de/elsnersim/q/s/static/alm_l_" + str(num).zfill(4) + "_v3.fits"
+    URL2 = "https://dc.zah.uni-heidelberg.de/elsnersim/q/s/static/alm_nl_" + str(num).zfill(4) + "_v3.fits"
+
+    with requests.Session() as s, open("alm_l_" + str(num).zfill(4) + "_v3.fits", "wb") as f:
+        f.write(s.get(URL1).content)
+
+    with requests.Session() as s, open("alm_nl_" + str(num).zfill(4) + "_v3.fits", "wb") as f:
+        f.write(s.get(URL2).content)
+
+    print(f"Finished {num}")
+```

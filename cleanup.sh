@@ -10,6 +10,7 @@ fi
 rm -rvf logs/almgen/*/*.log
 rmdir -v logs/almgen/*/
 rm -rvf logs/patchgen/*/*.log
+rmdir -v logs/patchgen/*/
 rm -rvf logs/combiner/*.log
 rm -rvf logs/estimator/*.log
 rm -rvf logs/heidelberg/*.log
