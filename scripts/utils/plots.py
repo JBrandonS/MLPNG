@@ -107,7 +107,7 @@ def plot_cl_map(map, wcs, lmax, title="Angular power spectrum from map", **kwarg
     plot_cl(cl, lmax, title, **kwargs)
 
 
-def plot_predictions(truth, preds, fisher=None, scaled_variance=None, save_file=None):
+def plot_predictions(truth, preds, title="Predictions", fisher=None, scaled_variance=None, save_file=None):
     df = pd.DataFrame(
         {
             "True Labels": np.array(truth).flatten(),
