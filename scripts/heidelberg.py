@@ -11,8 +11,9 @@ mpi_comm = MPI.COMM_WORLD
 mpi_rank = mpi_comm.rank
 mpi_root = mpi_rank == 0
 
-from .utils import Config, setup_logging
-from .utils.plots import plot_cl_alm, plot_predictions
+import Core
+from utils import setup_logging, remove_mono_dipole
+from utils.plots import plot_cl_alm, plot_predictions
 
 logger = setup_logging(
     name=f"heidelberg_estimator_{mpi_rank}",
@@ -40,7 +41,7 @@ def alm_loader(str_idx):
     t_scale = 2.7255 * 10 ** (6)
     logger.info("sending fnl: %s", fnl)
 
-    alms = (alm_h_l + fnl * alm_h_nl) * t_scale
+    alms = (alm_heidelberg_l + fnl * alm_heidelberg_nl) * t_scale
     alms = remove_mono_dipole(alms)
 
     beam_ell_2d = np.atleast_2d(s.beam_ell)
@@ -61,17 +62,6 @@ def alm_step_loader2(str_idx):
 
     t_scale = 2.7255 * 10 ** (6)
     return alm_h_l * t_scale
-
-
-def remove_mono_dipole(alm):
-    """
-    Remove the monopole and dipole terms from the alms.
-    """
-    lmax = hp.Alm.getlmax(len(alm))
-    alm[hp.Alm.getidx(lmax, 0, 0)] = 0.0  # Remove monopole
-    alm[hp.Alm.getidx(lmax, 1, 0)] = 0.0  # Remove dipole
-    alm[hp.Alm.getidx(lmax, 1, 1)] = 0.0  # Remove dipole
-    return alm
 
 
 def compute_icov_ell(N, b):
@@ -97,7 +87,7 @@ if __name__ == "__main__":
     """
     import sys
     args = sys.argv[1:]
-    s = Config(["settings/heidelberg.json"] + args)
+    s = Core(["settings/heidelberg.json"] + args)
 
     logger.info("Running camb")
     camb_params_obj = camb.set_params(**s.cosmo_params)
@@ -147,7 +137,7 @@ if __name__ == "__main__":
         plot_dir = os.path.join(s.plot_dir, "heidelberg")
         os.makedirs(plot_dir, exist_ok=True)
         pred_file = os.path.join(plot_dir, f"{s.sjob}-{s.base_name}.png")
-        plot_ksw_predictions(fnls[alm_strs], estimates, fisher, save_file=pred_file)
+        plot_predictions(fnls[alm_strs], estimates, fisher, save_file=pred_file)
 
         cl_file = os.path.join(plot_dir, f"{s.sjob}-{s.base_name}_cl.png")
         c_ells = data.cosmology.c_ell["unlensed_scalar"]
@@ -155,10 +145,7 @@ if __name__ == "__main__":
             alm_loader("1"),
             save_file=cl_file,
             plot_camb=True,
-            c_ells=c_ells,
-            plot_camb_noise=True,
-            noise=s.noise_scale_tt,
-            beam=s.beam_width,
+            c_ells=c_ells
         )
 
     logger.info("Finished %s!", mpi_rank)

@@ -4,6 +4,7 @@ import inspect
 import re
 import h5py
 import numpy as np
+import healpy as hp
 
 logger = logging.getLogger(__name__)
 
@@ -14,8 +15,23 @@ def setup_logging(
     handlers=[logging.StreamHandler(sys.stdout)],
     set_base=True,
     base_level=None,
+    use_rich=True,
 ):
     if set_base:
+        if use_rich:
+            from rich.logging import RichHandler
+
+            handlers = [
+                RichHandler(
+                    show_time=False,
+                    show_level=False,
+                    show_path=False,
+                    rich_tracebacks=True,
+                    locals_max_length=3,
+                    locals_max_string=None,
+                )
+            ]
+
         logging.basicConfig(
             level=base_level or level,
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -77,7 +93,9 @@ def load_data(data_file, keys):
             kv = hdf.get(key, None)
             if kv is None:
                 raise ValueError(f"Key {key} not found in {data_file}")
-            logger.debug("Loaded key %s, %s", key, kv.shape if isinstance(kv, np.ndarray) else kv)
+            logger.debug(
+                "Loaded key %s, %s", key, kv.shape if isinstance(kv, np.ndarray) else kv
+            )
             data[key] = kv[()]  # type: ignore
 
     logger.info("Finished loading data from %s", data_file)
@@ -89,3 +107,15 @@ def log_source(func):
     source = re.sub(r"#.*", "", source)
     source = re.sub(r"\n\s*\n", "\n", source)
     logger.info(f"Model source:\n{source}")
+
+
+def remove_mono_dipole(alm):
+    """
+    Remove the monopole and dipole terms from the alms.
+    Note that we do not need -m's due to symmetry
+    """
+    lmax = hp.Alm.getlmax(len(alm))
+    alm[..., hp.Alm.getidx(lmax, 0, 0)] = 0.0
+    alm[..., hp.Alm.getidx(lmax, 1, 0)] = 0.0
+    alm[..., hp.Alm.getidx(lmax, 1, 1)] = 0.0
+    return alm

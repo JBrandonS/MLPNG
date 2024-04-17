@@ -161,7 +161,7 @@ def dcnn_model(
 if __name__ == "__main__":
     # Get the config file from the command line
     # you can manually set it here if you want
-    s = Config(sys.argv[1:])
+    s = Core(sys.argv[1:])
 
     MAX_EPOCHS = 300
 

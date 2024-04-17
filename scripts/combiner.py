@@ -5,7 +5,8 @@ import logging
 
 import h5py
 from tqdm.auto import tqdm
-from utils import Config, setup_logging
+from utils import setup_logging
+import Core
 
 logger = setup_logging(__name__)
 logger.setLevel(logging.DEBUG)
@@ -96,7 +97,8 @@ def combine_data(directory, base_name, ext, remove_files=True):
 
 
 if __name__ == "__main__":
-    s = Config()
+    # need patchgen to get the filepaths
+    s = Core()
 
     combine_data(s.alm_dir, s.base_name, ".hdf5")
     combine_data(s.patch_dir, s.patch_str, ".hdf5")

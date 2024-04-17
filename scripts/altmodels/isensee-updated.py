@@ -30,7 +30,7 @@ from keras.optimizers import Adam
 
 from tensorflow import pad
 
-from utils import Config
+import Core
 from utils.tf import TimedLoggingCallback
 from scripts.utils.tf.dataloaders import PatchLoader
 from utils.plots import plot_histogram, plot_metrics, plot_predictions
@@ -182,7 +182,7 @@ def UNET(
 
 
 if __name__ == "__main__":
-    s = Config(sys.argv[1:])
+    s = Core(sys.argv[1:])
 
     MAX_EPOCHS = 100
     BATCH_SIZE = 32

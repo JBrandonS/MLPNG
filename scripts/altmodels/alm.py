@@ -31,7 +31,7 @@ from tensorflow.keras.optimizers.legacy import Adam
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.regularizers import l2
 
-from utils import Config
+import Core
 from utils.tf.callbacks import TimedLoggingCallback
 
 from utils.tf.plots import (
