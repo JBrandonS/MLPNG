@@ -6,7 +6,7 @@ import logging
 import h5py
 from tqdm.auto import tqdm
 from utils import setup_logging
-import Core
+from core import Core
 
 logger = setup_logging(__name__)
 logger.setLevel(logging.DEBUG)
@@ -15,31 +15,29 @@ logger.setLevel(logging.DEBUG)
 def extract_number(filename):
     # Extracts the number from a filename
     matches = re.findall(r"\d+", filename)
-    logger.debug('%s matches %s', filename, matches)
     return int(matches[-2]) if matches else 0
 
 
 def recursive_copy(hf_source, hf_dest):
     for key in hf_source.keys():
-        logger.debug("Copying %s", key)
         if isinstance(hf_source[key], h5py.Group):
-            logger.debug("Found group %s", key)
+            logger.debug("%s: Found group", key)
             if key not in hf_dest:
-                logger.debug("Creating group %s", key)
+                logger.debug("%s: Creating group", key)
                 hf_dest.create_group(key)
             recursive_copy(hf_source[key], hf_dest[key])
         else:
             if len(hf_source[key].shape) > 0:  # Non-scalar dataset
-                logger.debug("Found non-scalar dataset %s", key)
+                logger.debug("%s: Found non-scalar dataset", key)
                 if key in hf_dest:
-                    logger.debug("Resizing dataset %s", key)
+                    logger.debug("%s: Resizing dataset", key)
                     hf_dest[key].resize(
                         (hf_dest[key].shape[0] + hf_source[key].shape[0],)
                         + hf_source[key].shape[1:]
                     )
                     hf_dest[key][-hf_source[key].shape[0] :] = hf_source[key]
                 else:
-                    logger.debug("Creating dataset %s", key)
+                    logger.debug("%s: Creating dataset", key)
                     hf_dest.create_dataset(
                         key,
                         data=hf_source[key],
@@ -47,12 +45,12 @@ def recursive_copy(hf_source, hf_dest):
                     )
             else:  # Scalar dataset
                 if key in hf_dest:
-                    logger.debug("Appending scalar values to dataset %s", key)
+                    logger.debug("%s: Appending scalar values to dataset", key)
                     # Concatenate scalar values into a 1D dataset
                     hf_dest[key].resize((hf_dest[key].shape[0] + 1,))
                     hf_dest[key][-1:] = hf_source[key][()]
                 else:
-                    logger.debug("Creating new 1D dataset for scalar values %s", key)
+                    logger.debug("%s: Creating new 1D dataset for scalar values", key)
                     # Create a new 1D dataset for scalar values
                     hf_dest.create_dataset(
                         key, data=[hf_source[key][()]], maxshape=(None,)
@@ -63,13 +61,13 @@ def combine_data(directory, base_name, ext, remove_files=True):
     # Get a list of all h5py files that match the pattern, i.e., end with a SLURM job array index
     file_pattern = os.path.join(directory, f"{base_name}_[0-9]*{ext}*")
     files_to_combine = glob.glob(file_pattern)
-    logger.debug("Found files to combine: %s", files_to_combine)
+    logger.debug("%s: Found files to combine", files_to_combine)
 
     # combine in order, might not be needed
     files_to_combine = sorted(files_to_combine, key=extract_number)
 
     if len(files_to_combine) == 0:
-        logger.error("did not find any files to combine with %s", file_pattern)
+        logger.error("Did not find any files to combine with %s", file_pattern)
         return
 
     if len(files_to_combine) != s.narray:
@@ -80,7 +78,7 @@ def combine_data(directory, base_name, ext, remove_files=True):
 
     # Create a new h5py file to hold all the combined data
     with h5py.File(os.path.join(directory, f"{base_name}{ext}.nc"), "x") as hf_combined:
-        for file in tqdm(files_to_combine, desc="processing files"):
+        for file in tqdm(files_to_combine, desc="Processing files"):
             with h5py.File(file, "r") as hf:
                 logger.debug("Processing file %s", file)
                 recursive_copy(hf, hf_combined)
@@ -92,7 +90,7 @@ def combine_data(directory, base_name, ext, remove_files=True):
     )
 
     if remove_files:
-        for file in tqdm(files_to_combine, desc="removing partial files"):
+        for file in tqdm(files_to_combine, desc="Removing partial files"):
             os.remove(file)
 
 
