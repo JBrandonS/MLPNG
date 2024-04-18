@@ -107,7 +107,7 @@ def plot_cl_map(map, wcs, lmax, title="Angular power spectrum from map", **kwarg
 
 
 def plot_predictions(
-    truth, preds, title="Predictions", fisher=None, scaled_variance=None, save_file=None
+    truth, preds, title="Predictions", title="Predictions", fisher=None, scaled_variance=None, save_file=None
 ):
     df = pd.DataFrame(
         {
