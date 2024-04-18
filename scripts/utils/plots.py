@@ -1,20 +1,20 @@
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import pandas as pd
-from pixell import enmap, curvedsky
-
-from sklearn.metrics import r2_score
-import healpy as hp
-
 import logging
+
+import healpy as hp
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+from pixell import curvedsky, enmap
+from sklearn.metrics import r2_score
+
 logger = logging.getLogger(__name__)
 
 
 def plot_patches(patches, n_plots, title="Patches", save_file=None):
     nrows = int(np.ceil(n_plots / 4))
     ncols = min(n_plots, 4)
-    idxs = range(min(patches.shape[0], n_plots, nrows*ncols))
+    idxs = range(min(patches.shape[0], n_plots, nrows * ncols))
     fig, axes = plt.subplots(nrows, ncols, figsize=(20, 20))
     axes = axes.flatten()  # Flatten the axes array for easier indexing
 
@@ -44,19 +44,41 @@ def plot_cl(
     save_file=None,
     plot_func=plt.semilogy,
     plot_camb=False,
-    c_ells=None
+    c_ells=None,
+    camb_noise=False,
+    noise=None,
+    beam_width=None,
+    scale=True,
 ):
-    ells = np.arange(2, lmax)
-    scale = ells * (ells + 1) / 2 / np.pi
-    plot_func(ells, scale * cl[2:lmax], label="data")
+    pol = 0
+    nell = lmax + 1
+    ells = np.arange(2, lmax + 1)
+    scale = ells * (ells + 1) / 2 / np.pi if scale else 1
+
+    plot_func(ells, scale * cl[2:nell], label="data", linestyle=":")
 
     if plot_camb:
         if c_ells is None:
             raise ValueError("Need to provide c_ells if plt_camb is True.")
 
-        camb_cl = c_ells["c_ell"][2:lmax][:, 0]
-        camb_inner_plt = scale * camb_cl
-        plot_func(ells, camb_inner_plt, label="camb")
+        camb_cl = c_ells[2:nell, pol]
+        plot_func(ells, scale * camb_cl, label="camb")
+
+        if camb_noise:
+            if noise is None or beam_width is None:
+                raise ValueError(
+                    "Need to provide noise and beam_width if plotting camb with noise."
+                )
+
+            # camb_cl *= np.exp(
+            #     -(ells * (ells + 1) * beam_width**2) / (16 * np.log(2))
+            # )
+            plot_func(
+                ells,
+                ( scale * camb_cl + noise[2:nell]**2 ),
+                label=r"camb + noise [$N_\ell^2 exp(-(\ell(\ell+1) \sigma_b^2)/(16 \log(2)))$]",
+                linestyle="--",
+            )
 
     plt.xlabel(r"$\ell$")
     plt.ylabel(r"$\ell(\ell+1)/2\pi\;C_{\ell}$")
@@ -84,7 +106,9 @@ def plot_cl_map(map, wcs, lmax, title="Angular power spectrum from map", **kwarg
     plot_cl(cl, lmax, title, **kwargs)
 
 
-def plot_predictions(truth, preds, fisher=None, scaled_variance=None, save_file=None):
+def plot_predictions(
+    truth, preds, title="Predictions", fisher=None, scaled_variance=None, save_file=None
+):
     df = pd.DataFrame(
         {
             "True Labels": np.array(truth).flatten(),
@@ -125,6 +149,7 @@ def plot_predictions(truth, preds, fisher=None, scaled_variance=None, save_file=
         plt.close()
     else:
         plt.show()
+
 
 def plot_histogram(truth, preds, save_file=None):
     """Plot and save a histogram of predictions with mean and std dev as title"""

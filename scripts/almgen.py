@@ -51,7 +51,7 @@ def generate_alm_ng(s, alms):
     alpha_l = interpolate_ells(alpha_ell, s.tr_ells, s.ells)
 
     beta_ell = rad[:, :, :, 1]
-    c_ells_new = s.c_ells["c_ell"][s.tr_ells, : s.npol]
+    c_ells_new = s.c_ells[s.tr_ells, : s.npol]
     div = beta_ell / c_ells_new[np.newaxis, :, :]
     bl_div_cl = interpolate_ells(div, s.tr_ells, s.ells)
 

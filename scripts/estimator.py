@@ -5,9 +5,9 @@ import camb
 import h5py
 import healpy as hp
 import numpy as np
+from core import Core
 from ksw import KSW, Cosmology, Data, Shape
 from mpi4py import MPI
-import Core
 from utils import save_data, setup_logging
 from utils.plots import plot_histogram, plot_predictions
 
@@ -16,11 +16,12 @@ mpi_rank = mpi_comm.Get_rank()
 mpi_size = mpi_comm.Get_size()
 mpi_root = mpi_rank == 0
 
-logger = setup_logging(name=f"{__name__}_{mpi_rank}")
+logger = setup_logging(
+    name=f"{__name__}_{mpi_rank}", level=logging.INFO if mpi_root else logging.ERROR
+)
 if mpi_root:
     logging.getLogger("Core").setLevel(logging.DEBUG)
     logging.getLogger("utils").setLevel(logging.DEBUG)
-
 logging.getLogger("healpy").setLevel(logging.ERROR)
 logging.getLogger("astropy").setLevel(logging.ERROR)
 
@@ -39,40 +40,6 @@ def alm_step_loader(idx):
     """
     logger.debug("Sending alm step %s", idx)
     return s.data.compute_alm_sim(s.lensing)
-
-
-# def get_beamfunc(s):
-#     l, _ = hp.sphtfunc.Alm.getlm(s.lmax)
-#     sigma = s.beam_width / np.sqrt(8 * np.log(2))
-#     factor = np.exp(-(l**2) * sigma**2 / 2)
-
-#     def _beam(alm):
-#         # alm -> alm exp(-l^2 sigma^2 / 2)
-#         return alm * factor
-
-#     return _beam
-
-# def get_beamfunc(s):
-#     if not s.noise:
-#         return lambda alm: alm
-#     else:
-#         beam_ell_pre = hp.gauss_beam(s.beam_width, lmax=s.lmax, pol=False)
-
-#         def _beam(alm):
-#             return np.array([hp.almxfl(alm[0], beam_ell_pre)])
-
-#         return _beam
-
-# def compute_icov_ell(N, b):
-#     S_ell = cosmo._camb_data.get_cmb_power_spectra(
-#         cosmo.camb_params,
-#         lmax=s.lmax,
-#         spectra=["total"],
-#         CMB_unit="muK",
-#         raw_cl=True,
-#     )["total"][:, 0]
-#     b_inv = 1 / b
-#     return (1 / (S_ell + b_inv * N * b_inv))[None, :]
 
 
 if __name__ == "__main__":
@@ -128,7 +95,9 @@ if __name__ == "__main__":
         num_est / mpi_size,
     )
     idxs = range(num_est)
-    estimates = s.ksw.compute_estimate_batch(alm_loader, idxs, comm=mpi_comm, fisher=fisher)
+    estimates = s.ksw.compute_estimate_batch(
+        alm_loader, idxs, comm=mpi_comm, fisher=fisher
+    )
 
     if mpi_root:
         logger.info("Saving data")
@@ -143,7 +112,7 @@ if __name__ == "__main__":
         sdata["estimate_1k"] = True
         sdata["estimate"] = estimates
         sdata["error"] = (estimates - fnls) * np.sqrt(fisher)
-        save_data(s.alm_file, sdata, mode='a')
+        save_data(s.alm_file, sdata, mode="a")
 
         # make and save some plots
         plot_dir = os.path.join(s.plot_dir, "estimator")
