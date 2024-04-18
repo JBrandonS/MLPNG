@@ -4,12 +4,12 @@ import logging
 import os
 from itertools import product
 from typing import Any
+import rich
 
 import camb
 import healpy as hp
 import numpy as np
 from astropy import units as u
-from ksw import KSW, Cosmology, Data, Shape
 from numpy.typing import NDArray
 
 logger = logging.getLogger(__name__)
@@ -148,7 +148,7 @@ class Core:
         # setup the rest of the run, split for readability
         self._init_slurm()
         self._init_paths()
-        self._init_cosmo_data()
+        self._init_cosmo()
         self._init_almgen()
         self._init_patchgen()
         self._init_ksw()
@@ -157,7 +157,8 @@ class Core:
         if args.save_settings:
             self._save_settings()
 
-        logger.debug("Core Object:\n %s", vars(self))
+        # logger.debug("Core Object:\n %s", vars(self))
+        rich.inspect(self, help=True, methods=True, docs=True, private=True)
 
     def _get(self, name, default: Any = None):
         """
@@ -238,7 +239,14 @@ class Core:
         self.patch_str = f"{self.base_name}x{self.npatches}"
         self.patch_file = os.path.join(self.patch_dir, f"{self.patch_str}{j}.hdf5")
 
-    def _init_cosmo_data(self):
+    def _init_cosmo(self):
+        try:
+            from ksw import Cosmology, Shape, Data, KSW
+        except ImportError:
+            logging.warning("The ksw module cannot be found. Please ensure it is installed and available.")
+            self.cosmo = self.data = self.c_ells = self.icov = self.ksw = None
+            return
+
         camb_params_obj = camb.set_params(**self.cosmo_params)
         cosmo: Cosmology = Cosmology(camb_params_obj)
         cosmo.compute_transfer(self.cosmo_params["max_l"])
@@ -253,6 +261,15 @@ class Core:
         self.cosmo = cosmo
         self.data = Data(self.lmax, self.noise_ell, self.beam_ell, self.pols, cosmo)
         self.c_ells = cosmo.c_ell[f"{'' if self.lensing else 'un'}lensed_scalar"]  # type: ignore
+        self.icov = self.data.icov_diag_lensed if self.lensing else self.data.icov_diag_nonlensed
+        self.ksw = KSW(
+            self.cosmo.red_bispectra,
+            self.icov,
+            self.conv_beam,
+            self.lmax,
+            self.pols,
+            self.precision,
+        )
 
     def _init_almgen(self):
         tr_ells = self.cosmo.transfer["ells"]
@@ -274,27 +291,6 @@ class Core:
             self.npatches,
             self.nside,
             self.nside,
-        )
-
-    def _init_ksw(self):
-        """
-        Sets up the KSW estimator for the instance by setting the icov attribute and create a KSW object.
-
-        Side Effects:
-            Modifies the instance's icov and ksw attributes.
-        """
-        if self.lensing:
-            self.icov = self.data.icov_diag_lensed
-        else:
-            self.icov = self.data.icov_diag_nonlensed
-
-        self.ksw = KSW(
-            self.cosmo.red_bispectra,
-            self.icov,
-            self.conv_beam,
-            self.lmax,
-            self.pols,
-            self.precision,
         )
 
     def _save_settings(self):

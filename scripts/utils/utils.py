@@ -110,7 +110,7 @@ def log_source(func):
 
 
 def remove_mono_dipole(alm):
-    """
+    """about:blank#blocked
     Remove the monopole and dipole terms from the alms.
     Note that we do not need -m's due to symmetry
     """

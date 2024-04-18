@@ -6,6 +6,8 @@
 
 ### Data Generator
 
+TODO: Update KSW needed for trainer now too.
+
 1. Load in your modules. On M3 I use
     - `module load spack conda gcc/11.2.0 gcc-11.2.0/intel-oneapi-mkl/2022.2.1-c4efjsy fftw/3.3.10-gz7qiki openmpi/4.1.6-a4ksrza`
 2. Create and setup a python environment with the required packages

@@ -40,11 +40,12 @@ from tensorflow.keras.layers import *
 from tensorflow.keras.optimizers.legacy import Adam
 from tensorflow.keras.utils import get_custom_objects
 
-import Core
-from utils import setup_logging, log_source
-from utils.tf.dataloaders import *
-from utils.tf.plots import plot_histogram, plot_metrics, plot_predictions
-from utils.tf.callbacks import TimedLoggingCallback, WarmupLearningRate
+from . import Core
+from .utils import setup_logging, log_source
+from .utils.plots import plot_histogram, plot_predictions
+from .utils.tf.dataloaders import *
+from .utils.tf.plots import plot_metrics
+from .utils.tf.callbacks import TimedLoggingCallback, WarmupLearningRate
 
 
 def alm_model(
