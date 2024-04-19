@@ -8,15 +8,14 @@ import healpy as hp
 import lenspyx
 import matplotlib.pyplot as plt
 import numpy as np
+from core import Core
 from joblib import Parallel, delayed
 from ksw import Cosmology, Data
 from numpy.random import randint, uniform
 from pixell import curvedsky, enmap, reproject
 from tqdm.auto import tqdm
-
-import Core
 from utils import load_data, save_data, setup_logging
-from utils.plots import plot_cl_map, plot_patches, plot_cl
+from utils.plots import plot_cl, plot_cl_map, plot_patches
 
 logger = setup_logging(__name__)
 
@@ -44,19 +43,17 @@ def cutSqPatches_lenspyx(
     geom_info = ("healpix", {"nside": nside})
 
     # Create a full sky map with lenspyx
-    plm = lenspyx.utils_hp.synalm(cl_phi, lmax=max_l, mmax=None)
+    plm = lenspyx.utils_hp.synalm(cl_phi, lmax=max_l, mmax=None, rlm_dtype=r_dtype)
     fl = np.sqrt(np.arange(max_l + 1) * np.arange(1, max_l + 2), dtype=r_dtype)
-    dlm = lenspyx.utils_hp.almxfl(
-        plm, fl, mmax=None, inplace=False
-    )  # inplace breaks, for some reason
+    dlm = lenspyx.utils_hp.almxfl(plm, fl, mmax=None, inplace=True)
 
     lens_map = lenspyx.alm2lenmap(
-        alm.copy(),
+        alm,
         dlm,
         geometry=geom_info,
         nthreads=4,
         epsilon=1e-6,
-        pol=False,
+        pol=True,
     )
     pixell_map = reproject.healpix2map(lens_map, fs_shape, fs_wcs, lmax)
 
@@ -75,7 +72,7 @@ def cutSqPatches_lenspyx(
         plt.close()
 
         map_path = os.path.join(plot_dir, f"{base_name}_{fnl}_pixell_cl_map.png")
-        cls = hp.anafast(map2hp, lmax=lmax)
+        cls = hp.anafast(map2hp, lmax=lmax, use_pixel_weights=True)
         plot_cl(cls, lmax, plot_camb=True, c_ells=c_ells, save_file=map_path)
 
     return patches
@@ -124,7 +121,7 @@ def cutSqPatches_pixell(
 def get_fs_patch_geo():
     """Generates the patch geometry using pixell"""
     ps_rad = np.deg2rad(s.patch_side_deg)
-    res = np.deg2rad(s.patch_side_deg / s.nside)
+    res = ps_rad / s.nside
     fs_shape, fs_wcs = enmap.fullsky_geometry(res, proj="car")
     fs_map = enmap.empty(fs_shape, fs_wcs)
 
@@ -195,7 +192,7 @@ if __name__ == "__main__":
     ]
     if s.lensing:
         max_l = s.cosmo_params["max_l"]
-        cl_phi = s.data.cosmology._camb_data.get_lens_potential_cls(
+        cl_phi = s.cosmo._camb_data.get_lens_potential_cls(
             max_l, CMB_unit="muK", raw_cl=True
         )[:, 0]
 
@@ -211,7 +208,7 @@ if __name__ == "__main__":
 
     # We setup an array with all our possible arguments to pass to the function
     # if we are using a completed alm file, we offset our sim index by the start index
-    args = [(start_idx + i, pol) for i in range(s.nsims) for pol in range(s.npol)]
+    args = [(start_idx + s, p) for s, p in s.sim_pol]
 
     # We use joblib.parallel to generate the patches in parallel
     # by default (temp_folder=None) this will use a ram disk /dev/shm
@@ -227,15 +224,15 @@ if __name__ == "__main__":
         temp_folder=temp_folder,
     )(
         delayed(cutPatches)(alms[i, j], fnls[i, j], s.is_main_job and i == 0)
-        for i, j in s.sim_pol
+        for i, j in args
     )
 
     # Get our data from the generator, only update logging every 100 runs, takes a long time
     for idx, result in enumerate(
         tqdm(patch_generator, desc="patch progress", total=s.sim_pol_len)
     ):
-        i, pol = s.sim_pol[idx]
-        patches[i, pol] = result
+        sim, pol = s.sim_pol[idx]
+        patches[sim, pol] = result
 
     # remove the partial file if it exists
     if os.path.isfile(s.patch_file):

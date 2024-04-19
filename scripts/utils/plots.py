@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 def plot_patches(patches, n_plots, title="Patches", save_file=None):
+    n_plots = min(n_plots, patches.shape[0])
     nrows = int(np.ceil(n_plots / 4))
     ncols = min(n_plots, 4)
     idxs = range(min(patches.shape[0], n_plots, nrows * ncols))
@@ -52,9 +53,8 @@ def plot_cl(
 ):
     pol = 0
     nell = lmax + 1
-    ells = np.arange(2, lmax + 1)
+    ells = np.arange(2, nell)
     scale = ells * (ells + 1) / 2 / np.pi if scale else 1
-
     plot_func(ells, scale * cl[2:nell], label="data", linestyle=":")
 
     if plot_camb:
@@ -69,14 +69,15 @@ def plot_cl(
                 raise ValueError(
                     "Need to provide noise and beam_width if plotting camb with noise."
                 )
-
-            # camb_cl *= np.exp(
-            #     -(ells * (ells + 1) * beam_width**2) / (16 * np.log(2))
-            # )
+            
+            beam = np.exp(
+                -(ells * (ells + 1) * beam_width**2) / (16 * np.log(2))
+            )
+            camb_cl_noise = camb_cl * beam**2 + noise[2:nell]
             plot_func(
                 ells,
-                ( scale * camb_cl + noise[2:nell]**2 ),
-                label=r"camb + noise [$N_\ell^2 exp(-(\ell(\ell+1) \sigma_b^2)/(16 \log(2)))$]",
+                scale * camb_cl_noise,
+                label=r"camb * beam$^2$ + noise",
                 linestyle="--",
             )
 
@@ -107,7 +108,7 @@ def plot_cl_map(map, wcs, lmax, title="Angular power spectrum from map", **kwarg
 
 
 def plot_predictions(
-    truth, preds, title="Predictions", title="Predictions", fisher=None, scaled_variance=None, save_file=None
+    truth, preds, title="Predictions", fisher=None, scaled_variance=None, save_file=None
 ):
     df = pd.DataFrame(
         {

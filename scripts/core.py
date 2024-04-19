@@ -4,11 +4,11 @@ import logging
 import os
 from itertools import product
 from typing import Any
-import rich
 
 import camb
 import healpy as hp
 import numpy as np
+import rich
 from astropy import units as u
 from numpy.typing import NDArray
 
@@ -162,10 +162,7 @@ class Core:
                 logger.warning(f"Settings file already exists: {file}, not overwriting")
 
         # logger.debug("Core Object:\n %s", vars(self))
-            self._save_settings()
-
-        # logger.debug("Core Object:\n %s", vars(self))
-        rich.inspect(self, help=True, methods=True, docs=True, private=True)
+        # rich.inspect(self, methods=True, private=True)
 
     def _get(self, name, default: Any = None):
         val = self.settings.get(name, None)
@@ -226,51 +223,57 @@ class Core:
 
     def _init_cosmo(self):
         try:
-            from ksw import Cosmology, Shape, Data, KSW
+            from ksw import KSW, Cosmology, Data, Shape
         except ImportError:
-            logging.warning("The ksw module cannot be found. Please ensure it is installed and available.")
+            # needed since the trainer does not have ksw
+            logging.warning(
+                "The ksw module cannot be found. Please ensure it is installed and available."
+            )
             self.cosmo = self.data = self.c_ells = self.icov = self.ksw = None
             return
 
-        camb_params_obj = camb.set_params(**self.cosmo_params)
-        cosmo = Cosmology(camb_params_obj)
-        cosmo.compute_transfer(self.cosmo_params["max_l"])
+        cosmo_params = self.cosmo_params
+        camb_params_obj = camb.set_params(**cosmo_params)
+        self.cosmo = cosmo = Cosmology(camb_params_obj)
+        cosmo.compute_transfer(cosmo_params["max_l"])
         cosmo.compute_c_ell()
 
         # We only should need the shape information for the estimator, but we can add it here
-        loc_shape = Shape.prim_local(
-            self.cosmo_params["ns"], self.cosmo_params["pivot_scalar"]
-        )
+        loc_shape = Shape.prim_local(cosmo_params["ns"], cosmo_params["pivot_scalar"])
         cosmo.add_prim_reduced_bispectrum(loc_shape, self.radii)
 
-        self.cosmo: Cosmology = cosmo
         self.data = Data(self.lmax, self.noise_ell, self.beam_ell, self.pols, cosmo)
-        self.c_ells = cosmo.c_ell[f"{'' if self.lensing else 'un'}lensed_scalar"]  # type: ignore
-        self.icov = self.data.icov_diag_lensed if self.lensing else self.data.icov_diag_nonlensed
+        if self.lensing:
+            self.c_ells = cosmo.c_ell["lensed_scalar"]  # type: ignore
+            self.icov = self.data.icov_diag_lensed
+        else:
+            self.c_ells = cosmo.c_ell["unlensed_scalar"]  # type: ignore
+            self.icov = self.data.icov_diag_nonlensed
+        self.c_ells = self.c_ells["c_ell"][: self.nell]
+
         self.ksw = KSW(
             self.cosmo.red_bispectra,
             self.icov,
-            self.conv_beam,
+            self.conv_beam(),
             self.lmax,
             self.pols,
             self.precision,
         )
 
     def _init_almgen(self):
-        c_ells = self.cosmo.c_ell[f"{'' if self.lensing else 'un'}lensed_scalar"]
-        tr_ells = self.cosmo.transfer["ells"]
-        mask = tr_ells <= self.lmax
-
-        self.c_ells = c_ells["c_ell"][: self.nell]
-        self.tr_ells = tr_ells[mask]
-        self.tr_k = self.cosmo.transfer["k"]
         self.alm_shape = (self.nsims, self.npol, self.nelem)
         self.force_alm_gen = self._get("force_alm_gen", False)
-        self.tr_ell_k = self.cosmo.transfer["tr_ell_k"][mask]
+
+        tr_ells = self.cosmo.transfer["ells"]  # type: ignore
+        mask = tr_ells <= self.lmax
+        self.tr_ells = tr_ells[mask]
+        self.tr_k = self.cosmo.transfer["k"]  # type: ignore
+        self.tr_ell_k = self.cosmo.transfer["tr_ell_k"][mask]  # type: ignore
 
     def _init_patchgen(self):
         self.patch_side_deg = self._get("patch_side_deg", 10)
-        self.npatches = self._get("npatches", 1)
+        self.npatches = self._get("npatches", 2)
+        assert self.npatches % 2 == 0, "Number of patches must be even"
         self.total_patches = self.npatches * self.total_sims
         self.patch_shape = (
             self.nsims,
@@ -293,12 +296,13 @@ class Core:
         return np.swapaxes(beam, 0, 1) if pol else np.array([beam])
 
     def conv_beam(self):
+        # return lambda alm: alm
         if self.beam_width == 0.0:
             return lambda alm: alm
 
         def __beam(alm):
-            for i in range(self.npol):
-                alm[i] = hp.almxfl(alm[i], self.beam[i], inplace=True)
+            ret = hp.almxfl(alm, self.beam_ell, inplace=False)
+            return ret
 
         return __beam
 
@@ -317,18 +321,18 @@ class Core:
         self.noise_scale_ee = convert(self._get("noise_scale_ee", 1e-16))
         self.noise_scale_te = convert(self._get("noise_scale_te", 1e-16))
 
-        self.beam = self._beam()
+        beam = self._beam()
 
         noise_ell = []
         beam_ell = []
         if "T" in self.pols:
-            beam_ell.append(self.beam[0])
+            beam_ell.append(beam[0])
             noise_ell.append(self._noise_ell(self.noise_scale_tt))
         if "E" in self.pols:
-            beam_ell.append(self.beam[1])
+            beam_ell.append(beam[1])
             noise_ell.append(self._noise_ell(self.noise_scale_ee))
         if self.pols == ["T", "E"]:
-            beam_ell.append(self.beam[3])
+            beam_ell.append(beam[3])
             noise_ell.append(self._noise_ell(self.noise_scale_te))
         self.noise_ell = np.array(noise_ell)
         self.beam_ell = np.array(beam_ell)

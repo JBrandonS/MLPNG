@@ -6,28 +6,31 @@ import healpy as hp
 import numpy as np
 from joblib import Parallel, delayed
 from ksw.radial_functional import radial_func
-from scipy.interpolate import CubicSpline
+from scipy.interpolate import CubicSpline, interp1d
 from tqdm.auto import tqdm
 
-import Core
+from core import Core
 from utils import save_data, setup_logging, remove_mono_dipole
 from utils.plots import plot_cl_alm
 
 logger = setup_logging(__name__)
+hp.disable_warnings()
 
 
-def get_alm(alm, bl_div_cl, alpha_l, r, dr, nside, lmax):
+def integrand(alm, bl_div_cl, alpha_l, r, dr, nside, lmax):
     """This calculates the alms from the precalculated values"""
-    Balm = hp.almxfl(alm, bl_div_cl)
-    B = hp.alm2map(Balm, nside=nside, lmax=lmax)
+    Balm = hp.almxfl(alm, bl_div_cl, inplace=True)
+    B = hp.alm2map(Balm, nside=nside, lmax=lmax, inplace=True)
     inner = hp.map2alm(B**2, lmax=lmax, use_pixel_weights=True)
-    kernel = hp.almxfl(inner, alpha_l)
+    kernel = hp.almxfl(inner, alpha_l, inplace=True)
     return dr * r**2 * kernel
 
 
-def interpolate_ells(func, ells_sparse, ls, axis=1):
-    """Our interpolation function to go from space to dense ells."""
-    return CubicSpline(ells_sparse, func, axis)(ls)
+def interpolator(func, ells_sparse, axis=1, cubic = True):
+    if cubic:
+        return CubicSpline(ells_sparse, func, axis)
+    else:
+        return interp1d(ells_sparse, func, kind="linear", axis=axis)
 
 
 def generate_alm_ng(s, alms):
@@ -38,6 +41,8 @@ def generate_alm_ng(s, alms):
     # $$\beta_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^{-1} \Delta_\phi \Delta_\ell^T(k) j_\ell(k r)$$
     # $$B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}$$
     # where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
+    ells = s.ells[(s.ells >= s.tr_ells.min()) & (s.ells <= s.tr_ells.max())]
+    
     A = (3 / 5) ** 2 * 2 * np.pi**2 * s.cosmo_params["As"]
     delta_phi = (s.tr_k) ** ((s.cosmo_params["ns"] - 1)) / (s.tr_k**3)
 
@@ -48,14 +53,12 @@ def generate_alm_ng(s, alms):
     rad = radial_func(f_k, s.tr_ell_k, s.tr_k, s.radii, s.tr_ells)
 
     alpha_ell = rad[:, :, :, 0]
-    alpha_l = interpolate_ells(alpha_ell, s.tr_ells, s.ells)
+    alpha_l = interpolator(alpha_ell, s.tr_ells)(ells)
 
     beta_ell = rad[:, :, :, 1]
-    c_ells_new = s.c_ells[s.tr_ells, : s.npol]
-    div = beta_ell / c_ells_new[np.newaxis, :, :]
-    bl_div_cl = interpolate_ells(div, s.tr_ells, s.ells)
-
-    logger.info("Starting non-gaussian Alm generation")
+    tr_c_ells = s.c_ells[s.tr_ells, : s.npol]
+    div = beta_ell / tr_c_ells[np.newaxis, :, :]
+    bl_div_cl = interpolator(div, s.tr_ells)(ells)
 
     # We use joblib.parallel to generate the patches in parallel
     # by default (temp_folder=None) this will use a ram disk /dev/shm
@@ -67,22 +70,21 @@ def generate_alm_ng(s, alms):
     logger.info("Starting non-gaussian Alm generation")
     logger.debug(f"Using temp folder for almng generation: {temp_folder}")
     alm_ng = np.empty(s.alm_shape, dtype=s.c_dtype)
-    for i, pol in tqdm(s.sim_pol, total=s.sim_pol_len, desc="Almng"):
+    for i, pol in tqdm(s.sim_pol, total=s.sim_pol_len, desc="Alm_ng"):
         generator = parallel(
-            delayed(get_alm)(
+            delayed(integrand)(
                 alms[i, pol],
                 bl_div_cl[ri, :, pol],
                 alpha_l[ri, :, pol],
                 s.radii[ri],
                 s.drs[ri],
                 s.nside,
-                s.lmax,
+                s.lmax
             )
             for ri in range(len(s.drs))
         )
 
         alm_ng[i, pol] = sum(generator)
-    logger.info("Non-gaussian Alm generation complete")
     return alm_ng
 
 
@@ -117,22 +119,12 @@ if __name__ == "__main__":
     # Get our alms
     logger.info("Starting Alm generation")
     alm_l = np.array(
-        [s.data.compute_alm_sim(s.lensing) for _ in range(s.nsims)],
+        [s.data.compute_alm_sim(s.lensing) for _ in range(s.nsims)], # type: ignore
         dtype=s.c_dtype,
     )
     alm_ng = generate_alm_ng(s, alm_l)
-    fnls = s.rng.uniform(s.fnl_min, s.fnl_max + 1, s.fnl_shape)
-
-    # create our combined alms
+    fnls = s.rng.uniform(s.fnl_min, s.fnl_max, s.fnl_shape)
     alms = alm_l + fnls * alm_ng
-
-    # apply our beam and noise, if enabled
-    if s.noise:
-        for i, j in s.sim_pol:
-            hp.almxfl(alms[i, j], s.beam_ell[j] ** -1, inplace=True)
-            alms[i, j] += hp.synalm(s.noise_ell[j], lmax=s.lmax)
-    
-    # remove the monopole and dipole terms, and we are done
     alms = remove_mono_dipole(alms)
 
     # we remove the stale nc file if it exists
@@ -161,7 +153,10 @@ if __name__ == "__main__":
             alms[i, j],
             save_file=filebase,
             plot_camb=True,
-            c_ells=s.c_ells
+            c_ells=s.c_ells,
+            camb_noise=True,
+            noise=s.noise_ell[0],
+            beam_width=s.beam_width,
         )
 
     logger.info("Finished %s!", s.sjob)
