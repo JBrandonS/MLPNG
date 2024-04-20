@@ -1,17 +1,13 @@
 import logging
 import os
-import sys
 from functools import partial
 
-import camb
 import healpy as hp
 import lenspyx
 import matplotlib.pyplot as plt
 import numpy as np
 from core import Core
 from joblib import Parallel, delayed
-from ksw import Cosmology, Data
-from numpy.random import randint, uniform
 from pixell import curvedsky, enmap, reproject
 from tqdm.auto import tqdm
 from utils import load_data, save_data, setup_logging
@@ -192,7 +188,7 @@ if __name__ == "__main__":
     ]
     if s.lensing:
         max_l = s.cosmo_params["max_l"]
-        cl_phi = s.cosmo._camb_data.get_lens_potential_cls(
+        cl_phi = s.cosmo._camb_data.get_lens_potential_cls( # type: ignore
             max_l, CMB_unit="muK", raw_cl=True
         )[:, 0]
 
