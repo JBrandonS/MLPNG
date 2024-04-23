@@ -9,24 +9,23 @@ from ksw.radial_functional import radial_func
 from scipy.interpolate import CubicSpline, interp1d
 from tqdm.auto import tqdm
 
-from core import Core
-from utils import save_data, setup_logging, remove_mono_dipole
-from utils.plots import plot_cl_alm
+from . import Core
+from .utils import remove_mono_dipole, save_data, setup_logging
+from .utils.plots import plot_cl_alm
 
-logger = setup_logging(__name__)
-hp.disable_warnings()
+logger = setup_logging(__name__, level=logging.DEBUG)
 
 
 def integrand(alm, bl_div_cl, alpha_l, r, dr, nside, lmax):
     """This calculates the alms from the precalculated values"""
-    Balm = hp.almxfl(alm, bl_div_cl, inplace=True)
+    Balm = hp.almxfl(alm, bl_div_cl, inplace=False)
     B = hp.alm2map(Balm, nside=nside, lmax=lmax, inplace=True)
     inner = hp.map2alm(B**2, lmax=lmax, use_pixel_weights=True)
     kernel = hp.almxfl(inner, alpha_l, inplace=True)
     return dr * r**2 * kernel
 
 
-def interpolator(func, ells_sparse, axis=1, cubic = True):
+def interpolator(func, ells_sparse, axis=1, cubic=True):
     if cubic:
         return CubicSpline(ells_sparse, func, axis)
     else:
@@ -42,11 +41,11 @@ def generate_alm_ng(s, alms):
     # $$B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}$$
     # where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
     ells = s.ells[(s.ells >= s.tr_ells.min()) & (s.ells <= s.tr_ells.max())]
-    
-    A = (3 / 5) ** 2 * 2 * np.pi**2 * s.cosmo_params["As"]
-    delta_phi = (s.tr_k) ** ((s.cosmo_params["ns"] - 1)) / (s.tr_k**3)
 
-    f_k = np.ones((len(s.tr_k), 2), dtype=s.r_dtype) * 5 / 3
+    A = (3 / 5) ** 2 * 2 * np.pi**2 * s.cosmo_params["As"]
+    delta_phi = (s.tr_k) ** ((s.cosmo_params["ns"] - 4))
+
+    f_k = np.full((len(s.tr_k), 2), 5 / 3, dtype=s.r_dtype)
     # f_k[:, 0] = 1             # f_k for alpha
     f_k[:, 1] *= A * delta_phi  # f_k for beta
 
@@ -67,8 +66,8 @@ def generate_alm_ng(s, alms):
     temp_folder = os.environ.get("SCRATCH", None)
     parallel = Parallel(n_jobs=-1, return_as="generator", temp_folder=temp_folder)
 
-    logger.info("Starting non-gaussian Alm generation")
-    logger.debug(f"Using temp folder for almng generation: {temp_folder}")
+    logger.info("Starting Alm_ng generation")
+    logger.debug(f"Using temp folder for Alm_ng generation: {temp_folder}")
     alm_ng = np.empty(s.alm_shape, dtype=s.c_dtype)
     for i, pol in tqdm(s.sim_pol, total=s.sim_pol_len, desc="Alm_ng"):
         generator = parallel(
@@ -79,7 +78,7 @@ def generate_alm_ng(s, alms):
                 s.radii[ri],
                 s.drs[ri],
                 s.nside,
-                s.lmax
+                s.lmax,
             )
             for ri in range(len(s.drs))
         )
@@ -102,10 +101,6 @@ if __name__ == "__main__":
     """
     s = Core()
 
-    if s.is_main_job:
-        logger.setLevel(logging.DEBUG)
-        logging.getLogger("utils").setLevel(logging.DEBUG)
-
     # check for completed alm runs if we are not forcing alm generation, and fail fast
     # notice we don't exit(1) so we can use this to resume a partially completed job
     if not s.force_alm_gen:
@@ -113,13 +108,13 @@ if __name__ == "__main__":
             logger.warning("Found completed alms file, skipping alm generation")
             sys.exit(0)
         elif os.path.isfile(s.alm_file_partial):
-            logger.warning(f"Found partial alm file, skipping alm generation")
+            logger.warning("Found partial alm file, skipping alm generation")
             sys.exit(0)
 
     # Get our alms
     logger.info("Starting Alm generation")
     alm_l = np.array(
-        [s.data.compute_alm_sim(s.lensing) for _ in range(s.nsims)], # type: ignore
+        [s.data.compute_alm_sim(s.lensing) for _ in range(s.nsims)],  # type: ignore
         dtype=s.c_dtype,
     )
     alm_ng = generate_alm_ng(s, alm_l)
@@ -145,8 +140,10 @@ if __name__ == "__main__":
         os.makedirs(alm_plot_dir, exist_ok=True)
 
         i, j = s.rng.integers(s.nsims), s.rng.integers(s.npol)
-        logger.info("Making plots for alm[%d,%d]", i, j)
-        filebase = os.path.join(alm_plot_dir, f"{s.sjob}_{s.base_name}_alm[{i},{j}].png")
+        logger.debug("Making plots for alm[%d,%d]", i, j)
+        filebase = os.path.join(
+            alm_plot_dir, f"{s.sjob}_{s.base_name}_alm[{i},{j}].png"
+        )
 
         # plot the complete alms with noise
         plot_cl_alm(
