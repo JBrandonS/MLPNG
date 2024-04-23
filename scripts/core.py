@@ -10,9 +10,11 @@ import healpy as hp
 import numpy as np
 import rich
 from astropy import units as u
-from numpy.typing import NDArray
+
+from ksw import KSW, Cosmology, Data, Shape
 
 logger = logging.getLogger(__name__)
+
 
 def cosmo_defaults():
     return {
@@ -22,6 +24,7 @@ def cosmo_defaults():
         "max_l": 1000,
         "lmax": 500,
     }
+
 
 class Core:
     """
@@ -78,6 +81,7 @@ class Core:
         _init_paths(): Initializes file path-related attributes.
         _init_cosmo(): Initializes the cosmology object.
     """
+
     def parse_args(self, args=None):
         """
         Parse command line arguments.
@@ -117,13 +121,14 @@ class Core:
         logger.debug(f"Parsing CLI args: {args}")
         return parser.parse_args(args)
 
-
-    def __init__(self, argv=None):
+    def __init__(self, argv=None, inspect_class=False):
         """
         Initializes a new instance of the `Core` class.
 
         Args:
-            argv (list): List of command line arguments. If None, sys.argv[1:] will be used.
+            argv (list): List contating the CLI Args, first arg should be the settings file, others follow arg_parse.
+            If None, sys.argv[1:] will be used.
+            inspect_class (bool): Whether to inspect the class using the `rich` library. Default is False.
         """
         args = self.parse_args(argv)
 
@@ -142,7 +147,7 @@ class Core:
                 settings[key] = value
 
         # set the cosmological parameters defaults, and update based on cosmo_params
-        cosmo_params = self._get("cosmo_params", {})
+        cosmo_params = self._get("cosmo_params", cosmo_defaults())
         self.cosmo_params = settings["cosmo_params"] = {
             **cosmo_defaults(),
             **cosmo_params,
@@ -159,8 +164,13 @@ class Core:
 
         ##
         ## Now we can process the main parameters for the run, each is loaded in via the _get method
-        ## This allows us to have defaults, and log when we are using the defaults
         ##
+
+        # we setup a RNG here for reproducibility
+        # TODO: needs more implementation, and testing of reproducibility, need to setup tensorflow seed and probably others
+        self.seed = self._get("seed", np.random.default_rng().integers(0, 2**32 - 1))
+        self.rng = np.random.default_rng(self.seed)
+        np.random.seed(self.seed)
 
         # main parameters
         self.lmax = self.cosmo_params["lmax"]
@@ -168,26 +178,17 @@ class Core:
         self.pols = self._get("polarizations", "T")
         self.lensing = self._get("lensing", False)
         self.npol = len(self.pols)
-        self.fnl_min, self.fnl_max = self._get("fnl_range", (-1, 1))
-        self.fnl_shape = (self.nsims, self.npol, 1)
-
-        # we setup a RNG here to help with reproducibility, not tested def
-        # TODO: needs more implementation, and testing of reproducibility
-        self.seed = self._get("seed", np.random.default_rng().integers(0, 2**32 - 1))
-        self.rng = np.random.default_rng(self.seed)
-        np.random.seed(self.seed)
-
-        # find out the number of sims
         self.nsims = self._get("nsims", 100)
         self.narray = self._get("narray", 1)
         self.total_sims = self.nsims * self.npol * self.narray
 
+        # setup the fnl and shape
+        self.fnl_min, self.fnl_max = self._get("fnl_range", (-1, 1))
+        self.fnl_shape = (self.nsims, self.npol, 1)
+
         # get a tuple of the sim and pol, used a few times in the code
         self.sim_pol = list(product(range(self.nsims), range(self.npol)))
         self.sim_pol_len = self.nsims * self.npol
-
-        # sim_pol_len is also the number of sims this job will process
-        logger.info(f"Processing {self.sim_pol_len} of {self.total_sims} sims")
 
         # setup the ell values, just to have them for later
         self.nell = self.lmax + 1
@@ -195,7 +196,7 @@ class Core:
         self.ells = np.arange(self.nell)
 
         # setup our precision types to be consistent
-        # TODO: More testing with double precision, some areas feault for single some double
+        # TODO: More testing with double precision, some areas default to single, some double
         if self._get("double_precision", False):
             self.r_dtype = np.float64
             self.c_dtype = np.complex128
@@ -206,7 +207,7 @@ class Core:
             self.precision = "single"
         logger.debug(f"Using {self.precision} precision, where possible")
 
-        # split the resst of this function into a few smaller functions for reability
+        # split the rest of this function into a few smaller functions for readability
         # each of these modifies attributes of the class
         self._setup_noise_beam()
         self._setup_radii()
@@ -228,7 +229,8 @@ class Core:
             else:
                 logger.warning(f"Settings file already exists: {file}, not overwriting")
 
-        logger.debug(rich.inspect(self, methods=True, private=True))
+        if inspect_class:
+            rich.inspect(self, all=True)
 
     def _get(self, name, default: Any = None):
         """
@@ -265,12 +267,15 @@ class Core:
             sjob (str): The SLURM job ID.
             job_array_index (int): The index of the current job in the SLURM array.
             is_main_job (bool): Indicates whether the current job is the main job.
-        
+
         Raises:
             ValueError: If the SLURM_ARRAY_TASK_COUNT does not match the narray value.
         """
         self.sjob = os.getenv("SLURM_JOB_ID", "-1")
         logger.info(f"SLURM job id: {self.sjob}")
+
+        self.scpus = int(os.environ["SLURM_CPUS_PER_TASK"])
+        logger.debug(f"SLURM cpus per task: {self.scpus}")
 
         job_tasks = os.getenv("SLURM_ARRAY_TASK_COUNT")
         if job_tasks is not None:
@@ -291,57 +296,66 @@ class Core:
             self.is_main_job = True
 
     def _init_paths(self):
-            """
-            Initializes the paths used by the MLPNG script.
+        """
+        Initializes the paths used by the MLPNG script.
 
-            The method sets various directory paths based on the configuration parameters.
-            These paths include the base directory, plot directory, tensorboard directory,
-            model directory, alm directory, patch directory, and file paths for alm and patch files.
+        The method sets various directory paths based on the configuration parameters.
+        These paths include the base directory, plot directory, tensorboard directory,
+        model directory, alm directory, patch directory, and file paths for alm and patch files.
 
-            Attributes:
-                base_dir (str): The base directory for the script.
-                base_name (str): The base name for the files generated by the script.
-                plot_dir (str): The directory for saving plot files.
-                tb_dir (str): The directory for saving TensorBoard files.
-                model_dir (str): The directory for saving model files.
-                alm_dir (str): The directory for saving alm files.
-                patch_dir (str): The directory for saving patch files.
-                alm_file_partial (str): The file path for the partial alm file.
-                alm_file (str): The file path for the complete alm file.
-                patch_str (str): The string representation of the patch file.
-                patch_file (str): The file path for the patch file.
+        Attributes:
+            base_dir (str): The base directory for the script.
+            base_name (str): The base name for the files generated by the script.
+            plot_dir (str): The directory for saving plot files.
+            tb_dir (str): The directory for saving TensorBoard files.
+            model_dir (str): The directory for saving model files.
+            alm_dir (str): The directory for saving alm files.
+            patch_dir (str): The directory for saving patch files.
+            alm_file_partial (str): The file path for the partial alm file.
+            alm_file (str): The file path for the complete alm file.
+            patch_str (str): The string representation of the patch file.
+            patch_file (str): The file path for the patch file.
 
-            Returns:
-                None
-            """
-            l = "l" if self.lensing else "ul"
-            nn = "-nn" if not self.noise else ""
-            j = "" if self.job_array_index is None else f"_{self.job_array_index}"
-            pol = "".join(self.pols)
+        Returns:
+            None
+        """
+        lens = "l" if self.lensing else "ul"
+        nn = "-nn" if not self.noise else ""
+        j = "" if self.job_array_index is None else f"_{self.job_array_index}"
+        pol = "".join(self.pols)
 
-            self.base_dir = self._get("base_dir", "data")
-            self.base_name = self._get(
-                "base_name",
-                f"l{self.lmax}_n{self.nside}_{l}{nn}_{pol}"
-            ) + f"x{self.total_sims}"
+        self.base_dir = self._get("base_dir", "data")
+        self.base_name = (
+            self._get("base_name", f"l{self.lmax}_n{self.nside}_{lens}{nn}_{pol}")
+            + f"x{self.total_sims}"
+        )
+        logger.info(f"Base name: {self.base_name}")
 
-            join_paths = lambda *args: os.path.join(self.base_dir, *args)
-            self.plot_dir = join_paths(self._get("plot_dir", "plots"))
-            self.tb_dir = join_paths(self._get("tb_dir", "tensorboard"))
-            self.model_dir = join_paths(self._get("model_dir", "models"))
-            self.alm_dir = join_paths(self._get("alm_dir", "alms"))
-            self.patch_dir = join_paths(self._get("patch_dir", "patches"))
-            self.alm_file_partial = os.path.join(self.alm_dir, f"{self.base_name}{j}.hdf5")
-            self.alm_file = os.path.join(self.alm_dir, f"{self.base_name}.hdf5")
-            self.patch_str = f"{self.base_name}x{self.npatches}"
-            self.patch_file = os.path.join(self.patch_dir, f"{self.patch_str}{j}.hdf5")
+        def join_paths(*args):
+            return os.path.join(self.base_dir, *args)
+
+        self.plot_dir = join_paths(self._get("plot_dir", "plots"))
+        self.tb_dir = join_paths(self._get("tb_dir", "tensorboard"))
+        self.model_dir = join_paths(self._get("model_dir", "models"))
+        self.alm_dir = join_paths(self._get("alm_dir", "alms"))
+        self.patch_dir = join_paths(self._get("patch_dir", "patches"))
+        self.alm_file_partial = os.path.join(self.alm_dir, f"{self.base_name}{j}.hdf5")
+        self.alm_file = os.path.join(self.alm_dir, f"{self.base_name}.hdf5")
+        self.patch_str = f"{self.base_name}x{self.npatches}"
+        self.patch_file = os.path.join(self.patch_dir, f"{self.patch_str}{j}.hdf5")
+
+    def icov(self, alm):
+        # TODO: Check and Optimize
+        B = self.beam_ell
+        N = self.noise_ell
+        S = self.c_ells[:, 0]  # try
+        iB = 1 / B
+        factor = (iB * N * iB + S) ** -1 * iB  # maybe working!?
+        return np.array([hp.almxfl(alm[0], factor[0])])
 
     def _init_cosmo(self):
         """
         Initializes the cosmology parameters and sets up the necessary objects for computation.
-
-        Note: If the `ksw` module is not found, a warning message is logged and the method returns.
-            This is used because the Trainer section does not have KSW installed
 
         Attributes:
             cosmo (Cosmology): An instance of the `Cosmology` class.
@@ -350,24 +364,14 @@ class Core:
             data (Data): An instance of the `Data` class.
             ksw (KSW): An instance of the `KSW` class.
 
-        Notes:
-            If the `ksw` module is not found this method will log a warning message and return without creating any of the attributes.
-
         Returns:
             None
         """
-        try:
-            from ksw import KSW, Cosmology, Data, Shape
-        except ImportError:
-            # needed since the trainer does not have ksw
-            logging.warning(
-                "The ksw module cannot be found. Please ensure it is installed and available."
-            )
-            return
-
         cosmo_params = self.cosmo_params
         camb_params_obj = camb.set_params(**cosmo_params)
         self.cosmo = cosmo = Cosmology(camb_params_obj)
+
+        logger.debug("Computing transfer functions and C_ell")
         cosmo.compute_transfer(cosmo_params["max_l"])
         cosmo.compute_c_ell()
 
@@ -375,13 +379,12 @@ class Core:
         loc_shape = Shape.prim_local(cosmo_params["ns"], cosmo_params["pivot_scalar"])
         cosmo.add_prim_reduced_bispectrum(loc_shape, self.radii)
 
+        logger.debug("Setting up data and KSW")
         self.data = Data(self.lmax, self.noise_ell, self.beam_ell, self.pols, cosmo)
         if self.lensing:
             self.c_ells = cosmo.c_ell["lensed_scalar"]  # type: ignore
-            self.icov = self.data.icov_diag_lensed
         else:
             self.c_ells = cosmo.c_ell["unlensed_scalar"]  # type: ignore
-            self.icov = self.data.icov_diag_nonlensed
         self.c_ells = self.c_ells["c_ell"][: self.nell]
 
         self.ksw = KSW(
@@ -392,13 +395,14 @@ class Core:
             self.pols,
             self.precision,
         )
+        logger.debug("done with KSW")
 
     def _init_almgen(self):
         """
         Initialize the alm generator attributes.
 
-        This method initializes the alm generator by setting up the alm shape, 
-        determining whether to force alm generation, and preparing the transfer 
+        This method initializes the alm generator by setting up the alm shape,
+        determining whether to force alm generation, and preparing the transfer
         function for the given cosmology.
 
         Attributes:
@@ -427,7 +431,7 @@ class Core:
         """
         Initialize the patch generator attributes.
 
-        This method initializes the patch generator by setting up the patch side in degrees, 
+        This method initializes the patch generator by setting up the patch side in degrees,
         the number of patches, the total number of patches, and the patch shape.
 
         Attributes:
@@ -468,9 +472,10 @@ class Core:
 
     def _beam(self, width=None, lmax=None, pol=True):
         """
-        Generate a Gaussian beam.
+        Generate a Gaussian beam window function for use in the KSW code.
 
-        Uses the form: B_ell = exp(-(ells * (ells + 1) * fwhm**2) / (16 * np.log(2)))
+        Note:
+            Uses the form: B_ell = exp(-(ells * (ells + 1) * fwhm**2) / (16 * np.log(2)))
 
         Args:
             width (float): The FWHM of the Gaussian beam in rad. If None, uses self.beam_width.
@@ -478,7 +483,7 @@ class Core:
             pol (bool): Whether to include polarization. Default is True.
 
         Returns:
-            np.ndarray: A Gaussian beam.
+            np.ndarray: A Gaussian beam in (npol, nell)
         """
         if width is None:
             width = self.beam_width
@@ -488,48 +493,69 @@ class Core:
         beam = hp.gauss_beam(width, lmax=lmax, pol=pol)
         return np.swapaxes(beam, 0, 1) if pol else np.array([beam])
 
-    def conv_beam(self):
+    def conv_beam(self):  # change name
         """
-        Returns a function which KSW can use to convolve the alms with the beam. 
+        Returns a function which KSW can use to convolve the alms with the beam.
         If beam_width is 0, returns the identity function.
 
         Returns:
             function: A function that takes alm values and returns the convolved beam.
-
-        Assumptions:
-            Assumes that beam_width and beam_ell are correctly set.
         """
-        # return lambda alm: alm
         if self.beam_width == 0.0:
+            # Dont need to bother with anything if beam_width is 0
             return lambda alm: alm
 
         def __beam(alm):
             # Convolve the beam with the alm values
-            ret = hp.almxfl(alm, self.beam_ell, inplace=False)
+            ret = np.empty_like(alm)
+            for pol in range(alm.shape[0]):
+                ret[pol] = hp.almxfl(alm[pol], self.beam_ell[pol], inplace=True)
             return ret
 
         return __beam
 
     def _setup_noise_beam(self):
         """
-        Setup the noise and beam arrays.
+        Set up the noise and beam parameters for the MLPNG model.
 
-        This method sets up the noise and beam arrays based on the noise attribute and the polarization types.
+        This method initializes the noise and beam parameters based on the configuration settings.
+        If the noise parameter is set to False, the noise is set to a very small value to avoid a singular matrix
+        in the inverse covariance. The beam width is set to 0 in this case.
+
+        If the noise parameter is set to True, the noise and beam parameters are retrieved from the configuration
+        settings. The beam width and noise scales for temperature (TT), E-mode polarization (EE), and
+        temperature-E-mode polarization (TE) are converted from arcminutes to radians.
+
+        The beam and noise ell values are computed based on the polarization settings and stored in the
+        `noise_ell` and `beam_ell` attributes.
+
+        Returns:
+            None
         """
-
         self.noise = self._get("noise", True)
         if not self.noise:
-            self.beam_width = 0
-            self.noise_scale_tt = self.noise_scale_ee = self.noise_scale_te = 10**-16
-            self.noise_ell = np.full((self.nell), 10**-16, dtype=self.r_dtype)
-            self.beam_ell = np.ones((self.nell), dtype=self.r_dtype)
+            # we cannot set the noise to 0 as this will cause a singular matrix in the inverse covariance
+            # so we set it to a very small value
+            epsilon_noise = (1e-6 * u.arcmin).to_value(u.radian)
+            self.beam_width = 0  # the beam can be 0, no problems
+
+            self.noise_scale_tt = self.noise_scale_ee = self.noise_scale_te = (
+                epsilon_noise
+            )
+            self.noise_ell = np.full(
+                (self.npol, self.nell), epsilon_noise, dtype=self.r_dtype
+            )
+            self.beam_ell = np.ones((self.npol, self.nell), dtype=self.r_dtype)
             return
 
-        convert = lambda x: (x * u.arcmin).to_value(u.radian)
+        def convert(x):
+            """Helper function to convert from arcmin to radians for settings."""
+            return (x * u.arcmin).to_value(u.radian)
+
         self.beam_width = convert(self._get("beam_width", 0))
-        self.noise_scale_tt = convert(self._get("noise_scale_tt", 1e-16))
-        self.noise_scale_ee = convert(self._get("noise_scale_ee", 1e-16))
-        self.noise_scale_te = convert(self._get("noise_scale_te", 1e-16))
+        self.noise_scale_tt = convert(self._get("noise_scale_tt", 1))
+        self.noise_scale_ee = convert(self._get("noise_scale_ee", 1))
+        self.noise_scale_te = convert(self._get("noise_scale_te", 1))
 
         beam = self._beam()
 
