@@ -25,10 +25,7 @@ def setup_logging(
                 RichHandler(
                     show_time=False,
                     show_level=False,
-                    show_path=False,
-                    rich_tracebacks=True,
-                    locals_max_length=3,
-                    locals_max_string=None,
+                    rich_tracebacks=True
                 )
             ]
 
@@ -41,6 +38,8 @@ def setup_logging(
 
     logger = logging.getLogger(name)
     logger.setLevel(level)
+    logging.getLogger("matplotlib").setLevel(logging.WARNING)
+    logging.getLogger("healpy").setLevel(logging.WARNING)
     return logger
 
 
@@ -48,36 +47,36 @@ def save_data(file_path, data_dict, mode="x"):
     logger.info("Saving data to %s", file_path)
     with h5py.File(file_path, mode) as hf:
         for key, value in data_dict.items():
-            logger.debug("Processing key %s", key)
+            logger.debug("%s: Processing key", key)
             if isinstance(value, dict):
-                logger.debug("Processing dict for key %s", key)
+                logger.debug("%s: Processing dict", key)
                 grp = hf.create_group(key)
                 for k, v in value.items():
-                    # grp[k] = json.dumps(v)
-                    logger.debug("Processing subkey %s", k)
+                    logger.debug("%s: Processing subkey %s", key, k)
                     grp.create_dataset(k, data=np.array(v))
 
                 continue
 
             if isinstance(value, np.ndarray):
-                logger.debug("Processing ndarray for key %s", key)
+                logger.debug("%s: Processing ndarray", key)
                 if key in hf:
-                    logger.debug("Appending to existing dataset for key %s", key)
+                    logger.debug("%s: Appending to existing", key)
                     # Resize the dataset to accommodate the new data
                     hf[key].resize((hf[key].shape[0] + value.shape[0],) + value.shape[1:])  # type: ignore
                     # Append the new data
                     hf[key][-value.shape[0] :] = value  # type: ignore
                 else:
                     # Create a new dataset for this key
-                    logger.debug("Creating new dataset for key %s", key)
+                    logger.debug("%s: Creating new dataset", key)
                     hf.create_dataset(
                         key, data=value, maxshape=(None,) + value.shape[1:]
                     )
             else:
                 # For other data types, create a dataset
-                logger.debug("Creating dataset for key %s of unknown type", key)
+                logger.warning("Creating dataset for key %s of unknown type", key)
                 hf.create_dataset(key, data=value)
-    logger.debug("Finished saving data to %s", file_path)
+            logger.debug("%s: Done", key)
+    logger.debug("Finished saving %s", file_path)
 
 
 def load_data(data_file, keys):
@@ -89,12 +88,12 @@ def load_data(data_file, keys):
     data = {}
     with h5py.File(data_file, "r", swmr=True, locking=False) as hdf:
         for key in keys:
-            logger.debug("Loading key %s", key)
+            logger.debug("%s: Loading", key)
             kv = hdf.get(key, None)
             if kv is None:
                 raise ValueError(f"Key {key} not found in {data_file}")
             logger.debug(
-                "Loaded key %s, %s", key, kv.shape if isinstance(kv, np.ndarray) else kv
+                "%s: Loaded, %s", key, kv.shape if isinstance(kv, np.ndarray) else kv
             )
             data[key] = kv[()]  # type: ignore
 
@@ -110,7 +109,7 @@ def log_source(func):
 
 
 def remove_mono_dipole(alm):
-    """about:blank#blocked
+    """
     Remove the monopole and dipole terms from the alms.
     Note that we do not need -m's due to symmetry
     """
