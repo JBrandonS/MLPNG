@@ -6,14 +6,15 @@ import healpy as hp
 import lenspyx
 import matplotlib.pyplot as plt
 import numpy as np
-from core import Core
 from joblib import Parallel, delayed
 from pixell import curvedsky, enmap, reproject
 from tqdm.auto import tqdm
-from utils import load_data, save_data, setup_logging
-from utils.plots import plot_cl, plot_cl_map, plot_patches
 
-logger = setup_logging(__name__)
+from . import Core
+from .utils import load_data, save_data, setup_logging
+from .utils.plots import plot_cl, plot_cl_map, plot_patches
+
+logger = setup_logging(__name__, level=logging.DEBUG)
 
 
 def cutSqPatches_lenspyx(
@@ -41,15 +42,12 @@ def cutSqPatches_lenspyx(
     # Create a full sky map with lenspyx
     plm = lenspyx.utils_hp.synalm(cl_phi, lmax=max_l, mmax=None, rlm_dtype=r_dtype)
     fl = np.sqrt(np.arange(max_l + 1) * np.arange(1, max_l + 2), dtype=r_dtype)
-    dlm = lenspyx.utils_hp.almxfl(plm, fl, mmax=None, inplace=True)
+    dlm = lenspyx.utils_hp.almxfl(plm, fl, mmax=None, inplace=False)
 
     lens_map = lenspyx.alm2lenmap(
-        alm,
-        dlm,
-        geometry=geom_info,
-        nthreads=4,
-        epsilon=1e-6,
-        pol=True,
+        alm.copy(),
+        dlm.copy(),
+        geometry=geom_info
     )
     pixell_map = reproject.healpix2map(lens_map, fs_shape, fs_wcs, lmax)
 
@@ -114,7 +112,7 @@ def cutSqPatches_pixell(
     return patches
 
 
-def get_fs_patch_geo():
+def get_fs_patch_geo(s):
     """Generates the patch geometry using pixell"""
     ps_rad = np.deg2rad(s.patch_side_deg)
     res = ps_rad / s.nside
@@ -164,15 +162,12 @@ if __name__ == "__main__":
         # for partial files, we can just start at 0
         start_idx = 0
     else:
-        logger.fatal("No alms found, please run almgen.py first or check configuration")
+        logger.fatal(f"No alms found. Checked {s.alm_file_partial} and {s.alm_file}, please run almgen.py first or check configuration")
         exit(1)
 
     # and read in our alms and almngs, since ldata is a h5 dataset these are not in memory
     alms = ldata["alm"]
     fnls = ldata["fnl"]
-
-    # Here we get the geometry of our patches in a tuple
-    patch_geo = get_fs_patch_geo()
 
     # we also setup the cutPatches function to use either pixell or lenspyx
     # depending on if we are doing lensing or not, and provide a lot of
@@ -184,11 +179,11 @@ if __name__ == "__main__":
         s.base_name,
         s.npatches,
         s.c_ells,
-        *patch_geo,
+        *get_fs_patch_geo(s),
     ]
     if s.lensing:
         max_l = s.cosmo_params["max_l"]
-        cl_phi = s.cosmo._camb_data.get_lens_potential_cls( # type: ignore
+        cl_phi = s.cosmo._camb_data.get_lens_potential_cls(  # type: ignore
             max_l, CMB_unit="muK", raw_cl=True
         )[:, 0]
 

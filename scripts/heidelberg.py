@@ -11,9 +11,9 @@ mpi_comm = MPI.COMM_WORLD
 mpi_rank = mpi_comm.rank
 mpi_root = mpi_rank == 0
 
-import Core
-from utils import setup_logging, remove_mono_dipole
-from utils.plots import plot_cl_alm, plot_predictions
+from . import Core
+from .utils import remove_mono_dipole, setup_logging
+from .utils.plots import plot_cl_alm, plot_predictions
 
 logger = setup_logging(
     name=f"heidelberg_estimator_{mpi_rank}",
