@@ -18,5 +18,5 @@ module load gcc/11.2.0 intel-oneapi-mkl/2022.2.1-c4efjsy fftw/3.3.10-gz7qiki ope
 eval "$(conda shell.bash hook)"
 conda activate mlpng
 
-time srun python scripts/almgen.py "$@"
+time srun python -m scripts.almgen "$@"
 

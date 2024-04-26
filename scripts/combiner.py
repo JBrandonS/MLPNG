@@ -1,15 +1,15 @@
 import glob
+import logging
 import os
 import re
-import logging
 
 import h5py
 from tqdm.auto import tqdm
-from utils import setup_logging
-from core import Core
 
-logger = setup_logging(__name__)
-logger.setLevel(logging.DEBUG)
+from . import Core
+from .utils import setup_logging
+
+logger = setup_logging(__name__, level=logging.DEBUG)
 
 
 def extract_number(filename):
@@ -55,6 +55,7 @@ def recursive_copy(hf_source, hf_dest):
                     hf_dest.create_dataset(
                         key, data=[hf_source[key][()]], maxshape=(None,)
                     )
+        logger.debug("%s: Done", key)
 
 
 def combine_data(directory, base_name, ext, remove_files=True):

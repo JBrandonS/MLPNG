@@ -1,42 +1,36 @@
 import logging
 import os
 
-import camb
 import h5py
-import healpy as hp
 import numpy as np
-from core import Core
-from ksw import KSW, Cosmology, Data, Shape
 from mpi4py import MPI
-from utils import save_data, setup_logging
-from utils.plots import plot_histogram, plot_predictions
+
+from . import Core
+from .utils import save_data, setup_logging
+from .utils.plots import plot_histogram, plot_predictions
 
 mpi_comm = MPI.COMM_WORLD
 mpi_rank = mpi_comm.Get_rank()
 mpi_size = mpi_comm.Get_size()
 mpi_root = mpi_rank == 0
 
+# estimator will run multiple jobs per id which get sent to the same log file, 
+# so we only want to log the root to keep from spamming the log
 logger = setup_logging(
-    name=f"{__name__}_{mpi_rank}", level=logging.INFO if mpi_root else logging.ERROR
+    name=f"{__name__}_{mpi_rank}", level=logging.DEBUG if mpi_root else logging.ERROR
 )
-if mpi_root:
-    logging.getLogger("Core").setLevel(logging.DEBUG)
-    logging.getLogger("utils").setLevel(logging.DEBUG)
-logging.getLogger("healpy").setLevel(logging.ERROR)
-logging.getLogger("astropy").setLevel(logging.ERROR)
 
 
-def alm_loader(str_idx):
-    """Loads in a single alm given a int in string form. Used inside the KSW code."""
-    idx, pol = np.unravel_index(int(str_idx), (s.total_sims, s.npol))
+def alm_loader(idx):
+    """Loads in a single alm given an idx. Used inside the KSW code."""
+    idx, pol = np.unravel_index(int(idx), (s.total_sims, s.npol))
     logger.debug("Sending alm (%s, %s) with fnl %s", idx, pol, fnls[idx, pol])
     return np.array(alms[idx, pol])
 
 
 def alm_step_loader(idx):
     """
-    Used in the KSW step code to init the MC
-    needs a gaussian realization of signal + noise
+    for stepping the KSW estimator, we just generate new unique sims
     """
     logger.debug("Sending alm step %s", idx)
     return s.data.compute_alm_sim(s.lensing)
@@ -45,8 +39,8 @@ def alm_step_loader(idx):
 if __name__ == "__main__":
     s = Core()
 
-    # there is a major bug in the KSW code that requires the total_sims to be >= mpi_size
-    assert s.total_sims >= mpi_size, "total_sims < mpi_size, lower ntasks"
+    # the KSW code requires the total_sims to be >= mpi_size
+    assert s.total_sims >= mpi_size, "total_sims < mpi_size, lower ntasks or increase sims"
 
     # early loading to fail fast
     alm_file = h5py.File(s.alm_file, "r", swmr=True, locking=False)
@@ -69,10 +63,10 @@ if __name__ == "__main__":
         idxs = range(max(100, mpi_size))
 
         # we dont actually need to batch the thetas, so just set it to the full amount
-        thetas = int(np.floor(1.5 * s.lmax + 1))
+        theta_batch = int(np.floor(1.5 * s.lmax + 1))
 
         # step the MC, actually does the work
-        s.ksw.step_batch(alm_step_loader, idxs, comm=mpi_comm, theta_batch=thetas)
+        s.ksw.step_batch(alm_step_loader, idxs, comm=mpi_comm, theta_batch=theta_batch)
 
         # save the mc state if we are using the mc file
         if use_mc_file and mpi_root:
@@ -85,7 +79,6 @@ if __name__ == "__main__":
     # note that these are not fully loaded into memory
     alms = alm_file["alm"]
     fnls = alm_file["fnl"]
-    logger.debug(f"using alms: {alms.shape}, fnls: {fnls.shape}")
 
     # only do at most 1k estimates right now
     num_est = min(1000, s.total_sims)
@@ -99,12 +92,14 @@ if __name__ == "__main__":
         alm_loader, idxs, comm=mpi_comm, fisher=fisher
     )
 
+    # close the file, prevents an error when saving
+    alm_file.close()
+
     if mpi_root:
         logger.info("Saving data")
 
         # first, need to close the existing file or we get an error
         fnls = np.array(fnls[idxs]).flatten()
-        alm_file.close()
 
         # save the data, this will append to the alm_file
         sdata = {}
