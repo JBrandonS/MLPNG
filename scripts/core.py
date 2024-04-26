@@ -11,7 +11,12 @@ import numpy as np
 import rich
 from astropy import units as u
 
-from ksw import KSW, Cosmology, Data, Shape
+try:
+    # I have not been able to get KSW installed on superpod, but want most of this.
+    # TODO install ksw on superpod
+    from ksw import KSW, Cosmology, Data, Shape
+except ImportError:
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +126,7 @@ class Core:
         logger.debug(f"Parsing CLI args: {args}")
         return parser.parse_args(args)
 
-    def __init__(self, argv=None, inspect_class=False):
+    def __init__(self, argv=None, inspect_class=False, trainer=False):
         """
         Initializes a new instance of the `Core` class.
 
@@ -212,8 +217,9 @@ class Core:
         self._setup_noise_beam()
         self._setup_radii()
         self._init_slurm()
-        self._init_cosmo()
-        self._init_almgen()
+        if not trainer:
+            self._init_cosmo()
+            self._init_almgen()
         self._init_patchgen()
         self._init_paths()
 
