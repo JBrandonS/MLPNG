@@ -112,6 +112,7 @@ class Core:
         parser.add_argument("--beam_width", type=float)
 
         parser.add_argument("--fnl_range", type=float, nargs=2)
+        parser.add_argument("--polarizations", nargs="*", type=str)
 
         # for BooleanOptionalAction: --flag will set the value `flag` to True, --no-flag will set `flag` to False
         # otherwise it will be none
@@ -124,7 +125,16 @@ class Core:
         parser.add_argument("--save_settings", action="store_true")
 
         logger.debug(f"Parsing CLI args: {args}")
-        return parser.parse_args(args)
+        parsed_args = parser.parse_args(args)
+
+        if parsed_args.polarizations is not None:
+            for pol in parsed_args.polarizations:
+                if pol not in ["T", "E"]:
+                    raise ValueError(
+                        f"Invalid polarization: {pol}. Polarizations must be either 'T' or 'E'."
+                    )
+
+        return parsed_args
 
     def __init__(self, argv=None, inspect_class=False, trainer=False):
         """
@@ -213,7 +223,7 @@ class Core:
         logger.debug(f"Using {self.precision} precision, where possible")
 
         # split the rest of this function into a few smaller functions for readability
-        # each of these modifies attributes of the class
+        # each of these modifies attributes of the object
         self._setup_noise_beam()
         self._setup_radii()
         self._init_slurm()
@@ -351,13 +361,31 @@ class Core:
         self.patch_file = os.path.join(self.patch_dir, f"{self.patch_str}{j}.hdf5")
 
     def icov(self, alm):
-        # TODO: Check and Optimize
-        B = self.beam_ell
-        N = self.noise_ell
-        S = self.c_ells[:, 0]  # try
-        iB = 1 / B
-        factor = (iB * N * iB + S) ** -1 * iB  # maybe working!?
-        return np.array([hp.almxfl(alm[0], factor[0])])
+        """
+        Returned the inverse covariance of the data, used in the KSW estimator.
+
+        Function takes (npol, nelem) alm-like complex array "a" and returns the
+        inverse-variance-weighted version of that array. Specifically:
+        (B^{-1} N B^{-1} + S)^{-1} B^{-1} a, where a = B s + n, B is the beam
+        and N^{-1} and S^{-1} are the inverse noise and signal covariance
+        matrices, respectively.
+
+        Parameters:
+        - alm (ndarray): (npol, nelem) alm-like complex array.
+
+        Returns:
+        - ndarray: Inverse-variance-weighted version of the input array.
+
+        """
+        ret = np.empty_like(alm)
+        for pol in range(alm.shape[0]):
+            B = self.beam_ell[pol]
+            iB = 1 / B
+            N = self.noise_ell[pol]
+            S = self.c_ells[:, pol]
+            factor = (iB * N * iB + S) ** -1 * iB
+            ret[pol] = hp.almxfl(alm[pol], factor, inplace=False)
+        return ret
 
     def _init_cosmo(self):
         """
@@ -386,6 +414,9 @@ class Core:
         cosmo.add_prim_reduced_bispectrum(loc_shape, self.radii)
 
         logger.debug("Setting up data and KSW")
+        logger.info(
+            f"beam {self.beam_ell.shape}, noise {self.noise_ell.shape}, pols {self.pols}"
+        )
         self.data = Data(self.lmax, self.noise_ell, self.beam_ell, self.pols, cosmo)
         if self.lensing:
             self.c_ells = cosmo.c_ell["lensed_scalar"]  # type: ignore
@@ -396,7 +427,7 @@ class Core:
         self.ksw = KSW(
             self.cosmo.red_bispectra,
             self.icov,
-            self.conv_beam(),
+            self.conv_beam_func(),
             self.lmax,
             self.pols,
             self.precision,
@@ -464,42 +495,7 @@ class Core:
             self.nside,
         )
 
-    def _noise_ell(self, scale=1.0):
-        """
-        Generate a constant noise array of a given scale.
-
-        Args:
-            scale (float): The scale of the noise, in muK^2 rad. Default is 1.0.
-
-        Returns:
-            np.ndarray: A noise array of the given scale.
-        """
-        return np.full((self.nell), scale, dtype=self.r_dtype)
-
-    def _beam(self, width=None, lmax=None, pol=True):
-        """
-        Generate a Gaussian beam window function for use in the KSW code.
-
-        Note:
-            Uses the form: B_ell = exp(-(ells * (ells + 1) * fwhm**2) / (16 * np.log(2)))
-
-        Args:
-            width (float): The FWHM of the Gaussian beam in rad. If None, uses self.beam_width.
-            lmax (int): The maximum l value. If None, uses self.lmax.
-            pol (bool): Whether to include polarization. Default is True.
-
-        Returns:
-            np.ndarray: A Gaussian beam in (npol, nell)
-        """
-        if width is None:
-            width = self.beam_width
-        if lmax is None:
-            lmax = self.lmax
-
-        beam = hp.gauss_beam(width, lmax=lmax, pol=pol)
-        return np.swapaxes(beam, 0, 1) if pol else np.array([beam])
-
-    def conv_beam(self):  # change name
+    def conv_beam_func(self):  # change name
         """
         Returns a function which KSW can use to convolve the alms with the beam.
         If beam_width is 0, returns the identity function.
@@ -515,14 +511,14 @@ class Core:
             # Convolve the beam with the alm values
             ret = np.empty_like(alm)
             for pol in range(alm.shape[0]):
-                ret[pol] = hp.almxfl(alm[pol], self.beam_ell[pol], inplace=True)
+                ret[pol] = hp.almxfl(alm[pol], self.beam_ell[pol], inplace=False)
             return ret
 
         return __beam
 
     def _setup_noise_beam(self):
         """
-        Set up the noise and beam parameters for the MLPNG model.
+        Set up the noise and beam parameters for the Core object.
 
         This method initializes the noise and beam parameters based on the configuration settings.
         If the noise parameter is set to False, the noise is set to a very small value to avoid a singular matrix
@@ -530,7 +526,7 @@ class Core:
 
         If the noise parameter is set to True, the noise and beam parameters are retrieved from the configuration
         settings. The beam width and noise scales for temperature (TT), E-mode polarization (EE), and
-        temperature-E-mode polarization (TE) are converted from arcminutes to radians.
+        temperature-E-mode polarization (TE) are converted from muK arcminutes to muK radians.
 
         The beam and noise ell values are computed based on the polarization settings and stored in the
         `noise_ell` and `beam_ell` attributes.
@@ -549,13 +545,13 @@ class Core:
                 epsilon_noise
             )
             self.noise_ell = np.full(
-                (self.npol, self.nell), epsilon_noise, dtype=self.r_dtype
+                (self.npol, self.nell), epsilon_noise**2, dtype=self.r_dtype
             )
             self.beam_ell = np.ones((self.npol, self.nell), dtype=self.r_dtype)
             return
 
         def convert(x):
-            """Helper function to convert from arcmin to radians for settings."""
+            """Helper function to convert from arcmin to radians."""
             return (x * u.arcmin).to_value(u.radian)
 
         self.beam_width = convert(self._get("beam_width", 0))
@@ -563,19 +559,23 @@ class Core:
         self.noise_scale_ee = convert(self._get("noise_scale_ee", 1))
         self.noise_scale_te = convert(self._get("noise_scale_te", 1))
 
-        beam = self._beam()
+        beam = hp.gauss_beam(self.beam_width, lmax=self.lmax, pol=True)  # (nell, npol)
+        beam = np.swapaxes(beam, 0, 1)  # convert beam to (npol, nell)
+        noise = np.ones((self.nell), dtype=self.r_dtype)
 
+        # here we setup the noise_ell and beam_ell attributes, these are in TT, EE, TE order
+        # Note that B modes are not supported by the KSW code, and only TT has been tested to any extent
         noise_ell = []
         beam_ell = []
         if "T" in self.pols:
             beam_ell.append(beam[0])
-            noise_ell.append(self._noise_ell(self.noise_scale_tt))
+            noise_ell.append(noise * self.noise_scale_tt**2)
         if "E" in self.pols:
             beam_ell.append(beam[1])
-            noise_ell.append(self._noise_ell(self.noise_scale_ee))
+            noise_ell.append(noise * self.noise_scale_ee**2)
         if self.pols == ["T", "E"]:
-            beam_ell.append(beam[3])
-            noise_ell.append(self._noise_ell(self.noise_scale_te))
+            # beam_ell.append(beam[3]) # beam doesnt need to be set for TE
+            noise_ell.append(noise * self.noise_scale_te**2)
         self.noise_ell = np.array(noise_ell)
         self.beam_ell = np.array(beam_ell)
 

@@ -12,12 +12,14 @@
 
 # list of the settings file to be used, will be ran in order
 SETTINGS=(
+  "heidelberg"
   "planck"
+  "l500_n128"
 )
 
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
 ARGS=(
-  # "--nsims" "200"
+  "--nsims" "100"
   # "--lensing"
   # "--noise" 
   # "--narray" "50" # change slurm args array to match this

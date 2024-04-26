@@ -59,15 +59,17 @@ def generate_alm_ng(s, alms):
     div = beta_ell / tr_c_ells[np.newaxis, :, :]
     bl_div_cl = interpolator(div, s.tr_ells)(ells)
 
+    logger.info("Starting Alm_ng generation")
+
     # We use joblib.parallel to generate the patches in parallel
     # by default (temp_folder=None) this will use a ram disk /dev/shm
     # if the data files are larger than the available memory, it will error
     # so we give it a temp folder to use, which wont have that problem
+    # I also use return_as generator which allows us to consume the results as they are generated (in order),
+    # this helps prevent memory issues
     temp_folder = os.environ.get("SCRATCH", None)
-    parallel = Parallel(n_jobs=-1, return_as="generator", temp_folder=temp_folder)
-
-    logger.info("Starting Alm_ng generation")
     logger.debug(f"Using temp folder for Alm_ng generation: {temp_folder}")
+    parallel = Parallel(n_jobs=-1, return_as="generator", temp_folder=temp_folder)
     alm_ng = np.empty(s.alm_shape, dtype=s.c_dtype)
     for i, pol in tqdm(s.sim_pol, total=s.sim_pol_len, desc="Alm_ng"):
         generator = parallel(
@@ -83,6 +85,7 @@ def generate_alm_ng(s, alms):
             for ri in range(len(s.drs))
         )
 
+        # here we consume the generator and sum the results
         alm_ng[i, pol] = sum(generator)
     return alm_ng
 

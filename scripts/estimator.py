@@ -14,21 +14,21 @@ mpi_rank = mpi_comm.Get_rank()
 mpi_size = mpi_comm.Get_size()
 mpi_root = mpi_rank == 0
 
-# estimator will run multiple jobs per id which get sent to the same log file, 
+# estimator will run multiple jobs per id which get sent to the same log file,
 # so we only want to log the root to keep from spamming the log
 logger = setup_logging(
     name=f"{__name__}_{mpi_rank}", level=logging.DEBUG if mpi_root else logging.ERROR
 )
 
 
-def alm_loader(idx):
+def _estimator_loader(idx):
     """Loads in a single alm given an idx. Used inside the KSW code."""
     idx, pol = np.unravel_index(int(idx), (s.total_sims, s.npol))
     logger.debug("Sending alm (%s, %s) with fnl %s", idx, pol, fnls[idx, pol])
     return np.array(alms[idx, pol])
 
 
-def alm_step_loader(idx):
+def _step_loader(idx):
     """
     for stepping the KSW estimator, we just generate new unique sims
     """
@@ -40,10 +40,16 @@ if __name__ == "__main__":
     s = Core()
 
     # the KSW code requires the total_sims to be >= mpi_size
-    assert s.total_sims >= mpi_size, "total_sims < mpi_size, lower ntasks or increase sims"
+    assert (
+        s.total_sims >= mpi_size
+    ), "total_sims < mpi_size, lower ntasks or increase sims"
 
     # early loading to fail fast
     alm_file = h5py.File(s.alm_file, "r", swmr=True, locking=False)
+
+    # we dont actually need to batch the thetas, so just set it to the full amount
+    # planck levels needed this reduction
+    theta_batch = int(np.floor(1.5 * s.lmax + 1)) // 10
 
     # check for existing ksw state, if it exists, load it
     # otherwise, run the MC, can take a few hours
@@ -62,11 +68,8 @@ if __name__ == "__main__":
         # so we just set it to mpi_size if mpi_size > 100
         idxs = range(max(100, mpi_size))
 
-        # we dont actually need to batch the thetas, so just set it to the full amount
-        theta_batch = int(np.floor(1.5 * s.lmax + 1))
-
         # step the MC, actually does the work
-        s.ksw.step_batch(alm_step_loader, idxs, comm=mpi_comm, theta_batch=theta_batch)
+        s.ksw.step_batch(_step_loader, idxs, comm=mpi_comm, theta_batch=theta_batch)
 
         # save the mc state if we are using the mc file
         if use_mc_file and mpi_root:
@@ -89,7 +92,12 @@ if __name__ == "__main__":
     )
     idxs = range(num_est)
     estimates = s.ksw.compute_estimate_batch(
-        alm_loader, idxs, comm=mpi_comm, fisher=fisher
+        _estimator_loader,
+        idxs,
+        comm=mpi_comm,
+        fisher=fisher,
+        theta_batch=theta_batch,
+        verbose=True,
     )
 
     # close the file, prevents an error when saving
