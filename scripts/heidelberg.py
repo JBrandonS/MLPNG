@@ -7,24 +7,18 @@ import numpy as np
 from ksw import KSW, Cosmology, Data, Shape
 from mpi4py import MPI
 
-mpi_comm = MPI.COMM_WORLD
-mpi_rank = mpi_comm.rank
-mpi_root = mpi_rank == 0
-
 from . import Core
 from .utils import remove_mono_dipole, setup_logging
 from .utils.plots import plot_cl_alm, plot_predictions
 
+mpi_comm = MPI.COMM_WORLD
+mpi_rank = mpi_comm.rank
+mpi_root = mpi_rank == 0
+
 logger = setup_logging(
     name=f"heidelberg_estimator_{mpi_rank}",
-    level=logging.INFO if mpi_root else logging.FATAL,
+    level=logging.INFO if mpi_root else logging.ERROR,
 )
-
-# fix healpy logging because we will get a lot of info
-logging.getLogger("healpy").setLevel(logging.WARNING)
-
-# remove astropy warning about verbose that I can't change
-logging.getLogger("astropy").setLevel(logging.ERROR)
 
 
 def alm_loader(str_idx):
@@ -43,9 +37,6 @@ def alm_loader(str_idx):
 
     alms = (alm_heidelberg_l + fnl * alm_heidelberg_nl) * t_scale
     alms = remove_mono_dipole(alms)
-
-    beam_ell_2d = np.atleast_2d(s.beam_ell)
-    alms = hp.almxfl(alms, beam_ell_2d[0] ** -1)
     return alms
 
 
@@ -54,38 +45,13 @@ def alm_step_loader(idx):
     return data.compute_alm_sim(s.lensing)
 
 
-def alm_step_loader2(str_idx):
-    idx = str_idx.zfill(4)
-    base1 = f"data/heidelberg/alm_l_{idx}_v3.fits"
-    alm_heidelberg_l = np.array(hp.read_alm(base1, hdu=1))
-    alm_h_l = remove_mono_dipole(alm_heidelberg_l)
-
-    t_scale = 2.7255 * 10 ** (6)
-    return alm_h_l * t_scale
-
-
-def compute_icov_ell(N, b):
-    S_ell = cosmo._camb_data.get_cmb_power_spectra(
-        cosmo.camb_params,
-        s.lmax,
-        ["total"],
-        "muK",
-        True,
-    )["total"][:, 0]
-    b_inv = 1 / b
-    return (1 / (S_ell + b_inv * N * b_inv))[None, :]
-
-
-def beam(alm):
-    return hp.sphtfunc.smoothalm(alm, fwhm=s.beam_width, inplace=False)
-
-
 if __name__ == "__main__":
     """
     A test script to run the KSW estimator just on the heildelberg sims.
     Probably not up to date with the latest changes in estimator.
     """
     import sys
+
     args = sys.argv[1:]
     s = Core(["settings/heidelberg.json"] + args)
 
@@ -141,11 +107,6 @@ if __name__ == "__main__":
 
         cl_file = os.path.join(plot_dir, f"{s.sjob}-{s.base_name}_cl.png")
         c_ells = data.cosmology.c_ell["unlensed_scalar"]
-        plot_cl_alm(
-            alm_loader("1"),
-            save_file=cl_file,
-            plot_camb=True,
-            c_ells=c_ells
-        )
+        plot_cl_alm(alm_loader("1"), save_file=cl_file, plot_camb=True, c_ells=c_ells)
 
     logger.info("Finished %s!", mpi_rank)

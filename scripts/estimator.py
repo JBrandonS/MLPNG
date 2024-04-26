@@ -48,7 +48,8 @@ if __name__ == "__main__":
     alm_file = h5py.File(s.alm_file, "r", swmr=True, locking=False)
 
     # we dont actually need to batch the thetas, so just set it to the full amount
-    theta_batch = int(np.floor(1.5 * s.lmax + 1))
+    # planck levels needed this reduction
+    theta_batch = int(np.floor(1.5 * s.lmax + 1)) // 10
 
     # check for existing ksw state, if it exists, load it
     # otherwise, run the MC, can take a few hours
@@ -91,7 +92,12 @@ if __name__ == "__main__":
     )
     idxs = range(num_est)
     estimates = s.ksw.compute_estimate_batch(
-        _estimator_loader, idxs, comm=mpi_comm, fisher=fisher, theta_batch=theta_batch
+        _estimator_loader,
+        idxs,
+        comm=mpi_comm,
+        fisher=fisher,
+        theta_batch=theta_batch,
+        verbose=True,
     )
 
     # close the file, prevents an error when saving

@@ -10,9 +10,11 @@
         "lmax": 1024
     },
     "nsims" : 1000,
+    "narray": 100, 
     "fnl_range":[-1000, 1000],        
     "nside":512,
     "noise_scale_tt" : 500,
     "beam_width" : 10,
-    "lensing": false
+    "lensing": false,
+    "base_name": "heidelberg"
 }
