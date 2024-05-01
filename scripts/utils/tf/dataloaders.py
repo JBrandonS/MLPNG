@@ -11,6 +11,7 @@ from numpy import unravel_index
 from numpy.random import default_rng
 from tensorflow.data import AUTOTUNE, Dataset
 from tensorflow.data.experimental import assert_cardinality
+from tensorflow.keras import Input
 from tensorflow.keras.utils import Sequence
 
 
@@ -74,7 +75,23 @@ class DataLoaderBase(Sequence):
         num_replicas="auto",
         init_ds=True,
     ):
-        # setup some attrributes
+        """
+        Initializes a DataLoader object.
+
+        Args:
+            file_path (str): The path to the file.
+            name (str, optional): The name of the DataLoader. Defaults to class name.
+            batch_size (int, optional): The batch size. Defaults to 1.
+            shuffle (bool, optional): Whether to shuffle the data. Defaults to False.
+            shuffle_buffer (int, optional): The buffer size for shuffling. Defaults to 1000.
+            normalize (bool, optional): Whether to normalize the data. Defaults to False.
+            cache (bool, optional): Whether to cache the data. Defaults to False.
+            seed (int, optional): The seed value for randomization. Defaults to None.
+            dtype (numpy.dtype, optional): The data type. Defaults to np.float32.
+            num_replicas (str or int, optional): The number of replicas. Defaults to "auto".
+            init_ds (bool, optional): Whether to initialize the dataset. Defaults to True.
+        """
+        # setup some attributes
         self.file_path = file_path
         self.name = self.__class__.__name__ if name is None else name
         self.batch_size = batch_size
@@ -104,9 +121,9 @@ class DataLoaderBase(Sequence):
         """
         Creates a subset of the dataset starting from the 'start' index and taking 'step' number of elements.
 
-        The subset is processed according to the class's settings: it is normalized if 'self.normalize' is True,
-        cached if 'self.cache' is True, and shuffled if 'self.shuffle' is True. The subset is then batched with
-        'self.batch_size' number of elements per batch.
+        The subset is processed according to the class's settings: it is normalized if 'normalize' is True,
+        cached if 'cache' is True, and shuffled if 'shuffle' is True. The subset is then batched with
+        'batch_size' number of elements per batch.
 
         Parameters:
         start (int): The index to start the subset from.
@@ -115,7 +132,7 @@ class DataLoaderBase(Sequence):
         Returns:
         tf.data.Dataset: The processed subset of the dataset, ready for training or evaluation.
         """
-        assert self._ds is not None, "self._ds is None, call _init_ds"
+        assert self._ds is not None, "self._ds is None, did you forget to call _init_ds?"
         data = self._ds.skip(start).take(step)
 
         # fixes an issue with tf not knowing the size of the dataset
@@ -175,21 +192,15 @@ class DataLoaderBase(Sequence):
 
     def _init_ds(self):
         raise NotImplementedError("This method must be implemented in a subclass")
-
-    # def _normalize(self, data, label):
-    #     """
-    #     A simple min-max normalization which constrains the values to be between 0 and 1.
-    #     Change this depending on use case
-    #     """
-    #     min_val = tf.reduce_min(data)
-    #     max_val = tf.reduce_max(data)
-    #     data = (data - min_val) / (max_val - min_val)
-    #     return data, label
+    
+    def input(self):
+        """returns a keras input for the dataset"""
+        return Input(self.shape)
 
     def _normalize(self, data, label):
         mean = tf.math.reduce_mean(data)
         std = tf.math.reduce_std(data)
-
+        
         data = (data - mean) / std
         return data, label
 
@@ -277,7 +288,7 @@ class TFDSLoader(DataLoaderBase):
         raise NotImplementedError("This method is not implemented for TFDSLoader")
 
     def as_tfds(self, auto_convert=False):
-        logger.info(f"Already a TFDS format")
+        logger.error(f"Already a TFDS format")
         return self
 
 

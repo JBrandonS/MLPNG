@@ -1,2 +1,17 @@
-from .utils import setup_logging, save_data, load_data, log_source, remove_mono_dipole
-from .plots import plot_cl, plot_cl_alm, plot_cl_map, plot_histogram, plot_patches, plot_predictions
+from .utils import (
+    setup_logging,
+    save_data,
+    load_data,
+    log_source,
+    remove_mono_dipole,
+    get_fisher,
+)
+from .plots import (
+    plot_cl,
+    plot_cl_alm,
+    plot_cl_map,
+    plot_histogram,
+    plot_patches,
+    plot_predictions,
+)
+from .wandb import try_init_wandb

@@ -124,6 +124,9 @@ class Core:
         # only really useful for debugging, must be provided by the CLI and not in the settings file
         parser.add_argument("--save_settings", action="store_true")
 
+        # sets the model name to be used by the trainer
+        parser.add_argument("--model", type=str)
+
         logger.debug(f"Parsing CLI args: {args}")
         parsed_args = parser.parse_args(args)
 
@@ -230,6 +233,8 @@ class Core:
         if not trainer:
             self._init_cosmo()
             self._init_almgen()
+        else:
+            self._init_training()
         self._init_patchgen()
         self._init_paths()
 
@@ -494,6 +499,13 @@ class Core:
             self.nside,
             self.nside,
         )
+
+    def _init_training(self):
+        from scripts.models import get_model_class
+
+        self.model_name = self._get("model", "isensee")
+        self.model_class = get_model_class(self.model_name)
+        logger.info("Using model: %s", self.model_name)
 
     def conv_beam_func(self):  # change name
         """

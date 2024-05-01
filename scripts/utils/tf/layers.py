@@ -127,7 +127,7 @@ def rotation_layer():
     """
 
     def _work(image):
-        k = tf.random.uniform(shape=(), maxval=4, dtype=tf.int64)
+        k = tf.random.uniform(shape=(), maxval=4, dtype=tf.int32)
         return tf.image.rot90(image, k)
 
     return Lambda(lambda x: _work(x), name="rotation_layer")

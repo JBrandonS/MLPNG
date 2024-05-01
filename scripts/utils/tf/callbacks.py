@@ -1,5 +1,6 @@
 import time
 import logging
+
 logger = logging.getLogger(__name__)
 
 import tensorflow as tf
@@ -41,7 +42,7 @@ class WarmupLearningRate(LearningRateSchedule):
         ftype=tf.float32,
         itype=tf.int32,
     ):
-        logger = logging.getLogger("WarmupLearningRate")
+        logger = logging.getLogger(self.__class__.__name__)
 
         self.ftype = ftype
         self.itype = itype
@@ -111,13 +112,13 @@ class TimedLoggingCallback(Callback):
         epoch_start_time (float): The start time of the current epoch.
     """
 
-    def __init__(self, print_frequency=60.):
+    def __init__(self, print_frequency=60.0):
         super().__init__()
 
         self.print_frequency = print_frequency
-        self.last_print_time = 0.
-        self.batch_start_time = 0.
-        self.epoch_start_time = 0.
+        self.last_print_time = 0.0
+        self.batch_start_time = 0.0
+        self.epoch_start_time = 0.0
 
     def set_params(self, params):
         super().set_params(params)
@@ -145,9 +146,6 @@ class TimedLoggingCallback(Callback):
             return ""
         return " - ".join(f"{k}: {v:.4f}" for k, v in logs.items())
 
-    def _lr_str(self):
-        return f"Learning Rate: {self.model.optimizer.lr.numpy().item():.4f}"
-
     def on_train_begin(self, logs=None):
         print("Starting training...")
         self.last_print_time = time.time()
@@ -164,7 +162,7 @@ class TimedLoggingCallback(Callback):
         if current_time - self.last_print_time >= self.print_frequency:
             steps = self.params["steps"]
 
-            batch_str = f"{str(batch + 1).rjust(self._steps_str_len)}/{steps}"
+            batch_str = f"{batch + 1}/{steps}"
 
             progress = batch / steps
             progress_bar_val = int(progress * 30)
@@ -180,7 +178,7 @@ class TimedLoggingCallback(Callback):
             eta = self._get_time_str(eta)
 
             print(
-                f"\r{batch_str} [{progress_bar}] - ETA: {eta} - {metrics_log} - {self._lr_str()}",
+                f"\r{batch_str} [{progress_bar}] - ETA: {eta} - {metrics_log}",
                 end="",
             )
             self.last_print_time = current_time
@@ -190,9 +188,26 @@ class TimedLoggingCallback(Callback):
 
     def on_epoch_end(self, epoch, logs=None):
         current_time = time.time()
-        epoch_str = f"{str(epoch + 1).rjust(self._epoch_str_len)}/{self.params['epochs']}"
+        epoch_str = f"{epoch + 1}/{self.params['epochs']}"
         elapsed_time = self._get_time_str(current_time - self.epoch_start_time)
         metrics_log = self._get_log_line(logs)
-        print(
-            f"\rEpoch: {epoch_str} - Time: {elapsed_time} - {metrics_log} - {self._lr_str()}"
-        )
+        print(f"\rEpoch: {epoch_str} - Time: {elapsed_time} - {metrics_log}")
+
+
+class AttentionSchedule(LearningRateSchedule):
+    """Taken from the attention is all you need paper
+
+    See: https://www.tensorflow.org/text/tutorials/transformer
+    """
+
+    def __init__(self, d_model, warmup_steps=4000):
+        super(AttentionSchedule, self).__init__()
+        self.d_model = d_model
+        self.d_model = tf.cast(self.d_model, tf.float32)
+        self.warmup_steps = warmup_steps
+
+    def __call__(self, step):
+        step = tf.cast(step, tf.float32)
+        arg1 = tf.math.rsqrt(step)
+        arg2 = step * (self.warmup_steps**-1.5)
+        return tf.math.rsqrt(self.d_model) * tf.math.minimum(arg1, arg2)

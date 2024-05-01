@@ -4,9 +4,9 @@
 #SBATCH --partition=batch
 #SBATCH --ntasks=1
 #SBATCH --mem=500G
-#SBATCH --cpus-per-task=32
-#SBATCH --gpus-per-task=4
-#SBATCH --time=12:00:00
+#SBATCH --cpus-per-task=16
+#SBATCH --gpus-per-task=1
+#SBATCH --time=8:00:00
 
 
 module purge

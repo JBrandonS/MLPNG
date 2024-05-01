@@ -15,18 +15,14 @@ def setup_logging(
     handlers=[logging.StreamHandler(sys.stdout)],
     set_base=True,
     base_level=None,
-    use_rich=True,
+    use_rich=False,
 ):
     if set_base:
         if use_rich:
             from rich.logging import RichHandler
 
             handlers = [
-                RichHandler(
-                    show_time=False,
-                    show_level=False,
-                    rich_tracebacks=True
-                )
+                RichHandler(show_time=False, show_level=False, rich_tracebacks=True)
             ]
 
         logging.basicConfig(
@@ -99,6 +95,16 @@ def load_data(data_file, keys):
 
     logger.info("Finished loading data from %s", data_file)
     return data
+
+
+def get_fisher(file):
+    try:
+        with h5py.File(file, "r", swmr=True, locking=False) as hdf:
+            fisher = hdf.get("fisher", [None])[0]
+            logger.info(f"Loaded fisher matrix: {fisher}")
+    except Exception as e:
+        logger.error(f"Could not load fisher matrix: {e}")
+        fisher = None
 
 
 def log_source(func):
