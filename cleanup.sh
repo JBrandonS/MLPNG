@@ -14,6 +14,8 @@ rmdir -v logs/patchgen/*/
 rm -rvf logs/combiner/*.log
 rm -rvf logs/estimator/*.log
 rm -rvf logs/heidelberg/*.log
+rm -rvf logs/training/*.log
+rm -rvf logs/tuning/*.log
 
 # rm -rvf data/plots
 rm -rvf data/models
