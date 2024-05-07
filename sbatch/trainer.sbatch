@@ -1,4 +1,4 @@
-#! /bin/bash
+#!/usr/bin/env bash
 #SBATCH --job-name=training
 #SBATCH --partition=batch
 #SBATCH --ntasks=1

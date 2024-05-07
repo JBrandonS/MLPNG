@@ -1,4 +1,4 @@
-#! /bin/bash
+#!/usr/bin/env bash
 #SBATCH --job-name=tuning
 #SBATCH --partition=batch
 #SBATCH --ntasks=1
@@ -18,6 +18,8 @@
 mkdir -p logs/tuning
 
 # copy the file to a runs dir so we can have many going at once
+# this is needed if you are running multiple tuning jobs at once
+# not working rn
 # mkdir -p data/tuning/runs
 # FILE=data/tuning/runs/"$SLURM_JOB_ID"-tuner.py
 # cp scripts/tuner.py "$FILE"
@@ -29,6 +31,7 @@ conda activate mlpng-gpu
 
 i=0
 command="srun python -m scripts.tuner $*"
+echo "Running command: $command"
 while [ $i -lt 30 ]; do
     if eval "$command"; then
         # If the exit status is 0, the command completed successfully, so break the loop

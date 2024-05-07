@@ -1,4 +1,4 @@
-#! /bin/bash
+#!/usr/bin/env bash
 #SBATCH --job-name=jupyter
 #SBATCH --output=.vscj.out
 #SBATCH --partition=batch

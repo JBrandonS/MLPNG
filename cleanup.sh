@@ -8,9 +8,9 @@ if [[ ! $(squeue --me -h -n jupyter) && -f .vscj.out ]]; then
 fi
 
 rm -rvf logs/almgen/*/*.log
-rmdir -v logs/almgen/*/
+rmdir logs/almgen/*/
 rm -rvf logs/patchgen/*/*.log
-rmdir -v logs/patchgen/*/
+rmdir logs/patchgen/*/
 rm -rvf logs/combiner/*.log
 rm -rvf logs/estimator/*.log
 rm -rvf logs/heidelberg/*.log

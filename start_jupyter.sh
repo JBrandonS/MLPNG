@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 ### Helper script to run the jupyter.sbatch script
 ### and wait for the jupyter server to start, before printing the URL
