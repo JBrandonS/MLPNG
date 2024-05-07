@@ -11,13 +11,6 @@ import numpy as np
 import rich
 from astropy import units as u
 
-try:
-    # I have not been able to get KSW installed on superpod, but want most of this.
-    # TODO install ksw on superpod
-    from ksw import KSW, Cosmology, Data, Shape
-except ImportError:
-    pass
-
 logger = logging.getLogger(__name__)
 
 
@@ -139,7 +132,7 @@ class Core:
 
         return parsed_args
 
-    def __init__(self, argv=None, inspect_class=False, trainer=False):
+    def __init__(self, argv=None, inspect_class=False):
         """
         Initializes a new instance of the `Core` class.
 
@@ -230,11 +223,8 @@ class Core:
         self._setup_noise_beam()
         self._setup_radii()
         self._init_slurm()
-        if not trainer:
-            self._init_cosmo()
-            self._init_almgen()
-        else:
-            self._init_training()
+        self._init_cosmo()
+        self._init_almgen()
         self._init_patchgen()
         self._init_paths()
 
@@ -406,6 +396,9 @@ class Core:
         Returns:
             None
         """
+        # import here so we dont need these for the model code
+        from ksw import KSW, Cosmology, Data, Shape
+
         cosmo_params = self.cosmo_params
         camb_params_obj = camb.set_params(**cosmo_params)
         self.cosmo = cosmo = Cosmology(camb_params_obj)
@@ -499,13 +492,6 @@ class Core:
             self.nside,
             self.nside,
         )
-
-    def _init_training(self):
-        from scripts.models import get_model_class
-
-        self.model_name = self._get("model", "isensee")
-        self.model_class = get_model_class(self.model_name)
-        logger.info("Using model: %s", self.model_name)
 
     def conv_beam_func(self):  # change name
         """

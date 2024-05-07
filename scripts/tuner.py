@@ -19,72 +19,53 @@ logging.getLogger("WarmupLearningRate").setLevel(logging.ERROR)
 
 import keras_tuner as kt
 import tensorflow as tf
-from tensorflow.keras import Input
+
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.optimizers import Adam
-from trainer import alm_model
-import Core
-from .utils import log_source, setup_logging
-from .utils.tf.callbacks import WarmupLearningRate
-from .utils.tf.dataloaders import *
+from tensorflow.keras.optimizers.schedules import ExponentialDecay
+
+from .models import AutoModel
 
 
 def model_builder(hp):
-    regularizers = ["", "l1", "l2", "l1_l2"]
-    activations = ["", "tanh", "relu", "sigmoid", "swish"]
+    # regularizers = ["", "l1", "l2", "l1_l2"]
+    # activations = ["", "tanh", "relu", "sigmoid", "swish"]
     dropouts = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
 
-    lr_schedule = WarmupLearningRate(
-        warmup_learning_rate=hp.Float(
-            "warmup_lr", min_value=1e-8, max_value=1e-3, sampling="log"
+    lr_schedule = ExponentialDecay(
+        initial_learning_rate=hp.Float(
+            "initial_lr", min_value=1e-8, max_value=1e-3, sampling="log"
         ),
-        warmup_steps=hp.Int(
-            "warmup_steps", min_value=1e2, max_value=1e6, sampling="log"
-        ),
-        warmup_scale=1.5,
-        warmup_scale_steps=10,
-        warmed_learning_rate="auto",
         decay_steps=hp.Int("decay_steps", min_value=1e2, max_value=1e6, sampling="log"),
-        decay_rate=0.95,
-        staircase=True,
+        decay_rate=hp.Float("decay_rate", min_value=0.1, max_value=0.99, step=0.01),
+        staircase=hp.Boolean("staircase"),
     )
 
-    model = alm_model(
-        Input(data_loader.shape),
+    model = AutoModel()
+    model.init_dataset()
+    model.make_model(
         depth=hp.Choice("depth", values=[1, 2, 4, 6, 8, 16]),
+        dropout_rate=hp.Choice("dropout_rate", values=dropouts),
+        ff_density=hp.Choice("ff_density", values=[64, 128, 256, 512, 1024, 2048]),
         mha_num_heads=hp.Choice("mha_num_heads", values=[1, 2, 4, 8, 16, 32]),
-        mha_initializer=hp.Choice(
-            "mha_initializer",
-            values=["glorot_uniform", "truncated_normal", "he_uniform"],
-        ),
-        mha_kernel_regularizer=hp.Choice("mha_kernel_regularizer", values=regularizers),
         mha_dropout=hp.Choice("mha_dropout", values=dropouts),
-        div_key_dims=hp.Boolean("div_key_dims"),
-        ff_hidden=hp.Choice("ff_hidden", values=[128, 256, 512, 1024, 2048]),
-        ff_activation=hp.Choice("ff_activation", values=activations),
-        ff_kernel_regularizer=hp.Choice("ff_kernel_regularizer", values=regularizers),
-        ff_dropout=hp.Choice("ff_dropout", values=dropouts),
-        final_hidden_1=hp.Choice("final_hidden_1", values=[256, 512, 1024, 2048]),
-        final_hidden_2=hp.Choice("final_hidden_2", values=[128, 256, 512, 1024]),
-        final_hidden_3=hp.Choice("final_hidden_3", values=[16, 32, 64, 128, 256, 512]),
-        final_dropout=hp.Choice("final_dropout", values=dropouts),
-        final_activation_1=hp.Choice("final_activation_1", values=activations),
-        final_activation_2=hp.Choice("final_activation_2", values=activations),
-        final_activation_3=hp.Choice("final_activation_3", values=activations),
-        final_kernel_regularizer=hp.Choice(
-            "final_kernel_regularizer", values=regularizers
-        ),
     )
-
     model.compile(optimizer=Adam(learning_rate=lr_schedule), loss=tf.keras.losses.mse)
-    return model
+    return model.keras_model()
 
 
 if __name__ == "__main__":
-    s = Core()
+    model = AutoModel()
 
-    data_loader = AlmLoaderV2(s.alm_file, shuffle=True, batch_size=1, cache=True)
-    train, test, val = data_loader.get_split(0.8, 0.1, 0.1)
+    dataset = model.init_dataset(
+        shuffle=True,
+        seed=None,
+        batch_size=model.BATCH_SIZE,
+        cache=True,
+        shuffle_buffer=1000,
+        normalize=True,
+    )
+    train, test, val = dataset.get_split(0.8, 0.1, 0.1)
 
     gpus = tf.config.list_physical_devices("GPU")
     strategy = tf.distribute.MirroredStrategy([f"/gpu:{i}" for i in range(len(gpus))])

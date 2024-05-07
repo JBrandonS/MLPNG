@@ -1,15 +1,9 @@
-import os
-import sys
-import time
-
 import tensorflow as tf
-from tensorflow import keras
 import numpy as np
 
-from tensorflow.keras.losses import mse
 from tensorflow.keras.layers import (
     Layer,
-    LeakyReLU,
+    ReLU,
     Add,
     UpSampling2D,
     Activation,
@@ -21,19 +15,8 @@ from tensorflow.keras.layers import (
     Dense,
     GroupNormalization,
 )
-from tensorflow.keras.optimizers import Adam
 
-from scripts.models import AutoModel, ModelCore, register_model
-from scripts.utils import try_init_wandb
-from scripts.utils.plots import plot_histogram, plot_predictions
-from scripts.utils.tf.plots import plot_metrics
-
-from tensorflow.keras.callbacks import (
-    EarlyStopping,
-    ModelCheckpoint,
-    TensorBoard,
-)
-from tensorflow.keras.optimizers.schedules import ExponentialDecay
+from scripts.models import ModelCore, register_model
 
 
 class PeriodicPadding2D(Layer):
@@ -51,9 +34,7 @@ class PeriodicPadding2D(Layer):
 
 
 @register_model
-class ISENSEE(ModelCore):
-    BATCH_SIZE = 16
-
+class ISENSEE_V2(ModelCore):
     def create_localization_module(self, input_layer, current_grid, n_filters):
         layer1 = PeriodicPadding2D(current_grid)(input_layer)
         convolution1 = self.create_convolution_block(layer1, n_filters)
@@ -97,7 +78,7 @@ class ISENSEE(ModelCore):
         n_filters,
         batch_normalization=False,
         kernel=(3, 3),
-        activation=LeakyReLU,
+        activation=ReLU,
         padding="valid",
         strides=(1, 1),
         instance_normalization=True,
@@ -113,7 +94,7 @@ class ISENSEE(ModelCore):
         else:
             return activation()(layer)
 
-    def _model(self, inputs, depth=5, n_base_filters=16, dropout_rate=0.3, n_labels=1):
+    def _model(self, inputs, depth=3, n_base_filters=16, dropout_rate=0.3, n_labels=32):
         x = inputs
         level_output_layers = list()
         level_filters = list()
@@ -158,80 +139,5 @@ class ISENSEE(ModelCore):
         x = Conv2D(n_labels, (3, 3), strides=(2, 2))(x)
 
         x = Flatten()(x)
+        # x = Dense(32)(x)
         return Dense(1)(x)
-
-
-def main():
-    model = AutoModel()
-
-    MAX_EPOCHS = 100
-    BATCH_SIZE = 16
-
-    # just some info for the model name
-    timestamp = int(time.time())
-    slurm_job_id = os.getenv("SLURM_JOB_ID") or 0
-    name = f"{slurm_job_id}_isensee_{model.base_name}_{timestamp}"
-
-    # enable a learning rate schedule
-    lr_schedule = ExponentialDecay(
-        initial_learning_rate=1e-4,
-        decay_steps=10000,
-        decay_rate=0.95,
-        staircase=True,
-    )
-
-    # callbacks to use during training
-    callbacks = [
-        # We use earlystoping to prevent overfitting
-        EarlyStopping(
-            monitor="val_loss",
-            patience=10,
-            verbose=1,
-            restore_best_weights=True,
-        ),
-        # Model checkpoining to save the best model
-        ModelCheckpoint(
-            f"{model.model_dir}/{name}" + "-{epoch:03d}.tf",
-            monitor="val_loss",
-            save_best_only=True,
-            mode="auto",
-        ),
-    ]
-
-    # Lets load our data
-    dataset = model.init_dataset(batch_size=BATCH_SIZE)
-    train_ds, test_ds, val_ds = dataset.get_split(0.8, 0.1, 0.1)
-
-    strategy = tf.distribute.MirroredStrategy()
-    with strategy.scope():
-        opt = Adam(learning_rate=lr_schedule)
-        model.make_model()
-        model.compile(optimizer=opt, loss=mse)
-        model.summary()
-
-    # Finally, lets fit our model
-    # we use the train and val sets here, so the model will not see the test set
-    history = model.fit(
-        train_ds,
-        validation_data=val_ds,
-        epochs=MAX_EPOCHS,
-        callbacks=callbacks,
-        verbose=1,
-    )
-
-    # Lets plot the predictions from the unseen test set
-    y_pred = model.predict(test_ds, verbose=1).flatten()
-    y_test = np.concatenate([y.numpy() for _, y in test_ds])
-
-    # Plot the loss curves and metrics
-    plot_metrics(
-        history,
-        f"{model.plot_dir}/{name}-metrics.png",
-        metrics=["loss"],
-    )
-    plot_predictions(y_test, y_pred, f"{model.plot_dir}/{name}-preds.png")
-    plot_histogram(y_test, y_pred, f"{model.plot_dir}/{name}-histogram.png")
-
-
-if __name__ == "__main__":
-    sys.exit(main())

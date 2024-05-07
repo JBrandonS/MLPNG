@@ -1,8 +1,6 @@
 import os
 import logging
 
-logger = logging.getLogger(__name__)
-
 import h5py
 import numpy as np
 import tensorflow as tf
@@ -14,6 +12,8 @@ from tensorflow.data.experimental import assert_cardinality
 from tensorflow.keras import Input
 from tensorflow.keras.utils import Sequence
 
+logger = logging.getLogger(__name__)
+
 
 class DataLoaderBase(Sequence):
     """
@@ -22,7 +22,7 @@ class DataLoaderBase(Sequence):
     Attributes
     ----------
     batch_size : int
-        The number of samples per batch.
+        The number of samples per local batch.
     shuffle : bool
         Whether to shuffle the data.
     shuffle_buffer : int | None
@@ -40,25 +40,6 @@ class DataLoaderBase(Sequence):
         The total number of samples per batch.
     normalize : bool
         Whether to normalize the data.
-
-    Methods
-    -------
-    __getitem__(index)
-        Returns the data and label for the sample at the given index.
-    _normalize(data, label)
-        Normalizes the data.
-    __len__()
-        Returns the length of batches.
-    _init_ds()
-        Initializes the dataset object, length, and shape.
-    _get_dataset(start, step)
-        Returns a dataset starting from 'start' and containing 'step' samples.
-    get_split(train_frac, test_frac, val_frac=None)
-        Splits the dataset into training, testing, and optionally validation sets.
-    save_as_tfds(tfds_file, exists_ok, force)
-        Saves the dataset into tfds format, this can improve future loading times.
-    as_tfds(auto_convert)
-        Returns the dataset as a TensorFlow Dataset object, will create tfds if not existing when auto_convert is true.
     """
 
     def __init__(
@@ -103,7 +84,7 @@ class DataLoaderBase(Sequence):
         self.dtype = dtype
 
         if num_replicas == "auto":
-            # tested on superpod but would not be suprised if this doesnt work on other systems
+            # tested on superpod but would not be surprised if this doesn't work on other systems
             self.num_replicas = len(tf.config.list_physical_devices("GPU")) or 1
             logger.debug(f"auto detected num_replicas: {self.num_replicas}")
         else:
@@ -132,13 +113,18 @@ class DataLoaderBase(Sequence):
         Returns:
         tf.data.Dataset: The processed subset of the dataset, ready for training or evaluation.
         """
-        assert self._ds is not None, "self._ds is None, did you forget to call _init_ds?"
+        assert (
+            self._ds is not None
+        ), "self._ds is None, did you forget to call _init_ds?"
         data = self._ds.skip(start).take(step)
 
         # fixes an issue with tf not knowing the size of the dataset
         data = data.apply(assert_cardinality(step))
 
         if self.normalize:
+            # normalizer = tf.keras.layers.Normalization(axis=None)
+            # normalizer.adapt(self._ds)
+            # data = data.map(normalizer, num_parallel_calls=AUTOTUNE)
             data = data.map(self._normalize, num_parallel_calls=AUTOTUNE)
         if self.cache:
             data = data.cache()
@@ -151,7 +137,7 @@ class DataLoaderBase(Sequence):
             # see: https://keras.io/guides/distributed_training_with_tensorflow/
             self.batch_size * self.num_replicas,
             drop_remainder=True,  # we dont want any partial batches
-            deterministic=False,  # we dont care about order
+            # deterministic=False,  # we dont care about order
             num_parallel_calls=AUTOTUNE,
         )
         return data.prefetch(AUTOTUNE)
@@ -192,16 +178,31 @@ class DataLoaderBase(Sequence):
 
     def _init_ds(self):
         raise NotImplementedError("This method must be implemented in a subclass")
-    
+
     def input(self):
         """returns a keras input for the dataset"""
         return Input(self.shape)
 
     def _normalize(self, data, label):
-        mean = tf.math.reduce_mean(data)
-        std = tf.math.reduce_std(data)
-        
-        data = (data - mean) / std
+        """
+        Normalize the input data by subtracting the mean and dividing by the standard deviation.
+        This method treats the 0's as a mask thus not counting the empty data
+
+        Args:
+            data (tf.Tensor): The input data tensor.
+            label (tf.Tensor): The label tensor.
+
+        Returns:
+            tf.Tensor: The normalized data tensor.
+            tf.Tensor: The label tensor.
+        """
+        mask = data != 0
+        masked_data = tf.boolean_mask(data, mask)
+
+        mean = tf.math.reduce_mean(masked_data)
+        std = tf.math.reduce_std(masked_data)
+
+        data = tf.where(mask, (data - mean) / std, data)
         return data, label
 
     def _get_tfds_filename(self):
@@ -210,7 +211,7 @@ class DataLoaderBase(Sequence):
     def save_as_tfds(self, tfds_file=None, exists_ok=False, force=False):
         """
         Saves the dataset as a TensorFlow Dataset (tfds) file.
-        This is much fast to load than the python generator method.
+        This can be much fast to load than the python generator method.
         """
         assert self._ds is not None, "self._ds is None, call _init_ds"
 
@@ -288,7 +289,7 @@ class TFDSLoader(DataLoaderBase):
         raise NotImplementedError("This method is not implemented for TFDSLoader")
 
     def as_tfds(self, auto_convert=False):
-        logger.error(f"Already a TFDS format")
+        logger.error("Already a TFDS format")
         return self
 
 
@@ -343,7 +344,7 @@ class AlmLoader(DataLoaderBase):
     def __init__(self, file_path, channels_last=False, **kwargs):
         self.channels_last = channels_last
 
-        # we dont store the file, it will close as soon as alms and fnls are destroyed
+        # we dont store the file, it will close on gc after the alms and fnls are destroyed
         file = h5py.File(file_path, mode="r", swmr=True, locking=False)
         logger.debug("Data keys: " + ", ".join(file.keys()))
 
@@ -401,7 +402,7 @@ class AlmLoader(DataLoaderBase):
             data[0, ...] = np.real(alm) + self.pos_enc
             data[1, ...] = np.imag(alm) + self.pos_enc
         return data, fnl
-    
+
     def _normalize(self, data, label):
         # we want to remove all the zeros before calculating the mean and std
         mask = data != 0

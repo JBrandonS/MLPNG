@@ -18,9 +18,9 @@
 mkdir -p logs/tuning
 
 # copy the file to a runs dir so we can have many going at once
-mkdir -p data/tuning/runs
-FILE=data/tuning/runs/"$SLURM_JOB_ID"-tuner.py
-cp scripts/tuner.py "$FILE"
+# mkdir -p data/tuning/runs
+# FILE=data/tuning/runs/"$SLURM_JOB_ID"-tuner.py
+# cp scripts/tuner.py "$FILE"
 
 module purge
 module load conda nvidia/nvhpc
@@ -28,7 +28,7 @@ eval "$(conda shell.bash hook)"
 conda activate mlpng-gpu 
 
 i=0
-command="srun python $FILE $*"
+command="srun python -m scripts.tuner $*"
 while [ $i -lt 30 ]; do
     if eval "$command"; then
         # If the exit status is 0, the command completed successfully, so break the loop
@@ -40,5 +40,5 @@ while [ $i -lt 30 ]; do
     fi
     i=$((i+1))
 done
-rm "$FILE"
+# rm "$FILE"
 echo "Done!"

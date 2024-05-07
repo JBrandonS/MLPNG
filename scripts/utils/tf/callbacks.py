@@ -67,7 +67,7 @@ class WarmupLearningRate(LearningRateSchedule):
         self.decay_rate = tf.cast(decay_rate, ftype)
         self.staircase = staircase
 
-    @tf.function
+    # @tf.function
     def __call__(self, step):
         step = tf.cast(step, self.itype)
         if step < self.warmup_steps:

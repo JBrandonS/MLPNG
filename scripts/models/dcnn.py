@@ -13,14 +13,17 @@ from tensorflow.keras.layers import (
     SpatialDropout2D,
 )
 
-from scripts.models import ModelBase, register_model
+from scripts.models import ModelCore, register_model
 from scripts.utils.tf.layers import ReflectionPadding2D, augmentation_layer
 
 
 @register_model
-class DCNN(ModelBase):
+class DCNN(ModelCore):
+    def __init__(self, argv=None):
+        super().__init__(argv)
+        self.BATCH_SIZE = 4
 
-    def _deep_cnn_block(
+    def deep_cnn_block(
         self,
         n_filters,
         depth=2,
@@ -76,7 +79,7 @@ class DCNN(ModelBase):
             n_level_filters = 2 ** (5 + level)
             res_layer = layer
 
-            layer = self._deep_cnn_block(
+            layer = self.deep_cnn_block(
                 n_level_filters, kernel_regularizer=kernel_regularizer
             )(layer)
 

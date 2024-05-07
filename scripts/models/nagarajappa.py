@@ -1,10 +1,10 @@
 from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense
 
-from scripts.models import ModelBase, register_model
+from scripts.models import ModelCore, register_model
 
 
 @register_model
-class NAGARAJAPPA(ModelBase):
+class NAGARAJAPPA(ModelCore):
     """A CNN model based on Nagarajappa and Ma, 2024"""
 
     def _model(self, inputs):
