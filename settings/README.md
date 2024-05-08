@@ -4,7 +4,7 @@ self.new_setting = self._get('new_setting', 'default_value')
 ```
 
 
-The `max_l` setting is used internally for CAMB, it must be larger than lmax and by such an amount that the transfer functions fully cover the desired lmax. 
+The `max_l` setting is used internally for CAMB, it must be larger than lmax by such an amount that the transfer functions fully cover the desired lmax. 
 
 
 Some settings can be overridden with CLI args, see the `core.py:parse_args` function for more information. 
