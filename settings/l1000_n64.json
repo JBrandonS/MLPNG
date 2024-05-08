@@ -6,14 +6,13 @@
         "ombh2": 0.0224,
         "omch2": 0.120,
         "tau": 0.054,
-        "max_l": 1000,
-        "lmax": 500
+        "max_l": 1500,
+        "lmax": 1000
     },
     "nsims" : 1000,
     "narray": 100,                   
     "npatches" : 10,
     "fnl_range":[-1000, 1000],        
-    "nside": 128,
-    "noise_scale_tt" : 500, 
-    "beam_width" : 0
+    "nside": 64,
+    "noise": false
 }

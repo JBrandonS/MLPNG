@@ -129,7 +129,7 @@ class Core:
         Initializes a new instance of the `Core` class.
 
         Args:
-            argv (list): List of the CLI Args, first arg should be the settings file, others follow arg_parse.
+            argv (list): List of the CLI Args
             If None, sys.argv will be used.
             inspect_class (bool): Whether to inspect the class using the `rich` library. Default is False.
         """

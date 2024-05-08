@@ -1,3 +1,4 @@
+import sys
 import logging
 import os
 from functools import partial
@@ -44,11 +45,7 @@ def cutSqPatches_lenspyx(
     fl = np.sqrt(np.arange(max_l + 1) * np.arange(1, max_l + 2), dtype=r_dtype)
     dlm = lenspyx.utils_hp.almxfl(plm, fl, mmax=None, inplace=False)
 
-    lens_map = lenspyx.alm2lenmap(
-        alm.copy(),
-        dlm.copy(),
-        geometry=geom_info
-    )
+    lens_map = lenspyx.alm2lenmap(alm.copy(), dlm.copy(), geometry=geom_info)
     pixell_map = reproject.healpix2map(lens_map, fs_shape, fs_wcs, lmax)
 
     patches = []
@@ -135,35 +132,42 @@ def get_fs_patch_geo(s):
     return fs_shape, fs_wcs, fs_map, patch_shapes, patch_wcss
 
 
-if __name__ == "__main__":
-    s = Core()
-    if s.is_main_job:
+def main():
+    core = Core()
+    if core.is_main_job:
         logger.setLevel(logging.DEBUG)
         logging.getLogger("utils").setLevel(logging.DEBUG)
 
     # Load in the alm data, do this first to crash fast if data is not found
-    if os.path.isfile(s.alm_file):
-        logger.info(f"loading alms from completed file {s.alm_file}")
-        ldata = load_data(s.alm_file, ["alm", "fnl"])
+    if os.path.isfile(core.alm_file):
+        logger.info(f"loading alms from completed file {core.alm_file}")
+        ldata = load_data(core.alm_file, ["alm", "fnl"])
 
         # if using a completed file, we need to adjust the start index for generation
-        start_idx = s.nsims * (int(s.job_array_index) - 1)  # we start at 1 rn
+        start_idx = core.nsims * (int(core.job_array_index) - 1)  # we start at 1 rn
         logger.info(
             "Using sims (%d, %d) out of %d",
             start_idx,
-            start_idx + s.nsims,
+            start_idx + core.nsims,
             ldata["alm"].shape[0],
         )
 
-    elif os.path.isfile(s.alm_file_partial):
-        logger.info(f"Loading alms from partial file {s.alm_file_partial}")
-        ldata = load_data(s.alm_file_partial, ["alm", "fnl"])
+    elif os.path.isfile(core.alm_file_partial):
+        logger.info(f"Loading alms from partial file {core.alm_file_partial}")
+        ldata = load_data(core.alm_file_partial, ["alm", "fnl"])
 
         # for partial files, we can just start at 0
         start_idx = 0
     else:
-        logger.fatal(f"No alms found. Checked {s.alm_file_partial} and {s.alm_file}, please run almgen.py first or check configuration")
+        logger.fatal(
+            f"No alms found. Checked {core.alm_file_partial} and {core.alm_file}, "
+            "please run almgen.py first or check configuration"
+        )
         exit(1)
+
+    if not core.force_gen and os.path.isfile(core.patch_file):
+        logger.warning("Found completed patch file, skipping patch generation")
+        sys.exit(0)
 
     # and read in our alms and almngs, since ldata is a h5 dataset these are not in memory
     alms = ldata["alm"]
@@ -174,32 +178,37 @@ if __name__ == "__main__":
     # arguments that are needed and will stay constant
     # we cannot abuse the python scope here since these will need to be pickled
     common_settings = [
-        s.lmax,
-        s.plot_dir,
-        s.base_name,
-        s.npatches,
-        s.c_ells,
-        *get_fs_patch_geo(s),
+        core.lmax,
+        core.plot_dir,
+        core.base_name,
+        core.npatches,
+        core.c_ells,
+        *get_fs_patch_geo(core),
     ]
-    if s.lensing:
-        max_l = s.cosmo_params["max_l"]
-        cl_phi = s.cosmo._camb_data.get_lens_potential_cls(  # type: ignore
+    if core.lensing:
+        max_l = core.cosmo_params["max_l"]
+        cl_phi = core.cosmo._camb_data.get_lens_potential_cls(  # type: ignore
             max_l, CMB_unit="muK", raw_cl=True
         )[:, 0]
 
         cutPatches = partial(
-            cutSqPatches_lenspyx, *common_settings, max_l, cl_phi, s.nside, s.r_dtype
+            cutSqPatches_lenspyx,
+            *common_settings,
+            max_l,
+            cl_phi,
+            core.nside,
+            core.r_dtype,
         )
     else:
         cutPatches = partial(cutSqPatches_pixell, *common_settings)
 
     ## Start the patch generation
     # create the array to store the patches
-    patches = np.empty(s.patch_shape, dtype=s.r_dtype)
+    patches = np.empty(core.patch_shape, dtype=core.r_dtype)
 
     # We setup an array with all our possible arguments to pass to the function
     # if we are using a completed alm file, we offset our sim index by the start index
-    args = [(start_idx + s, p) for s, p in s.sim_pol]
+    args = [(start_idx + s, p) for s, p in core.sim_pol]
 
     # We use joblib.parallel to generate the patches in parallel
     # by default (temp_folder=None) this will use a ram disk /dev/shm
@@ -214,34 +223,38 @@ if __name__ == "__main__":
         return_as="generator",
         temp_folder=temp_folder,
     )(
-        delayed(cutPatches)(alms[i, j], fnls[i, j], s.is_main_job and i == 0)
+        delayed(cutPatches)(alms[i, j], fnls[i, j], core.is_main_job and i == 0)
         for i, j in args
     )
 
     # Get our data from the generator, only update logging every 100 runs, takes a long time
     for idx, result in enumerate(
-        tqdm(patch_generator, desc="patch progress", total=s.sim_pol_len)
+        tqdm(patch_generator, desc="patch progress", total=core.sim_pol_len)
     ):
-        sim, pol = s.sim_pol[idx]
+        sim, pol = core.sim_pol[idx]
         patches[sim, pol] = result
 
     # remove the partial file if it exists
-    if os.path.isfile(s.patch_file):
-        logger.info("Removing stale data file: %s", s.patch_file)
-        os.remove(s.patch_file)
+    if os.path.isfile(core.patch_file):
+        logger.info("Removing stale data file: %s", core.patch_file)
+        os.remove(core.patch_file)
 
     # Save data
-    os.makedirs(s.patch_dir, exist_ok=True)
+    os.makedirs(core.patch_dir, exist_ok=True)
     sdata = {}
     sdata["fnl"] = fnls
     sdata["patch"] = patches
-    save_data(s.patch_file, sdata)
+    save_data(core.patch_file, sdata)
 
-    if s.is_main_job:
-        plot_dir = os.path.join(s.plot_dir, "patchgen")
+    if core.is_main_job:
+        plot_dir = os.path.join(core.plot_dir, "patchgen")
         os.makedirs(plot_dir, exist_ok=True)
-        plot_file = os.path.join(plot_dir, f"{s.base_name}_patches.png")
-        i, j = s.rng.integers(s.nsims), s.rng.integers(s.npol)
+        plot_file = os.path.join(plot_dir, f"{core.base_name}_patches.png")
+        i, j = core.rng.integers(core.nsims), core.rng.integers(core.npol)
         plot_patches(patches[i, j], 10, save_file=plot_file)
 
     logger.info("Done with Generation!")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

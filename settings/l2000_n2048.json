@@ -15,5 +15,5 @@
     "fnl_range" : [-1000, 1000],        
     "nside": 2048,
     "noise_scale_tt" : 1,
-    "beam_width" : 1.4
+    "beam_width" : 0
 }

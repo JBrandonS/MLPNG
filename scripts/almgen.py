@@ -17,7 +17,8 @@ logger = setup_logging(__name__, level=logging.DEBUG)
 
 
 def integrand(alm, bl_div_cl, alpha_l, r, dr, nside, lmax):
-    """This calculates the alms from the precalculated values"""
+    """"""
+
     Balm = hp.almxfl(alm, bl_div_cl, inplace=False)
     B = hp.alm2map(Balm, nside=nside, lmax=lmax, inplace=True)
     inner = hp.map2alm(B**2, lmax=lmax, use_pixel_weights=True)
@@ -33,7 +34,7 @@ def interpolator(func, ells_sparse, axis=1, cubic=True):
 
 
 def generate_alm_ng(s, alms):
-    """This code completely calculates, and saves, the alms and almngs."""
+    """This code completely calculates the almngs."""
     # $$a_{\ell m}^{NG,loc'} = \int dr r^2 \left[ \alpha_\ell(r)\left(\int d^2 \hat{n} Y_{\ell m}^\star (\hat{n}) B(r,\hat{n})^2 \right)\right]$$
     # and
     # $$\alpha_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^2 \Delta_\ell^T(k) j_\ell(k r)$$
@@ -90,7 +91,7 @@ def generate_alm_ng(s, alms):
     return alm_ng
 
 
-if __name__ == "__main__":
+def main():
     r"""
     This code generates the alms
     $$a_{\ell m} = a_{\ell m}^{{G}} + f_{NL}^X a_{\ell m}^{NG}$$
@@ -102,50 +103,50 @@ if __name__ == "__main__":
     $B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}$
     where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
     """
-    s = Core()
+    core = Core()
 
     # check for completed alm runs if we are not forcing alm generation, and fail fast
     # notice we don't exit(1) so we can use this to resume a partially completed job
-    if not s.force_alm_gen:
-        if os.path.isfile(s.alm_file):
+    if not core.force_gen:
+        if os.path.isfile(core.alm_file):
             logger.warning("Found completed alms file, skipping alm generation")
             sys.exit(0)
-        elif os.path.isfile(s.alm_file_partial):
+        elif os.path.isfile(core.alm_file_partial):
             logger.warning("Found partial alm file, skipping alm generation")
             sys.exit(0)
 
     # Get our alms
     logger.info("Starting Alm generation")
     alm_l = np.array(
-        [s.data.compute_alm_sim(s.lensing) for _ in range(s.nsims)],  # type: ignore
-        dtype=s.c_dtype,
+        [core.data.compute_alm_sim(core.lensing) for _ in range(core.nsims)],  # type: ignore
+        dtype=core.c_dtype,
     )
-    alm_ng = generate_alm_ng(s, alm_l)
-    fnls = s.rng.uniform(s.fnl_min, s.fnl_max, s.fnl_shape)
+    alm_ng = generate_alm_ng(core, alm_l)
+    fnls = core.rng.uniform(core.fnl_min, core.fnl_max, core.fnl_shape)
     alms = alm_l + fnls * alm_ng
     alms = remove_mono_dipole(alms)
 
     # we remove the stale nc file if it exists
-    if os.path.isfile(s.alm_file_partial):
-        logger.info("Removing stale alm file: %s", s.alm_file_partial)
-        os.remove(s.alm_file_partial)
+    if os.path.isfile(core.alm_file_partial):
+        logger.info("Removing stale alm file: %s", core.alm_file_partial)
+        os.remove(core.alm_file_partial)
 
     logger.info("Saving alm and almng data")
-    os.makedirs(s.alm_dir, exist_ok=True)
+    os.makedirs(core.alm_dir, exist_ok=True)
 
     sdata = {}
     sdata["alm"] = alms
     sdata["fnl"] = fnls
-    save_data(s.alm_file_partial, sdata)
+    save_data(core.alm_file_partial, sdata)
 
-    if s.is_main_job:
-        alm_plot_dir = os.path.join(s.plot_dir, "almgen")
+    if core.is_main_job:
+        alm_plot_dir = os.path.join(core.plot_dir, "almgen")
         os.makedirs(alm_plot_dir, exist_ok=True)
 
-        i, j = s.rng.integers(s.nsims), s.rng.integers(s.npol)
+        i, j = core.rng.integers(core.nsims), core.rng.integers(core.npol)
         logger.debug("Making plots for alm[%d,%d]", i, j)
         filebase = os.path.join(
-            alm_plot_dir, f"{s.sjob}_{s.base_name}_alm[{i},{j}].png"
+            alm_plot_dir, f"{core.sjob}_{core.base_name}_alm[{i},{j}].png"
         )
 
         # plot the complete alms with noise
@@ -153,10 +154,14 @@ if __name__ == "__main__":
             alms[i, j],
             save_file=filebase,
             plot_camb=True,
-            c_ells=s.c_ells,
+            c_ells=core.c_ells,
             camb_noise=True,
-            noise=s.noise_ell[0],
-            beam_width=s.beam_width,
+            noise=core.noise_ell[0],
+            beam_width=core.beam_width,
         )
 
-    logger.info("Finished %s!", s.sjob)
+    logger.info("Finished %s!", core.sjob)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,5 +1,6 @@
 import logging
 import os
+import math
 
 import h5py
 import numpy as np
@@ -23,7 +24,7 @@ logger = setup_logging(
 
 def _estimator_loader(idx):
     """Loads in a single alm given an idx. Used inside the KSW code."""
-    idx, pol = np.unravel_index(int(idx), (s.total_sims, s.npol))
+    idx, pol = np.unravel_index(int(idx), (core.total_sims, core.npol))
     logger.debug("Sending alm (%s, %s) with fnl %s", idx, pol, fnls[idx, pol])
     return np.array(alms[idx, pol])
 
@@ -33,33 +34,35 @@ def _step_loader(idx):
     for stepping the KSW estimator, we just generate new unique sims
     """
     logger.debug("Sending alm step %s", idx)
-    return s.data.compute_alm_sim(s.lensing)
+    return core.data.compute_alm_sim(core.lensing)
 
 
 if __name__ == "__main__":
-    s = Core()
+    core = Core()
 
     # the KSW code requires the total_sims to be >= mpi_size
     assert (
-        s.total_sims >= mpi_size
+        core.total_sims >= mpi_size
     ), "total_sims < mpi_size, lower ntasks or increase sims"
 
-    # early loading to fail fast
-    alm_file = h5py.File(s.alm_file, "r", swmr=True, locking=False)
+    # early loading to fail fast if the file does not exist
+    alm_file = h5py.File(core.alm_file, "r", swmr=True, locking=False)
 
-    # we dont actually need to batch the thetas, so just set it to the full amount
-    # planck levels needed this reduction
-    theta_batch = int(np.floor(1.5 * s.lmax + 1)) // 10
+    # The default theta_batch size is 25, which is really small
+    # Calculate the power of two that lmax is greater than 512 and use this to limit size
+    divisor = 2 ** max(0, math.ceil(math.log2(core.lmax / 512)))
+    theta_batch = int(np.floor(1.5 * core.lmax + 1)) // divisor
+    logger.debug("Using theta_batch %s", theta_batch)
 
     # check for existing ksw state, if it exists, load it
     # otherwise, run the MC, can take a few hours
     use_mc_file = True  # just a quick disable
-    mc_path = os.path.join(s.alm_dir, "kswmc")
+    mc_path = os.path.join(core.alm_dir, "kswmc")
     os.makedirs(mc_path, exist_ok=True)
-    mc_file = os.path.join(mc_path, f"{s.base_name}.hdf5")
+    mc_file = os.path.join(mc_path, f"{core.base_name}.hdf5")
     if use_mc_file and os.path.exists(mc_file):
         logger.info("Loading KSW state from %s", mc_file)
-        s.ksw.start_from_read_state(mc_file, mpi_comm)
+        core.ksw.start_from_read_state(mc_file, mpi_comm)
     else:
         logger.info("Running KSW step")
 
@@ -69,29 +72,29 @@ if __name__ == "__main__":
         idxs = range(max(100, mpi_size))
 
         # step the MC, actually does the work
-        s.ksw.step_batch(_step_loader, idxs, comm=mpi_comm, theta_batch=theta_batch)
+        core.ksw.step_batch(_step_loader, idxs, comm=mpi_comm, theta_batch=theta_batch)
 
         # save the mc state if we are using the mc file
         if use_mc_file and mpi_root:
             logger.info("Saving KSW state to %s", mc_file)
-            s.ksw.write_state(mc_file, mpi_comm)
+            core.ksw.write_state(mc_file, mpi_comm)
 
-    fisher = float(s.ksw.compute_fisher())
+    fisher = float(core.ksw.compute_fisher())
     logger.info("Fisher: %s, standard deviation: %s", fisher, np.sqrt(1 / fisher))
 
     # note that these are not fully loaded into memory
     alms = alm_file["alm"]
     fnls = alm_file["fnl"]
 
-    # only do at most 1k estimates right now
-    num_est = min(1000, s.total_sims)
+    # only do at most 1k estimates right now, just for time
+    num_est = min(1000, core.total_sims)
     logger.info(
         "Computing %s estimates in %.2f batches",
         num_est,
         num_est / mpi_size,
     )
-    idxs = range(num_est)
-    estimates = s.ksw.compute_estimate_batch(
+    idxs = np.arange(num_est)
+    estimates = core.ksw.compute_estimate_batch(
         _estimator_loader,
         idxs,
         comm=mpi_comm,
@@ -100,14 +103,15 @@ if __name__ == "__main__":
         verbose=True,
     )
 
-    # close the file, prevents an error when saving
-    alm_file.close()
-
     if mpi_root:
         logger.info("Saving data")
 
         # first, need to close the existing file or we get an error
         fnls = np.array(fnls[idxs]).flatten()
+
+        # alm_file is read only and we need to append to it
+        # close it, so we can open in append mode
+        alm_file.close()
 
         # save the data, this will append to the alm_file
         sdata = {}
@@ -115,14 +119,14 @@ if __name__ == "__main__":
         sdata["estimate_1k"] = True
         sdata["estimate"] = estimates
         sdata["error"] = (estimates - fnls) * np.sqrt(fisher)
-        save_data(s.alm_file, sdata, mode="a")
+        save_data(core.alm_file, sdata, mode="a")
 
         # make and save some plots
-        plot_dir = os.path.join(s.plot_dir, "estimator")
+        plot_dir = os.path.join(core.plot_dir, "estimator")
         os.makedirs(plot_dir, exist_ok=True)
-        pred_file = os.path.join(plot_dir, f"{s.sjob}_{s.base_name}_preds.png")
-        hist_file = os.path.join(plot_dir, f"{s.sjob}_{s.base_name}_hist.png")
-        plot_predictions(fnls, estimates, fisher, save_file=pred_file)
+        pred_file = os.path.join(plot_dir, f"{core.sjob}_{core.base_name}_preds.png")
+        hist_file = os.path.join(plot_dir, f"{core.sjob}_{core.base_name}_hist.png")
+        plot_predictions(fnls, estimates, fisher=fisher, save_file=pred_file)
         plot_histogram(fnls, estimates, save_file=hist_file)
 
     logger.info("Finished %s!", mpi_rank)

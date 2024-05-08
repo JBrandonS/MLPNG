@@ -1,5 +1,7 @@
 # Code Structure
 
+quick notes on the code structure
+
 ## Important Files
 
 The most important files for the code at the running scripts `generator.sh`, and `trainer.sh`. Each of these will kick off possibly multiple SLURM jobs using sbatch files found in `sbatch`. 

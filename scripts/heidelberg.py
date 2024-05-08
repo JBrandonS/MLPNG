@@ -1,10 +1,9 @@
+import sys
 import logging
 import os
 
-import camb
 import healpy as hp
 import numpy as np
-from ksw import KSW, Cosmology, Data, Shape
 from mpi4py import MPI
 
 from . import Core
@@ -40,73 +39,47 @@ def alm_loader(str_idx):
     return alms
 
 
-def alm_step_loader(idx):
-    # needs a gaussian realization of signal + noise
-    return data.compute_alm_sim(s.lensing)
-
-
 if __name__ == "__main__":
     """
     A test script to run the KSW estimator just on the heildelberg sims.
     Probably not up to date with the latest changes in estimator.
     """
-    import sys
 
     args = sys.argv[1:]
-    s = Core(["settings/heidelberg.json"] + args)
+    core = Core(["settings/heidelberg.json"] + args)
 
-    logger.info("Running camb")
-    camb_params_obj = camb.set_params(**s.cosmo_params)
-    cosmo = Cosmology(camb_params_obj)
-    cosmo.compute_transfer(s.cosmo_params["max_l"])
-    cosmo.compute_c_ell()
-
-    logger.info("Setting up KSW")
-    loc_shape = Shape.prim_local(s.cosmo_params["ns"], s.cosmo_params["pivot_scalar"])
-    cosmo.add_prim_reduced_bispectrum(loc_shape, s.radii)
-    data = Data(s.lmax, s.noise_ell, s.beam_ell, s.pols, cosmo)
-    ksw = KSW(
-        cosmo.red_bispectra,
-        data.icov_diag_lensed if s.lensing else data.icov_diag_nonlensed,
-        beam,
-        s.lmax,
-        s.pols,
-        precision=s.precision,
-    )
-
-    logger.info("Computing isotropic Fisher")
-    icov_ell = compute_icov_ell(s.noise_ell, s.beam_ell)
-    fisher_iso = ksw.compute_fisher_isotropic(icov_ell, comm=mpi_comm)
-    logger.info(
-        "Fisher isotropic: %s, std dev: %s", fisher_iso, np.sqrt(1 / fisher_iso)
-    )
+    def alm_step_loader(idx):
+        return core.ksw.compute_alm_sim(core.lensing)
 
     logger.info("Generating Fnls")
-    fnls = s.rng.uniform(s.fnl_min, s.fnl_max + 1, 1001)
+    fnls = core.rng.uniform(core.fnl_min, core.fnl_max + 1, 1001)
 
     logger.info("Running KSW step")
     alm_step_strs = np.arange(1, 101).astype(str)
-    thetas = int(np.floor(1.5 * s.lmax + 1))
-    ksw.step_batch(alm_step_loader, alm_step_strs, comm=mpi_comm, theta_batch=thetas)
+    thetas = int(np.floor(1.5 * core.lmax + 1))
+    core.ksw.step_batch(
+        alm_step_loader, alm_step_strs, comm=mpi_comm, theta_batch=thetas
+    )
     logger.info("Done with step")
 
-    fisher = float(ksw.compute_fisher())
+    fisher = float(core.ksw.compute_fisher())
     logger.info("Fisher: %s, standard deviation: %s", fisher, np.sqrt(1 / fisher))
 
     logger.info("Computing estimates")
     alm_strs = range(1, 1001)
-    estimates = ksw.compute_estimate_batch(
+    estimates = core.ksw.compute_estimate_batch(
         alm_loader, alm_strs, comm=mpi_comm, fisher=fisher
     )
 
     if mpi_root:
-        plot_dir = os.path.join(s.plot_dir, "heidelberg")
+        plot_dir = os.path.join(core.plot_dir, "heidelberg_test")
         os.makedirs(plot_dir, exist_ok=True)
-        pred_file = os.path.join(plot_dir, f"{s.sjob}-{s.base_name}.png")
-        plot_predictions(fnls[alm_strs], estimates, fisher, save_file=pred_file)
+        
+        pred_file = os.path.join(plot_dir, f"{core.sjob}-{core.base_name}.png")
+        plot_predictions(fnls[alm_strs], estimates, fisher=fisher, save_file=pred_file)
 
-        cl_file = os.path.join(plot_dir, f"{s.sjob}-{s.base_name}_cl.png")
-        c_ells = data.cosmology.c_ell["unlensed_scalar"]
+        cl_file = os.path.join(plot_dir, f"{core.sjob}-{core.base_name}_cl.png")
+        c_ells = core.cosmo.c_ell["unlensed_scalar"]
         plot_cl_alm(alm_loader("1"), save_file=cl_file, plot_camb=True, c_ells=c_ells)
 
     logger.info("Finished %s!", mpi_rank)

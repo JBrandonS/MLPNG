@@ -1,8 +1,10 @@
 # Machine Learning for Primordial Non-Gaussianity
 
+An $A_{lm}^{NG}$ generator and training pipeline for machine learning models to estimate the local non-gaussianity from the data.
+
 ## Overview
 
-This code is designed to two to things, provided a generation framework for generating non-gaussian CMB data. It will generate both full $A_{lm}$ arrays and flat sky patch cuts. These can be of arbitrary lmax and nside, T and/or E polarizations, and lensing, with non-gaussianity and a training pipeline for machine learning models to estimate the non-gaussianity from the data. It has been ran and tested extensively on SMU's Superpod and M3 systems, but may require some tweaking to run on other systems. In particular, the main bash scripts and the sbatch script will need to be updated for new systems. 
+This code is designed to do two things, provide a generation framework for generating non-gaussian CMB data, provide a training framework to run models on the generated data. It will generate both full $A_{lm}$ arrays and flat sky patch cuts. These can be of arbitrary lmax and nside, T and/or E polarizations, and with or without lensing. It has been ran and tested extensively on SMU's Superpod and M3 systems, but may require some tweaking to run on other systems. In particular, the main bash scripts and the sbatch script will need to be updated for new systems. 
 
 The code has been broken into 2 different parts, this is due to policies not allowing for the data generation on the same system as the training. If you are not limited by this you may want to combine the conda environments and the generation and training scripts into one.
 
