@@ -88,7 +88,7 @@ The training pipeline is very simple. From Superpod,
 The data is stored in `hdf5` files as they allow reading and appending data without the need to load the whole dataset into memory. You can think of these files as python dicts. The data is stored in the following format:
 
 - For alms in `data/alms` the following key and values are stored:
-  - `alm` : The $a_{\ell m}^{NG,loc'}$ values. `Shape: (nsims, len(polarizations), data)`
+  - `alm` : The $a_{\ell m}^{NG,loc}$ values. `Shape: (nsims, len(polarizations), data)`
   - `fnl`: The $f_{nl}$ values to be used. `Shape (nsims, len(polarizations), 1)`
 
 - For the patch data files in `data/patches/`:
@@ -104,7 +104,7 @@ The data is stored in `hdf5` files as they allow reading and appending data with
 
 ### Notes on files
 
-Simultaneous runs are supported as long as the filenames do not collide. The alms settings may match as long as they have been previously generated. Existing non-completed files (ending with `.nc`) will be overwritten in the data generation step. Completed alm files will be overwritten once the alms are fully generated and, if using slurm job arrays, combined. Completed data files will be overwritten once the estimator is finished.
+Simultaneous runs are supported as long as the filenames do not collide. The alms settings may match as long as they have been previously generated. Existing non-completed files (ending with `.nc`) will be overwritten in the data generation step. Completed alm files will be overwritten once the alms are fully generated and, if using slurm job arrays, combined.
 
 #### Filenames
 
@@ -124,18 +124,28 @@ with
 - `[polarizations]`, will be one of `T`, `E`, or `TE`
 - other values are just integers / float
 
-See `scripts/core.py:_init_paths()` for the where this gets set
+See `scripts/core.py:_init_paths` for the where this gets set
 
 ## Thanks
 
-Thomas and rest of dutch group (need to add the full groups here)
+Primary development by:
+   Brandon Stevenson, Joe Ryan, Joel Meyers
 
-Adri Duivenvoorden:
+Additional thanks to:
 
-- [Minimizing gravitational lensing contributions to the primordial bispectrum covariance](http://arxiv.org/abs/1912.07619)
-- [Primordial Non-Gaussianity](http://arxiv.org/abs/1903.04409)
-- [ksw github](https://github.com/AdriJD/ksw)
-- [optweight github](https://github.com/AdriJD/optweight)
+ - Daan Meerburg
+
+ - Jorik Melsen 
+
+ - Thomas Flöss
+ 
+  - Adri Duivenvoorden
+
+### Some References
+   - [Minimizing gravitational lensing contributions to the primordial bispectrum covariance](http://arxiv.org/abs/1912.07619)
+   - [Primordial Non-Gaussianity](http://arxiv.org/abs/1903.04409)
+   - [ksw github](https://github.com/AdriJD/ksw)
+   - [optweight github](https://github.com/AdriJD/optweight)
 
 ## Problems
 
