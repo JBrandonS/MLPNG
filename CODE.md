@@ -1,6 +1,6 @@
 # Code Structure
 
-quick notes on the code structure
+Some quick notes on the code structure
 
 ## Important Files
 
@@ -8,7 +8,7 @@ The most important files for the code at the running scripts `generator.sh`, and
 
 `scripts/core.py` serves as the main config object and sets up much of the code.
 
-`scripts/models/modelcore.py` is similar as it servers as a base class for the ML models. This file also holds code for registering the model to a global register and loading the model from that register.
+`scripts/models/modelcore.py` is similar as it serves as a base class for the ML models. This file also holds code for registering the model to a global register and loading the model from that register.
 
 `scripts/models/isensee.py` is the model taken from Thomas' UNET_fnls, it also contains an entry point and thus can be used as a standalone script. 
 
