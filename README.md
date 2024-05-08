@@ -120,7 +120,7 @@ For the patches data: `l[lmax]_n[nside]_[lensing][?-_noise]_[polarizations]x[tot
 
 with
 - `[lensing] = l | ul` for lensed or unlensed sims
-- `[?_noise] = -nn` is only included if `noise` is True
+- `[?_noise] = -nn` is only included if `noise` is False
 - `[polarizations]`, will be one of `T`, `E`, or `TE`
 - other values are just integers / float
 
