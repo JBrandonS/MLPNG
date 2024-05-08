@@ -124,7 +124,7 @@ with
 - `[polarizations]`, will be one of `T`, `E`, or `TE`
 - other values are just integers / float
 
-See: (scripts/core.py)[scripts/core.py]:\_init\_paths() for the where this gets set
+See `scripts/core.py:_init_paths()` for the where this gets set
 
 ## Thanks
 
