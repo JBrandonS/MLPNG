@@ -186,7 +186,7 @@ class DataLoaderBase(Sequence):
     def _normalize(self, data, label):
         """
         Normalize the input data by subtracting the mean and dividing by the standard deviation.
-        This method treats the 0's as a mask thus not counting the empty data
+        This method treats the 0's as a mask thus not counting the empty data, which can be useful for sparse data.
 
         Args:
             data (tf.Tensor): The input data tensor.
@@ -211,7 +211,7 @@ class DataLoaderBase(Sequence):
     def save_as_tfds(self, tfds_file=None, exists_ok=False, force=False):
         """
         Saves the dataset as a TensorFlow Dataset (tfds) file.
-        This can be much fast to load than the python generator method.
+        This can be much fast to load than the python generator method once saved.
         """
         assert self._ds is not None, "self._ds is None, call _init_ds"
 
@@ -272,10 +272,11 @@ class TFDSLoader(DataLoaderBase):
 
     def _init_ds(self):
         if self.file_path.endswith(".hdf5"):
-            logger.info(f"Auto Converting file name {self.file_path} to tfds")
+            logger.debug(f"Auto Converting file name {self.file_path} to tfds")
             self.file_path = self._get_tfds_filename()
-            if not os.path.exists(self.file_path):
-                raise FileNotFoundError(f"File {self.file_path} does not exist")
+
+        if not os.path.exists(self.file_path):
+            raise FileNotFoundError(f"File {self.file_path} does not exist")
 
         self._ds = Dataset.load(self.file_path)
         self.length = self._ds.cardinality().numpy()
@@ -352,15 +353,21 @@ class AlmLoader(DataLoaderBase):
         self.alms = file["alm"]
         self.fnls = file["fnl"]
         (self.nsims, self.npol, self.ndata) = np.shape(self.alms)
+        self.lmax = Alm.getlmax(self.ndata)
 
         # setup the idx map and positional encoding
-        self.lmax = Alm.getlmax(self.ndata)
+        # this converts the flat alms to a grid of (lmax, lmax)
+        # healpy is happy to give bad values if bad input in provided,
+        # so we limit the input to the valid range, otherwise set to 0
         self.idx_map = np.fromfunction(
             lambda l, m: np.where(m <= l, Alm.getidx(self.lmax, l, m), 0),
             (self.lmax, self.lmax),
             dtype=np.int32,
         )
+
+        # generate a positional encoding which is just a small value from 0 - 1e-3
         self.pos_enc = self.idx_map / self.ndata * 1e-3
+
         super().__init__(file_path, **kwargs)
 
     def _init_ds(self):
@@ -376,6 +383,8 @@ class AlmLoader(DataLoaderBase):
         )
 
         # now create our dataset from generator
+        # I am not sure if this is the best way to get the dataset, and it might be causing some slowdowns
+        # TODO: Look into
         self._ds = Dataset.from_generator(
             self.__iter__,
             output_signature=(
@@ -403,18 +412,8 @@ class AlmLoader(DataLoaderBase):
             data[1, ...] = np.imag(alm) + self.pos_enc
         return data, fnl
 
-    def _normalize(self, data, label):
-        # we want to remove all the zeros before calculating the mean and std
-        mask = data != 0
-
-        mean = tf.math.reduce_mean(data[mask])
-        std = tf.math.reduce_std(data[mask])
-
-        # Normalize the non-zero elements of the data
-        data = (data - mean) / std
-        return data, label
-
     def _get_tfds_filename(self):
+        # save to diffrent files depending on the channels_last setting
         arg_str = "cl" if self.channels_last else "cf"
         return self.file_path.replace(".hdf5", f".{self.name}.{arg_str}.tfds")
 

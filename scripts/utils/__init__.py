@@ -14,4 +14,3 @@ from .plots import (
     plot_patches,
     plot_predictions,
 )
-from .wandb import try_init_wandb

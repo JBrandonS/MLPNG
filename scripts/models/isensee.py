@@ -24,9 +24,8 @@ from tensorflow.keras.layers import (
 from tensorflow.keras.optimizers import Adam
 
 from scripts.models import AutoModel, ModelCore, register_model
-from scripts.utils import try_init_wandb
-from scripts.utils.plots import plot_histogram, plot_predictions
-from scripts.utils.tf.plots import plot_metrics
+from scripts.utils import plot_histogram, plot_predictions
+from scripts.utils.tf import plot_metrics, try_init_wandb
 
 from tensorflow.keras.callbacks import (
     EarlyStopping,
@@ -52,6 +51,8 @@ class PeriodicPadding2D(Layer):
 
 @register_model
 class ISENSEE(ModelCore):
+    """This is the model taken from Thomas' UNET_fnl notebook"""
+
     BATCH_SIZE = 16
 
     def create_localization_module(self, input_layer, current_grid, n_filters):
