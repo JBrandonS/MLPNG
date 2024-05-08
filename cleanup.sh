@@ -1,6 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# a fairly destructive cleaner
+# a fairly destructive cleaner which will remove the logs and some data files. It does not remove any sim data.
 
 # remove the jupyter server file if it is not running exists
 if [[ ! $(squeue --me -h -n jupyter) && -f .vscj.out ]]; then

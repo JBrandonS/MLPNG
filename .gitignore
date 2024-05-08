@@ -6,7 +6,10 @@ data-shared
 logs
 settings/runs/
 
-.*
+.history
+.ipynb_checkpoints
+.pytest_cache
+.vscode
 
 # compiled files
 *.out

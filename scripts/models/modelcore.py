@@ -12,6 +12,7 @@ _MODEL_REG = {}
 
 def register_model(cls):
     """Class decorator to register a new model."""
+
     logger.debug("Registering Model: %s", cls.__name__.upper())
     _MODEL_REG[cls.__name__.upper()] = cls
     return cls
@@ -33,7 +34,6 @@ def AutoModel(args=None, default="isensee"):
 
     This function parses command line arguments to determine the model class to instantiate.
     It then attempts to create an instance of the specified model class and returns it.
-    If an error occurs during instantiation, it prints the error and returns None.
 
     Args:
         args (list, optional): A list of command line arguments. If not provided,
@@ -42,25 +42,26 @@ def AutoModel(args=None, default="isensee"):
                                The default model class is "isensee".
 
     Returns:
-        model (object): An instance of the specified model class, or None if an error occurred.
-
-    Raises:
-        ValueError: If the specified model class cannot be found or instantiated.
+        model (object): An instance of the specified model class
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default=default, help="Model to use")
     pargs, _ = parser.parse_known_args(args)
 
     model_cls = pargs.model
-    try:
-        model = get_model_class(model_cls)(args)
-        return model
-    except ValueError as e:
-        print(f"An error occurred: {e}")
-        return None
+    model = get_model_class(model_cls)(args)
+    return model
 
 
 class ModelCore(Core):
+    """
+    Base class for model cores.
+
+    Attributes:
+    - _keras_model: The keras model object, set by make_model.
+    - _dataset: The dataloader object, set by init_dataset.
+    - BATCH_SIZE: The batch size for training, based on the nside of the data.
+    """
 
     def __init__(self, argv=None):
         super().__init__(argv)
@@ -87,8 +88,8 @@ class ModelCore(Core):
         Initializes the dataset for the model.
 
         Parameters:
-        *args: Variable length argument list to pass to the datasetLoader.
-        **kwargs: Arbitrary keyword arguments to forward to the datasetLoader.
+        - *args: Variable length argument list to pass to the datasetLoader.
+        - **kwargs: Arbitrary keyword arguments to forward to the datasetLoader.
 
         Returns:
         The initialized dataset.
@@ -97,6 +98,19 @@ class ModelCore(Core):
         return self._dataset
 
     def make_model(self, name=None, **kwargs):
+        """
+        Creates the keras model.
+
+        Parameters:
+        - name: The name of the model.
+        - **kwargs: Additional keyword arguments to pass to the model.
+
+        Raises:
+        - ValueError: If the model is already created.
+
+        Returns:
+        None
+        """
         if self._keras_model is not None:
             raise ValueError("Model already created.")
 
@@ -114,6 +128,20 @@ class ModelCore(Core):
         self._keras_model = Model(inputs, outputs, name=self.name)
 
     def _model(self, inputs, *args, **kwargs):
+        """
+        Abstract method to define the model architecture.
+
+        Parameters:
+        - inputs: The input tensor(s) to the model.
+        - *args: Variable length argument list.
+        - **kwargs: Arbitrary keyword arguments.
+
+        Raises:
+        - NotImplementedError: If the method is not implemented.
+
+        Returns:
+        None
+        """
         raise NotImplementedError(
             "_model not implemented. Please subclass ModelCore and implement _model."
         )
@@ -131,27 +159,65 @@ class ModelCore(Core):
     #
 
     def _check_model(self):
+        """
+        Checks if the model and dataset are fully initialized.
+
+        Raises:
+        - ValueError: If the model or dataset is not fully initialized.
+
+        Returns:
+        None
+        """
         if self._keras_model is None or self._dataset is None:
             raise ValueError(
                 "Model not fully initialized, please call init_dataset() and make_model() first. "
             )
 
     def compile(self, *args, **kwargs):
+        """
+        Compiles the keras model.
+        """
         self._check_model()
         return self._keras_model.compile(*args, **kwargs)
 
     def summary(self, *args, **kwargs):
+        """
+        Prints a summary of the keras model.
+        """
         self._check_model()
         return self._keras_model.summary(*args, **kwargs)
 
     def fit(self, *args, **kwargs):
+        """
+        Trains the keras model.
+
+        Parameters:
+        - *args: Variable length argument list passed into the fit command.
+        - **kwargs: Arbitrary keyword arguments passed into the fit command.
+
+        Returns:
+        The training history.
+        """
         self._check_model()
         return self._keras_model.fit(*args, **kwargs)
 
     def predict(self, *args, **kwargs):
+        """
+        Generates predictions using the keras model.
+
+        Parameters:
+        - *args: Variable length argument list.
+        - **kwargs: Arbitrary keyword arguments.
+
+        Returns:
+        The predicted values.
+        """
         self._check_model()
         return self._keras_model.predict(*args, **kwargs)
 
     def keras_model(self):
+        """
+        Returns the keras model.
+        """
         self._check_model()
         return self._keras_model

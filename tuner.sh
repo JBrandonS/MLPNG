@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+# runs a keras tuner to test an array of hyperparamers
+
 SETTINGS=(
     "l500_n128"
     "heidelberg"

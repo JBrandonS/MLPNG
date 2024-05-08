@@ -7,7 +7,19 @@ import time
 import numpy as np
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
-os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
+# os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
+
+# might need to update this, but this is the path to the cuda libs
+os.environ["XLA_FLAGS"] = (
+    "--xla_gpu_cuda_data_dir=/hpc/mp/apps/nvidia/hpc_sdk/23.7/Linux_x86_64/23.7/cuda"
+)
+# os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit"
+# from tensorflow.keras import mixed_precision
+
+# mixed_precision.set_global_policy("mixed_float16")
+# from tensorflow.config import experimental as config_experimental
+
+# config_experimental.enable_tensor_float_32_execution(True)
 
 import tensorflow as tf
 from tensorflow.keras.callbacks import (
@@ -21,13 +33,19 @@ from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.losses import mse
 
 from .models import AutoModel
-from .utils import setup_logging, log_source, try_init_wandb, get_fisher
-from .utils.plots import plot_histogram, plot_predictions
-from .utils.tf.plots import plot_metrics
-from .utils.tf.callbacks import (
+from .utils import (
+    setup_logging,
+    log_source,
+    get_fisher,
+    plot_histogram,
+    plot_predictions,
+)
+from .utils.tf import (
     TimedLoggingCallback,
     WarmupLearningRate,
     AttentionSchedule,
+    plot_metrics,
+    try_init_wandb,
 )
 
 logger = setup_logging("trainer", logging.DEBUG)  # dont want name to be __main__
@@ -70,11 +88,11 @@ def main():
         "batch_size": BATCH_SIZE,
         "cache": True,
         "shuffle_buffer": 1000,
-        "normalize": False,
+        "normalize": True,
     }
     logger.debug(f"Data loader settings:\n{json.dumps(data_settings, indent=2)}")
 
-    # additional metrics we are intrested in
+    # additional metrics we are interested in
     metrics = ["mean_absolute_error"]
     logger.debug(f"Looking at additional metrics: {metrics}")
 
@@ -122,9 +140,17 @@ def main():
     # create and compile the model, needs to be in scope of the strategy
     strategy = tf.distribute.MirroredStrategy()
     with strategy.scope():
+        # RMSE needs to be made in scope and at current version you cannot use the name
+        ext_metrics = [tf.keras.metrics.RootMeanSquaredError()]
+
         opt = Adam(learning_rate=lr_schedule)
         model.make_model(**model_settings)
-        model.compile(optimizer=opt, loss="mse", metrics=metrics)
+        model.compile(
+            optimizer=opt,
+            loss="mse",
+            metrics=metrics + ext_metrics,
+            # jit_compile=True,
+        )
         model.summary()
 
     # Finally, lets fit our model
@@ -133,7 +159,7 @@ def main():
         validation_data=val_ds,
         epochs=MAX_EPOCHS,
         callbacks=callbacks,
-        verbose=2,  # since we are using the custom logger
+        verbose=2,
     )
 
     # Lets plot the predictions from the unseen test set

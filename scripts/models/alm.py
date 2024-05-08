@@ -14,13 +14,14 @@ from tensorflow.keras.layers import (
 
 from scripts.models import ModelCore, register_model
 from scripts.utils import setup_logging
-from scripts.utils.tf.dataloaders import AlmLoader
+from scripts.utils.tf import AlmLoader
 
 logger = setup_logging(__name__, level=logging.DEBUG)
 
 
 @register_model
 class ALM(ModelCore):
+    """This model attempts to use a transformer to predict the fnl value from the alm data."""
 
     def __init__(self, argv=None):
         super().__init__(argv)

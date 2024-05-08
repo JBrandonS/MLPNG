@@ -3,6 +3,7 @@ import numpy as np
 
 from tensorflow.keras.layers import (
     Layer,
+    LeakyReLU,
     ReLU,
     Add,
     UpSampling2D,
@@ -35,6 +36,8 @@ class PeriodicPadding2D(Layer):
 
 @register_model
 class ISENSEE_V2(ModelCore):
+    """This is a clone of model taken from Thomas' UNET_fnl notebook, with modifications"""
+
     def create_localization_module(self, input_layer, current_grid, n_filters):
         layer1 = PeriodicPadding2D(current_grid)(input_layer)
         convolution1 = self.create_convolution_block(layer1, n_filters)
@@ -46,7 +49,8 @@ class ISENSEE_V2(ModelCore):
     def create_up_sampling_module(
         self, input_layer, current_grid, n_filters, size=(2, 2)
     ):
-        up_sample = UpSampling2D(size=size)(input_layer)
+        # interpolation is set to bilinear because the default, nearest, is not XLA compatible
+        up_sample = UpSampling2D(size=size, interpolation="bilinear")(input_layer)
         layer1 = PeriodicPadding2D(current_grid)(up_sample)
         convolution = self.create_convolution_block(layer1, n_filters)
         return convolution
@@ -78,7 +82,7 @@ class ISENSEE_V2(ModelCore):
         n_filters,
         batch_normalization=False,
         kernel=(3, 3),
-        activation=ReLU,
+        activation=LeakyReLU,
         padding="valid",
         strides=(1, 1),
         instance_normalization=True,

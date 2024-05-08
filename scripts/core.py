@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def cosmo_defaults():
+    """Some default settings that are required by KSW / camb."""
     return {
         "As": 2.13e-09,
         "ns": 0.9624,
@@ -32,52 +33,43 @@ class Core:
     Attributes:
         settings (dict): A dictionary containing the settings loaded from the settings file.
         cosmo_params (dict): A dictionary containing the cosmological parameters.
-        lmax (int): The maximum multipole moment for the run.
-        nside (int): The number of pixels on each side of the HEALPix map.
-        pols (str): The polarizations to consider (e.g., "T", "E", "B").
-        lensing (bool): Whether to include lensing effects in the simulation.
+        lmax (int): The maximum multipole moment for the run. Default: 500
+        nside (int): The number of pixels on each side of the HEALPix map. Default: 1024
+        pols (str): The polarizations to consider (i.e., "T", "E"). Default: T
+        lensing (bool): Whether to include lensing effects in the simulation. Default: False
         npol (int): The number of polarizations.
         seed (int): The random seed for reproducibility.
         rng (numpy.random.Generator): The random number generator.
-        nsims (int): The number of simulations to run.
-        narray (int): The number of arrays to process.
+        nsims (int): The number of simulations to run. Default: 100
+        narray (int): The number of arrays to process. Default: 1
         total_sims (int): The total number of simulations to process.
         sim_pol (list): A list of tuples representing the simulation and polarization indices.
         sim_pol_len (int): The number of simulations and polarizations to process.
-        fnl_min (float): The minimum value of the local non-Gaussianity parameter (fnl).
-        fnl_max (float): The maximum value of the local non-Gaussianity parameter (fnl).
+        fnl_min (float): The minimum value of the local non-Gaussianity parameter (fnl). Default: -1
+        fnl_max (float): The maximum value of the local non-Gaussianity parameter (fnl). Default: 1
         fnl_shape (tuple): The shape of the fnl array.
         nell (int): The number of ell values.
         nelem (int): The number of elements in the alm array.
         ells (numpy.ndarray): An array of ell values.
-        r_dtype (numpy.dtype): The data type for real numbers.
-        c_dtype (numpy.dtype): The data type for complex numbers.
-        precision (str): The precision level ("single" or "double").
-        sjob (str): The SLURM job ID.
+        r_dtype (numpy.dtype): The data type for real numbers. Default: float32
+        c_dtype (numpy.dtype): The data type for complex numbers. Default: complex64
+        precision (str): The precision level ("single" or "double"). Default: 'single'
+        sjob (str): The SLURM job ID, -1 if not found.
         job_array_index (int): The index of the job array.
         is_main_job (bool): Whether the current job is the main job.
-        base_dir (str): The base directory for output files.
+        base_dir (str): The base directory for output files. Default: data
         base_name (str): The base name for output files.
-        plot_dir (str): The directory for plot files.
-        tb_dir (str): The directory for TensorBoard files.
-        model_dir (str): The directory for model files.
-        alm_dir (str): The directory for alm files.
-        patch_dir (str): The directory for patch files.
+        plot_dir (str): The directory for plot files. Default: plots
+        tb_dir (str): The directory for TensorBoard files. Default: tensorboard
+        model_dir (str): The directory for model files. Default: models
+        alm_dir (str): The directory for alm files. Default: alms
+        patch_dir (str): The directory for patch files. Default: patches
         alm_file_partial (str): The partial path to the alm file.
         alm_file (str): The full path to the alm file.
         patch_str (str): The string representation of the patch file.
         patch_file (str): The full path to the patch file.
         cosmo (ksw.Cosmology): The cosmology object.
         radii (numpy.ndarray): An array of radii for the bispectrum estimator.
-
-    Methods:
-        parse_args(args=None): Parses the command line arguments and returns the parsed arguments.
-        cosmo_defaults(): Returns a dictionary of default cosmological parameters.
-        __init__(argv=None): Initializes a new instance of the `Core` class.
-        _get(name, default=None): Gets the value of a setting from the settings dictionary.
-        _init_slurm(): Initializes SLURM-related attributes.
-        _init_paths(): Initializes file path-related attributes.
-        _init_cosmo(): Initializes the cosmology object.
     """
 
     def parse_args(self, args=None):
@@ -85,7 +77,7 @@ class Core:
         Parse command line arguments.
 
         Args:
-            args (list): List of command line arguments. If None, sys.argv[1:] will be used.
+            args (list): List of command line arguments. If None, sys.argv will be used.
 
         Returns:
             argparse.Namespace: Parsed command line arguments.
@@ -137,8 +129,8 @@ class Core:
         Initializes a new instance of the `Core` class.
 
         Args:
-            argv (list): List contating the CLI Args, first arg should be the settings file, others follow arg_parse.
-            If None, sys.argv[1:] will be used.
+            argv (list): List of the CLI Args, first arg should be the settings file, others follow arg_parse.
+            If None, sys.argv will be used.
             inspect_class (bool): Whether to inspect the class using the `rich` library. Default is False.
         """
         args = self.parse_args(argv)
@@ -153,6 +145,7 @@ class Core:
 
         # replace the settings with the command line arguments
         for key, value in vars(args).items():
+            # we do not want to save the settings_file or save_settings options, so ignore those
             if value is not None and key not in ["settings_file", "save_settings"]:
                 logger.debug(f"Forcing setting '{key}' to '{value}' due to CLI")
                 settings[key] = value
@@ -165,6 +158,7 @@ class Core:
         }
         if logger.getEffectiveLevel() <= logging.DEBUG:
             # This just logs any changes to the defaults, but only if in debug mode
+            # Not really needed, but good logs can be helpful
             defaults = cosmo_defaults()
             for key in defaults.keys():
                 if key in cosmo_params and defaults[key] != cosmo_params[key]:
@@ -209,6 +203,7 @@ class Core:
 
         # setup our precision types to be consistent
         # TODO: More testing with double precision, some areas default to single, some double
+        # also, tensorflow seems to mostly use float32, so is there a benefit for us to use double?
         if self._get("double_precision", False):
             self.r_dtype = np.float64
             self.c_dtype = np.complex128
@@ -223,6 +218,7 @@ class Core:
         # each of these modifies attributes of the object
         self._setup_noise_beam()
         self._setup_radii()
+
         self._init_slurm()
         self._init_cosmo()
         self._init_almgen()
@@ -277,6 +273,7 @@ class Core:
 
         Attributes:
             sjob (str): The SLURM job ID.
+            scpus (int): The number of CPUs per task.
             job_array_index (int): The index of the current job in the SLURM array.
             is_main_job (bool): Indicates whether the current job is the main job.
 
@@ -355,33 +352,6 @@ class Core:
         self.alm_file = os.path.join(self.alm_dir, f"{self.base_name}.hdf5")
         self.patch_str = f"{self.base_name}x{self.npatches}"
         self.patch_file = os.path.join(self.patch_dir, f"{self.patch_str}{j}.hdf5")
-
-    def icov(self, alm):
-        """
-        Returned the inverse covariance of the data, used in the KSW estimator.
-
-        Function takes (npol, nelem) alm-like complex array "a" and returns the
-        inverse-variance-weighted version of that array. Specifically:
-        (B^{-1} N B^{-1} + S)^{-1} B^{-1} a, where a = B s + n, B is the beam
-        and N^{-1} and S^{-1} are the inverse noise and signal covariance
-        matrices, respectively.
-
-        Parameters:
-        - alm (ndarray): (npol, nelem) alm-like complex array.
-
-        Returns:
-        - ndarray: Inverse-variance-weighted version of the input array.
-
-        """
-        ret = np.empty_like(alm)
-        for pol in range(alm.shape[0]):
-            B = self.beam_ell[pol]
-            iB = 1 / B
-            N = self.noise_ell[pol]
-            S = self.c_ells[:, pol]
-            factor = (iB * N * iB + S) ** -1 * iB
-            ret[pol] = hp.almxfl(alm[pol], factor, inplace=False)
-        return ret
 
     def _init_cosmo(self):
         """
@@ -492,6 +462,33 @@ class Core:
             self.nside,
         )
 
+    def icov(self, alm):
+        """
+        Returned the inverse covariance of the data, used in the KSW estimator.
+
+        Function takes (npol, nelem) alm-like complex array "alm" and returns the
+        inverse-variance-weighted version of that array. Specifically:
+        (B^{-1} N B^{-1} + S)^{-1} B^{-1} a, where a = B s + n, B is the beam
+        and N^{-1} and S^{-1} are the inverse noise and signal covariance
+        matrices, respectively.
+
+        Parameters:
+        - alm (ndarray): (npol, nelem) alm-like complex array.
+
+        Returns:
+        - ndarray: Inverse-variance-weighted version of the input array.
+
+        """
+        ret = np.empty_like(alm)
+        for pol in range(alm.shape[0]):
+            B = self.beam_ell[pol]
+            iB = 1 / B
+            N = self.noise_ell[pol]
+            S = self.c_ells[:, pol]
+            factor = (iB * N * iB + S) ** -1 * iB
+            ret[pol] = hp.almxfl(alm[pol], factor, inplace=False)
+        return ret
+
     def conv_beam_func(self):  # change name
         """
         Returns a function which KSW can use to convolve the alms with the beam.
@@ -500,18 +497,20 @@ class Core:
         Returns:
             function: A function that takes alm values and returns the convolved beam.
         """
-        if self.beam_width == 0.0:
-            # Dont need to bother with anything if beam_width is 0
-            return lambda alm: alm
+        # for now we disable due to some issue with the beaming, need to look into this more
+        # if self.beam_width == 0.0:
+        #     # Dont need to bother with anything if beam_width is 0
+        #     return lambda alm: alm
 
-        def __beam(alm):
-            # Convolve the beam with the alm values
-            ret = np.empty_like(alm)
-            for pol in range(alm.shape[0]):
-                ret[pol] = hp.almxfl(alm[pol], self.beam_ell[pol], inplace=False)
-            return ret
+        # def __beam(alm):
+        #     # Convolve the beam with the alm values
+        #     ret = np.empty_like(alm)
+        #     for pol in range(alm.shape[0]):
+        #         ret[pol] = hp.almxfl(alm[pol], self.beam_ell[pol], inplace=False)
+        #     return ret
 
-        return __beam
+        # return __beam
+        return lambda alm: alm
 
     def _setup_noise_beam(self):
         """

@@ -14,11 +14,13 @@ from tensorflow.keras.layers import (
 )
 
 from scripts.models import ModelCore, register_model
-from scripts.utils.tf.layers import ReflectionPadding2D, augmentation_layer
+from scripts.utils.tf import ReflectionPadding2D, augmentation_layer
 
 
 @register_model
 class DCNN(ModelCore):
+    """A deep CNN network just testing"""
+
     def __init__(self, argv=None):
         super().__init__(argv)
         self.BATCH_SIZE = 4

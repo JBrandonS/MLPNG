@@ -5,7 +5,7 @@
 ### This script will reuse the running server if it exists.
 
 print_help () {
-    echo "Usage: start-jupyter.sh [options]"
+    echo "Usage: start_jupyter.sh [options]"
     echo "Options:"
     echo "  -t, --time <time>       Time to run the job"
     echo "  -c, --cpus <cpus>       Number of CPUs to use"
@@ -67,7 +67,7 @@ else
         rm .vscj.out
     fi
 
-    # need to run diffrent sbatch script based on the hostname
+    # need to run different sbatch script based on the hostname
     if [[ $(hostname) == slogin* ]]; then
         RUN_SCRIPT="sbatch/jupyter-mp.sbatch"
     else
