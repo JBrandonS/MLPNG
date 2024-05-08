@@ -111,7 +111,7 @@ class Core:
         # otherwise it will be none
         parser.add_argument("--lensing", action=argparse.BooleanOptionalAction)
         parser.add_argument("--noise", action=argparse.BooleanOptionalAction)
-        parser.add_argument("--force_alm_gen", action=argparse.BooleanOptionalAction)
+        parser.add_argument("--force_generation", action=argparse.BooleanOptionalAction)
 
         # this allows us to save a copy of the final settings used for the run
         # only really useful for debugging, must be provided by the CLI and not in the settings file
@@ -192,6 +192,7 @@ class Core:
         self.nsims = self._get("nsims", 100)
         self.narray = self._get("narray", 1)
         self.total_sims = self.nsims * self.npol * self.narray
+        self.force_gen = self._get("force_generation", False)
 
         # setup the fnl and shape
         self.fnl_min, self.fnl_max = self._get("fnl_range", (-1, 1))
@@ -442,19 +443,17 @@ class Core:
 
         Attributes:
             alm_shape (tuple): The shape of the alm array, given by (nsims, npol, nelem).
-            force_alm_gen (bool): Whether to force alm generation. Default is False.
             tr_ells (array): The ells values from the transfer function that are less than or equal to lmax.
             tr_k (array): The k values from the transfer function.
             tr_ell_k (array): The tr_ell_k values from the transfer function that correspond to tr_ells.
 
         Side Effects:
-            Modifies the alm_shape, force_alm_gen, tr_ells, tr_k, and tr_ell_k attributes.
+            Modifies the alm_shape, tr_ells, tr_k, and tr_ell_k attributes.
 
         Assumptions:
             Assumes that the cosmology object has generated transfers with ells, k, and tr_ell_k keys.
         """
         self.alm_shape = (self.nsims, self.npol, self.nelem)
-        self.force_alm_gen = self._get("force_alm_gen", False)
 
         tr_ells = self.cosmo.transfer["ells"]  # type: ignore
         mask = tr_ells <= self.lmax
