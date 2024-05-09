@@ -273,7 +273,6 @@ class Core:
 
         Attributes:
             sjob (str): The SLURM job ID.
-            scpus (int): The number of CPUs per task.
             job_array_index (int): The index of the current job in the SLURM array.
             is_main_job (bool): Indicates whether the current job is the main job.
 
@@ -282,9 +281,6 @@ class Core:
         """
         self.sjob = os.getenv("SLURM_JOB_ID", "-1")
         logger.info(f"SLURM job id: {self.sjob}")
-
-        self.scpus = int(os.environ["SLURM_CPUS_PER_TASK"])
-        logger.debug(f"SLURM cpus per task: {self.scpus}")
 
         job_tasks = os.getenv("SLURM_ARRAY_TASK_COUNT")
         if job_tasks is not None:
