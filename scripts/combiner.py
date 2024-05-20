@@ -10,7 +10,7 @@ from tqdm.auto import tqdm
 from . import Core
 from .utils import setup_logging
 
-logger = setup_logging(__name__, level=logging.DEBUG)
+logger = setup_logging(__name__)
 
 
 def extract_number(filename):
@@ -78,6 +78,22 @@ def recursive_copy(hf_source, hf_dest):
 
 
 def combine_data(directory, base_name, ext=".hdf5", remove_files=True, expected=100):
+    """
+    Combine multiple h5py files into a single file.
+
+    Args:
+        directory (str): The directory where the files are located.
+        base_name (str): The base name of the files to combine.
+        ext (str, optional): The file extension of the files to combine. Defaults to ".hdf5".
+        remove_files (bool, optional): Whether to remove the partial files after combining. Defaults to True.
+        expected (int, optional): The expected number of files to combine. Defaults to 100.
+
+    Returns:
+        None
+
+    Raises:
+        None
+    """
     # Get a list of all h5py files that match the pattern, i.e., end with a SLURM job array index
     file_pattern = os.path.join(directory, f"{base_name}_[0-9]*{ext}*")
     files_to_combine = glob.glob(file_pattern)
@@ -114,7 +130,6 @@ def combine_data(directory, base_name, ext=".hdf5", remove_files=True, expected=
 
 def main():
     core = Core()
-
     combine_data(core.alm_dir, core.base_name, ".hdf5", expected=core.narray)
     combine_data(core.patch_dir, core.patch_str, ".hdf5", expected=core.narray)
 

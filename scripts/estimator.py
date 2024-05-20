@@ -1,3 +1,4 @@
+import sys
 import logging
 import os
 import math
@@ -22,22 +23,7 @@ logger = setup_logging(
 )
 
 
-def _estimator_loader(idx):
-    """Loads in a single alm given an idx. Used inside the KSW code."""
-    idx, pol = np.unravel_index(int(idx), (core.total_sims, core.npol))
-    logger.debug("Sending alm (%s, %s) with fnl %s", idx, pol, fnls[idx, pol])
-    return np.array(alms[idx, pol])
-
-
-def _step_loader(idx):
-    """
-    for stepping the KSW estimator, we just generate new unique sims
-    """
-    logger.debug("Sending alm step %s", idx)
-    return core.data.compute_alm_sim(core.lensing)
-
-
-if __name__ == "__main__":
+def main():
     core = Core()
 
     # the KSW code requires the total_sims to be >= mpi_size
@@ -71,8 +57,15 @@ if __name__ == "__main__":
         # so we just set it to mpi_size if mpi_size > 100
         idxs = range(max(100, mpi_size))
 
+        def step_loader(idx):
+            """
+            for stepping the KSW estimator, we just generate new unique sims
+            """
+            logger.debug("Sending alm step %s", idx)
+            return core.data.compute_alm_sim(core.lensing)
+
         # step the MC, actually does the work
-        core.ksw.step_batch(_step_loader, idxs, comm=mpi_comm, theta_batch=theta_batch)
+        core.ksw.step_batch(step_loader, idxs, comm=mpi_comm, theta_batch=theta_batch)
 
         # save the mc state if we are using the mc file
         if use_mc_file and mpi_root:
@@ -88,14 +81,21 @@ if __name__ == "__main__":
 
     # only do at most 1k estimates right now, just for time
     num_est = min(1000, core.total_sims)
+    idxs = np.arange(num_est)
     logger.info(
         "Computing %s estimates in %.2f batches",
         num_est,
         num_est / mpi_size,
     )
-    idxs = np.arange(num_est)
+
+    def estimator_loader(idx):
+        """Loads in a single alm given an idx."""
+        sim, pol = np.unravel_index(int(idx), (core.total_sims, core.npol))
+        logger.debug("Sending alm (%s, %s) with fnl %s", sim, pol, fnls[sim])
+        return np.array(alms[sim, pol])
+
     estimates = core.ksw.compute_estimate_batch(
-        _estimator_loader,
+        estimator_loader,
         idxs,
         comm=mpi_comm,
         fisher=fisher,
@@ -106,7 +106,6 @@ if __name__ == "__main__":
     if mpi_root:
         logger.info("Saving data")
 
-        # first, need to close the existing file or we get an error
         fnls = np.array(fnls[idxs]).flatten()
 
         # alm_file is read only and we need to append to it
@@ -130,3 +129,7 @@ if __name__ == "__main__":
         plot_histogram(fnls, estimates, save_file=hist_file)
 
     logger.info("Finished %s!", mpi_rank)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

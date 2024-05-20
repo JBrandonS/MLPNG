@@ -114,7 +114,7 @@ class ISENSEE(ModelCore):
         else:
             return activation()(layer)
 
-    def _model(self, inputs, depth=5, n_base_filters=16, dropout_rate=0.3, n_labels=1):
+    def _model(self, inputs, depth=3, n_base_filters=32, dropout_rate=0.3, n_labels=16):
         x = inputs
         level_output_layers = list()
         level_filters = list()

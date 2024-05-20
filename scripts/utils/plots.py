@@ -12,6 +12,16 @@ logger = logging.getLogger(__name__)
 
 
 def plot_patches(patches, n_plots, title="Patches", save_file=None):
+    """
+    Plot a grid of image patches.
+
+    Args:
+        patches (ndarray): Array of image patches.
+        n_plots (int): Number of patches to plot.
+        title (str, optional): Title of the plot. Defaults to "Patches".
+        save_file (str, optional): File path to save the plot. If None, the plot will be displayed. Defaults to None.
+    """
+
     n_plots = min(n_plots, patches.shape[0])
     nrows = int(np.ceil(n_plots / 4))
     ncols = min(n_plots, 4)
@@ -51,6 +61,25 @@ def plot_cl(
     beam_width=None,
     scale=True,
 ):
+    """
+    Plot the angular power spectrum from cl.
+
+    Args:
+        cl (array-like): Array of angular power spectrum values.
+        lmax (int): Maximum value of ell.
+        title (str, optional): Title of the plot. Defaults to "Angular power spectrum from cl".
+        save_file (str, optional): File path to save the plot. Defaults to None.
+        plot_func (function, optional): Plotting function to use. Defaults to plt.semilogy.
+        plot_camb (bool, optional): Whether to plot the camb values. Defaults to False.
+        c_ells (array-like, optional): Array of camb values. Required if plot_camb is True.
+        camb_noise (bool, optional): Whether to plot camb values with noise. Defaults to False.
+        noise (array-like, optional): Array of noise values. Required if camb_noise is True.
+        beam_width (float, optional): Beam width value. Required if camb_noise is True.
+        scale (bool, optional): Whether to scale the values. Defaults to True.
+
+    Returns:
+        None
+    """
     pol = 0
     nell = lmax + 1
     ells = np.arange(2, nell)
@@ -69,10 +98,8 @@ def plot_cl(
                 raise ValueError(
                     "Need to provide noise and beam_width if plotting camb with noise."
                 )
-            
-            beam = np.exp(
-                -(ells * (ells + 1) * beam_width**2) / (16 * np.log(2))
-            )
+
+            beam = np.exp(-(ells * (ells + 1) * beam_width**2) / (16 * np.log(2)))
             camb_cl_noise = camb_cl * beam**2 + noise[2:nell]
             plot_func(
                 ells,
@@ -95,12 +122,37 @@ def plot_cl(
 
 
 def plot_cl_alm(alm, lmax=None, title="Angular power spectrum from alm", **kwargs):
+    """
+    Plot the angular power spectrum from alm.
+
+    Parameters:
+    alm (array-like): The alm coefficients.
+    lmax (int, optional): The maximum multipole moment. If not provided, it will be determined from the length of alm.
+    title (str, optional): The title of the plot.
+    **kwargs: Additional keyword arguments to be passed to the plot_cl function.
+
+    Returns:
+    None
+    """
     cl = curvedsky.alm2cl(alm)
     lmax = lmax if lmax else hp.Alm.getlmax(len(alm))
     plot_cl(cl, lmax, title, **kwargs)
 
 
 def plot_cl_map(map, wcs, lmax, title="Angular power spectrum from map", **kwargs):
+    """
+    Plot the angular power spectrum from a map.
+
+    Parameters:
+    map (ndarray): The input map.
+    wcs (WCS): The world coordinate system of the map.
+    lmax (int): The maximum multipole moment.
+    title (str, optional): The title of the plot. Default is "Angular power spectrum from map".
+    **kwargs: Additional keyword arguments to be passed to the plot_cl function.
+
+    Returns:
+    None
+    """
     tmap = enmap.ndmap(map, wcs)
     alm = curvedsky.map2alm(tmap, lmax=lmax)
     cl = curvedsky.alm2cl(alm)
@@ -110,6 +162,18 @@ def plot_cl_map(map, wcs, lmax, title="Angular power spectrum from map", **kwarg
 def plot_predictions(
     truth, preds, title="Predictions", fisher=None, scaled_variance=None, save_file=None
 ):
+    """
+    Plots the true labels against the predicted labels. If provided will plot the expected deviations from the provided fisher
+    and scaled_variance.
+
+    Args:
+        truth (array-like): The true labels.
+        preds (array-like): The predicted labels.
+        title (str, optional): The title of the plot. Defaults to "Predictions".
+        fisher (float, optional): The Fisher value. Defaults to None.
+        scaled_variance (float, optional): The scaled variance value. Defaults to None.
+        save_file (str, optional): The file path to save the plot. Defaults to None.
+    """
     df = pd.DataFrame(
         {
             "True Labels": np.array(truth).flatten(),
@@ -127,6 +191,7 @@ def plot_predictions(
 
     if fisher is not None:
         std_dev = np.sqrt(1 / fisher)
+        logger.debug(f"Plotting with standard deviation: {std_dev}")
         plt.plot(line, line + std_dev, color="blue", linestyle="--", label="Fisher")
         plt.plot(line, line - std_dev, color="blue", linestyle="--")
 
@@ -138,6 +203,7 @@ def plot_predictions(
             linestyle="--",
             label=r"Scaled Variance (1/$\sqrt{f_{sky} f}$)",
         )
+        plt.plot(line, line + scaled_variance, color="green", linestyle="--")
         plt.plot(line, line - scaled_variance, color="green", linestyle="--")
 
     # Line for perfect fit

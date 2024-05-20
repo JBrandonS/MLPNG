@@ -9,7 +9,6 @@ from numpy import unravel_index
 from numpy.random import default_rng
 from tensorflow.data import AUTOTUNE, Dataset
 from tensorflow.data.experimental import assert_cardinality
-from tensorflow.keras import Input
 from tensorflow.keras.utils import Sequence
 
 logger = logging.getLogger(__name__)
@@ -51,10 +50,10 @@ class DataLoaderBase(Sequence):
         shuffle_buffer=1000,
         normalize=False,
         cache=False,
+        channels_last=True,
         seed=None,
         dtype=np.float32,
         num_replicas="auto",
-        init_ds=True,
     ):
         """
         Initializes a DataLoader object.
@@ -69,8 +68,8 @@ class DataLoaderBase(Sequence):
             cache (bool, optional): Whether to cache the data. Defaults to False.
             seed (int, optional): The seed value for randomization. Defaults to None.
             dtype (numpy.dtype, optional): The data type. Defaults to np.float32.
-            num_replicas (str or int, optional): The number of replicas. Defaults to "auto".
-            init_ds (bool, optional): Whether to initialize the dataset. Defaults to True.
+            num_replicas (str or int, optional): The number of replicas, if 'auto' will get the value. Defaults to "auto".
+            channels_last (bool, optional): Should the channels be placed last, this is the pols for patch data. Defaults to True.
         """
         # setup some attributes
         self.file_path = file_path
@@ -82,21 +81,26 @@ class DataLoaderBase(Sequence):
         self.normalize = normalize
         self.seed = seed if seed is not None else default_rng().integers(0, 2**32 - 1)
         self.dtype = dtype
+        self.channels_last = channels_last
 
         if num_replicas == "auto":
             # tested on superpod but would not be surprised if this doesn't work on other systems
             self.num_replicas = len(tf.config.list_physical_devices("GPU")) or 1
-            logger.debug(f"auto detected num_replicas: {self.num_replicas}")
         else:
             # make sure num_replicas is >= 1
             self.num_replicas = int(num_replicas) if int(num_replicas) > 0 else 1
+        logger.debug(f"num_replicas: {self.num_replicas}")
 
+        # need to set these in subclass, after __init__ is called
         self._ds = None
         self.length = 0
         self.shape = (None,)
 
-        if init_ds:
-            self._init_ds()
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, index):
+        raise NotImplementedError("This method must be implemented in a subclass")
 
     def _get_dataset(self, start, step):
         """
@@ -113,21 +117,22 @@ class DataLoaderBase(Sequence):
         Returns:
         tf.data.Dataset: The processed subset of the dataset, ready for training or evaluation.
         """
-        assert (
-            self._ds is not None
-        ), "self._ds is None, did you forget to call _init_ds?"
+
+        if step == 0:
+            # lets you disable the dataset by setting step to 0, will need to check for this later if needed
+            return None
+
         data = self._ds.skip(start).take(step)
 
         # fixes an issue with tf not knowing the size of the dataset
         data = data.apply(assert_cardinality(step))
 
         if self.normalize:
-            # normalizer = tf.keras.layers.Normalization(axis=None)
-            # normalizer.adapt(self._ds)
-            # data = data.map(normalizer, num_parallel_calls=AUTOTUNE)
             data = data.map(self._normalize, num_parallel_calls=AUTOTUNE)
+
         if self.cache:
             data = data.cache()
+
         if self.shuffle:
             buffer_size = step if self.shuffle_buffer is None else self.shuffle_buffer
             data = data.shuffle(buffer_size, self.seed, reshuffle_each_iteration=True)
@@ -137,7 +142,7 @@ class DataLoaderBase(Sequence):
             # see: https://keras.io/guides/distributed_training_with_tensorflow/
             self.batch_size * self.num_replicas,
             drop_remainder=True,  # we dont want any partial batches
-            # deterministic=False,  # we dont care about order
+            deterministic=False,  # we dont care about order
             num_parallel_calls=AUTOTUNE,
         )
         return data.prefetch(AUTOTUNE)
@@ -170,19 +175,6 @@ class DataLoaderBase(Sequence):
         val_ds = self._get_dataset(train_size + test_size, val_size)
         return train_ds, test_ds, val_ds
 
-    def __len__(self):
-        return self.length
-
-    def __getitem__(self, index):
-        raise NotImplementedError("This method must be implemented in a subclass")
-
-    def _init_ds(self):
-        raise NotImplementedError("This method must be implemented in a subclass")
-
-    def input(self):
-        """returns a keras input for the dataset"""
-        return Input(self.shape)
-
     def _normalize(self, data, label):
         """
         Normalize the input data by subtracting the mean and dividing by the standard deviation.
@@ -206,7 +198,9 @@ class DataLoaderBase(Sequence):
         return data, label
 
     def _get_tfds_filename(self):
-        return self.file_path.replace(".hdf5", f".{self.name}.tfds")
+        # save to different files depending on the channels_last setting
+        arg_str = "cl" if self.channels_last else "cf"
+        return self.file_path.replace(".hdf5", f".{self.name}.{arg_str}.tfds")
 
     def save_as_tfds(self, tfds_file=None, exists_ok=False, force=False):
         """
@@ -270,21 +264,16 @@ class TFDSLoader(DataLoaderBase):
     This assumes all preprocessing has been done and the data is ready to be used.
     """
 
-    def _init_ds(self):
-        if self.file_path.endswith(".hdf5"):
-            logger.debug(f"Auto Converting file name {self.file_path} to tfds")
-            self.file_path = self._get_tfds_filename()
+    def __init__(self, file_path, **kwargs):
+        super().__init__(file_path, **kwargs)
 
-        if not os.path.exists(self.file_path):
-            raise FileNotFoundError(f"File {self.file_path} does not exist")
+        if self.file_path.endswith(".hdf5"):
+            logger.debug(f"Converting file extension for {self.file_path} to tfds")
+            self.file_path = self._get_tfds_filename()
 
         self._ds = Dataset.load(self.file_path)
         self.length = self._ds.cardinality().numpy()
         self.shape = self._ds.element_spec[0].shape
-
-        logger.info(
-            f"Loaded {self.file_path} with {self.length} samples, and data shape {self.shape}"
-        )
 
     def save_as_tfds(self, exists_ok=False, force=False):
         raise NotImplementedError("This method is not implemented for TFDSLoader")
@@ -297,19 +286,23 @@ class TFDSLoader(DataLoaderBase):
 class PatchLoader(DataLoaderBase):
     """Loads the patches in as channel last format, shape: (nside, nside, 1)"""
 
-    def _init_ds(self):
-        self.file = h5py.File(self.file_path, mode="r", swmr=True, locking=False)
+    def __init__(self, file_path, **kwargs):
+        super().__init__(file_path, **kwargs)
+
+        file = h5py.File(file_path, mode="r", swmr=True, locking=False)
+        self.patches = file["patch"]
+        self.fnls = file["fnl"]
+
         (
             self._nsims,
             self._npol,
             self._npatches,
             self._nside,
             _,
-        ) = self.file["patch"].shape
+        ) = self.patches.shape
 
-        self.length = self._nsims * self._npol * self._npatches
-        self.shape = (self._nside, self._nside, 1)
-        self.patches = self.file["patch"]
+        self.length = self._nsims * self._npatches
+        self.shape = (self._nside, self._nside, self._npol)
 
         logger.info(
             f"Loading {self.file_path} with {self.length} samples, and data shape {self.shape}"
@@ -326,12 +319,25 @@ class PatchLoader(DataLoaderBase):
 
     def __getitem__(self, index):
         # Convert the flat index to a multidimensional index
-        i, j, k = unravel_index(index, (self._nsims, self._npol, self._npatches))
+        i, j = unravel_index(index, (self._nsims, self._npatches))
 
-        # we also need to add the channel dimension as TF expects it
-        patch = np.array(self.patches[i, j, k])
-        patch = np.expand_dims(patch, axis=-1)
-        fnl = self.file["fnl"][i, j]
+        # start with patch as (nsim, npol, npatch, nside, nside)
+        # we get the sim and patch requested by the index to get (npol, nside, nside)
+        patch = np.array(self.patches[i, :, j])
+
+        if len(self.fnls.shape) == 3:
+            # fnls have been generated with a pol dimension. This has been changed but the datasets take a while to generate so
+            # just check and drop the pol dim
+            logger.debug("Dropping fnl pol dimension, please regenerate data with new setup so all pols have the same FNL and can be used in the mode")
+            fnl = self.fnls[i, 0]
+        else:
+            fnl = self.fnls[i]
+
+        # if we are channels_last we need to transpose the data, pol will be our channels
+        if self.channels_last:
+            patch = tf.transpose(patch, perm=[1, 2, 0])
+            # fnl = tf.transpose(fnl, perm=[1, 0])
+
         return patch, fnl
 
 
@@ -342,37 +348,20 @@ class AlmLoader(DataLoaderBase):
     Shape: (lmax, lmax, 2) if channels_last else (2, lmax, lmax)
     """
 
-    def __init__(self, file_path, channels_last=False, **kwargs):
-        self.channels_last = channels_last
+    def __init__(self, file_path, **kwargs):
+        super().__init__(file_path, **kwargs)
 
         # we dont store the file, it will close on gc after the alms and fnls are destroyed
         file = h5py.File(file_path, mode="r", swmr=True, locking=False)
-        logger.debug("Data keys: " + ", ".join(file.keys()))
 
         # this lazy loads the alm and fnl data
         self.alms = file["alm"]
         self.fnls = file["fnl"]
-        (self.nsims, self.npol, self.ndata) = np.shape(self.alms)
+
+        (self.nsims, self.npol, self.ndata) = self.alms.shape
         self.lmax = Alm.getlmax(self.ndata)
-
-        # setup the idx map and positional encoding
-        # this converts the flat alms to a grid of (lmax, lmax)
-        # healpy is happy to give bad values if bad input in provided,
-        # so we limit the input to the valid range, otherwise set to 0
-        self.idx_map = np.fromfunction(
-            lambda l, m: np.where(m <= l, Alm.getidx(self.lmax, l, m), 0),
-            (self.lmax, self.lmax),
-            dtype=np.int32,
-        )
-
-        # generate a positional encoding which is just a small value from 0 - 1e-3
-        self.pos_enc = self.idx_map / self.ndata * 1e-3
-
-        super().__init__(file_path, **kwargs)
-
-    def _init_ds(self):
-        # get the shape and length that our dataset will be in
         self.length = self.nsims * self.npol
+
         if self.channels_last:
             self.shape = (self.lmax, self.lmax, 2)
         else:
@@ -382,9 +371,20 @@ class AlmLoader(DataLoaderBase):
             f"Loading {self.file_path} with {self.length} samples, and data shape {self.shape}"
         )
 
-        # now create our dataset from generator
-        # I am not sure if this is the best way to get the dataset, and it might be causing some slowdowns
-        # TODO: Look into
+        # setup the idx map
+        # this converts the flat alms to a grid of (lmax, lmax)
+        # healpy is happy to give bad values if bad input in provided,
+        # so we limit the input to the valid range, otherwise set to 0, which will be the monopole
+        # this will be 0 as we remove the monopole and dipole by setting them to 0 in the data generation
+        self.idx_map = np.fromfunction(
+            lambda l, m: np.where(m <= l, Alm.getidx(self.lmax, l, m), 0),  # noqa: E741
+            (self.lmax, self.lmax),
+            dtype=np.int32,
+        )
+
+        # generate a positional encoding which is just a small value from 0 - 1e-3
+        self.pos_enc = self.idx_map / self.ndata * 1e-3
+
         self._ds = Dataset.from_generator(
             self.__iter__,
             output_signature=(
@@ -410,116 +410,4 @@ class AlmLoader(DataLoaderBase):
         else:
             data[0, ...] = np.real(alm) + self.pos_enc
             data[1, ...] = np.imag(alm) + self.pos_enc
-        return data, fnl
-
-    def _get_tfds_filename(self):
-        # save to diffrent files depending on the channels_last setting
-        arg_str = "cl" if self.channels_last else "cf"
-        return self.file_path.replace(".hdf5", f".{self.name}.{arg_str}.tfds")
-
-
-class AlmLoaderV2(AlmLoader):
-    """Interleaves the real/complex instead of adding a new dim
-    Shape: (lmax, 2*lmax) if channels_last else (2*lmax, lmax)
-    """
-
-    def _init_ds(self):
-        self.length = self.nsims * self.npol
-        if self.channels_last:
-            self.shape = (self.lmax, 2 * self.lmax)
-        else:
-            self.shape = (2 * self.lmax, self.lmax)
-
-        # now create our dataset from generator
-        self._ds = Dataset.from_generator(
-            self.__iter__,
-            output_signature=(
-                tf.TensorSpec(shape=self.shape, dtype=self.dtype),
-                tf.TensorSpec(shape=(1,), dtype=self.dtype),
-            ),
-            name=self.name,
-        )
-
-    def __getitem__(self, index):
-        # convert the index to a tuple of (i, j) indexing sim and pol
-        i, j = np.unravel_index(index, (self.nsims, self.npol))
-
-        # now we can get the data and label
-        alm = np.array(self.alms[i, j])
-        fnl = self.fnls[i, j]
-
-        # converts data(i) -> data(l, m), add the positional encoding and interleaves the data
-        data = np.empty(self.shape, dtype=self.dtype)
-        if self.channels_last:
-            data[..., 0::2] = np.real(alm[self.idx_map]) + self.pos_enc
-            data[..., 1::2] = np.imag(alm[self.idx_map]) + self.pos_enc
-        else:
-            data[0::2] = np.real(alm[self.idx_map]) + self.pos_enc
-            data[1::2] = np.imag(alm[self.idx_map]) + self.pos_enc
-        return data, fnl
-
-
-class AlmLoaderV2_concat(AlmLoaderV2):
-    """Concatenates the real and complex parts instead of interleaving them
-    Shape: (lmax, 2*lmax) if channels_last else (2*lmax, lmax)
-    """
-
-    def __getitem__(self, index):
-        # convert the index to a tuple of (i, j) indexing sim and pol
-        i, j = np.unravel_index(index, (self.nsims, self.npol))
-
-        # now we can get the data and label
-        alm = np.array(self.alms[i, j])
-        fnl = self.fnls[i, j]
-
-        # converts data(i) -> data(l, m), also splits the real and imaginary parts and adds the index map
-        data = np.concatenate(
-            (
-                np.real(alm[self.idx_map]) + self.pos_enc,
-                np.imag(alm[self.idx_map]) + self.pos_enc,
-            ),
-            axis=-1 if self.channels_last else 0,
-        )
-        return data, fnl
-
-
-class AlmLoaderRaw(AlmLoader):
-    """Returns just the raw alm data split into real and complex parts
-    Shape: (ndata, 2) if channels_last is true else (2, ndata)"""
-
-    def _init_ds(self):
-        self.length = self.nsims * self.npol
-        if self.channels_last:
-            self.shape = (self.ndata, 2)
-        else:
-            self.shape = (2, self.ndata)
-
-        logger.info(
-            f"Loading {self.file_path} with {self.length} samples, and data shape {self.shape}"
-        )
-
-        # now create our dataset from generator
-        self._ds = Dataset.from_generator(
-            self.__iter__,
-            output_signature=(
-                tf.TensorSpec(shape=self.shape, dtype=self.dtype),
-                tf.TensorSpec(shape=(1,), dtype=self.dtype),
-            ),
-            name=self.name,
-        )
-
-    def __getitem__(self, index):
-        i, j = np.unravel_index(index, (self.nsims, self.npol))
-
-        # now we can get the data and label
-        alm = np.array(self.alms[i, j])
-        fnl = self.fnls[i, j]
-
-        data = np.empty(self.shape, dtype=self.dtype)
-        if self.channels_last:
-            data[..., 0] = np.real(alm)
-            data[..., 1] = np.imag(alm)
-        else:
-            data[0] = np.real(alm)
-            data[1] = np.imag(alm)
         return data, fnl

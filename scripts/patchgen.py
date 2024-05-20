@@ -134,9 +134,6 @@ def get_fs_patch_geo(s):
 
 def main():
     core = Core()
-    if core.is_main_job:
-        logger.setLevel(logging.DEBUG)
-        logging.getLogger("utils").setLevel(logging.DEBUG)
 
     # Load in the alm data, do this first to crash fast if data is not found
     if os.path.isfile(core.alm_file):
@@ -219,28 +216,27 @@ def main():
 
     # lets get our generator using parallel, return as generator so we consume memory as we go
     patch_generator = Parallel(
-        n_jobs=-1,
-        return_as="generator",
-        temp_folder=temp_folder,
+        n_jobs=-1, return_as="generator", temp_folder=temp_folder
     )(
-        delayed(cutPatches)(alms[i, j], fnls[i, j], core.is_main_job and i == 0)
-        for i, j in args
+        delayed(cutPatches)(alms[sim, pol], fnls[sim], core.is_main_job and sim == 0)
+        for sim, pol in args
     )
 
-    # Get our data from the generator, only update logging every 100 runs, takes a long time
+    # Get our data from the generator, takes a long time
     for idx, result in enumerate(
         tqdm(patch_generator, desc="patch progress", total=core.sim_pol_len)
     ):
         sim, pol = core.sim_pol[idx]
         patches[sim, pol] = result
 
+    logger.info("Saving data")
+    os.makedirs(core.patch_dir, exist_ok=True)
+
     # remove the partial file if it exists
     if os.path.isfile(core.patch_file):
         logger.info("Removing stale data file: %s", core.patch_file)
         os.remove(core.patch_file)
 
-    # Save data
-    os.makedirs(core.patch_dir, exist_ok=True)
     sdata = {}
     sdata["fnl"] = fnls
     sdata["patch"] = patches
@@ -249,6 +245,7 @@ def main():
     if core.is_main_job:
         plot_dir = os.path.join(core.plot_dir, "patchgen")
         os.makedirs(plot_dir, exist_ok=True)
+
         plot_file = os.path.join(plot_dir, f"{core.base_name}_patches.png")
         i, j = core.rng.integers(core.nsims), core.rng.integers(core.npol)
         plot_patches(patches[i, j], 10, save_file=plot_file)

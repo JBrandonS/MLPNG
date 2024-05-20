@@ -1,4 +1,5 @@
 The settings files hold various settings used in the core.py. You can look at that file for how everything is used and all possible settings. Adding a setting can be done in the `core.py` file: 
+
 ```python
 self.new_setting = self._get('new_setting', 'default_value')
 ```

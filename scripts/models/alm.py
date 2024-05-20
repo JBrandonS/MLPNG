@@ -39,9 +39,9 @@ class ALM(ModelCore):
         self,
         inputs,
         dropout_rate=0.3,
-        depth=1,
+        depth=3,
         ff_density=512,
-        mha_num_heads=1,
+        mha_num_heads=8,
         mha_dropout=0.3,
     ):
         layer = inputs
@@ -50,15 +50,15 @@ class ALM(ModelCore):
         # Some fully connected layers and down sampling to get the model to a reasonable size
         # the last layer is the m's with real and complex values, but will have 0 for half the values
         # This should give us a good amount of room to reduce the size without much impact on the model
-        layer = Dense(2 * self.lmax)(layer)
-        layer = Dense(self.lmax)(layer)
-        layer = Dense(self.lmax // 8)(layer)
-        d_model = self.lmax // 8
+        # layer = Dense(2 * self.lmax)(layer)
+        # layer = Dense(self.lmax)(layer)
+        # layer = Dense(self.lmax // 8)(layer)
+        d_model = 2 * self.lmax
 
         for _ in range(depth):
             x = MultiHeadAttention(
                 num_heads=mha_num_heads,
-                key_dim=d_model // mha_num_heads,
+                key_dim=d_model,
                 dropout=mha_dropout,
                 kernel_initializer=TruncatedNormal(stddev=0.01),
                 bias_initializer=TruncatedNormal(stddev=0.01),

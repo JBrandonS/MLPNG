@@ -5,20 +5,22 @@
 # The settings files to use for the sims. These should be found in settings/*.json
 SETTINGS=(  
     # "l500_n128"
+    "l1000_n64"
     # "heidelberg"
-    "planck"
+    # "planck"
+    # "l2000_n2048"
 )
 
 # CLI args to change the command ran, helps prevent needing to change the settings file for small / test changes
 # make sure these align with the data generation or you will get errors
 # see scripts/core.parse_args for more info and available arguments, or to add more
-ARGS=("--nsims" "100")
+# ARGS=("--nsims" "100")
 
 # The AI models to train on the data, see scripts/trainer.py and scripts/models/ for more info
 # these models should be registered with @register_model
 MODELS=(
-    # "alm"
-    # "isensee"
+    "alm"
+    "isensee"
     "isensee_v2"
     # "dcnn"
     # "resnet"

@@ -1,7 +1,5 @@
 import logging
 import sys
-import inspect
-import re
 import h5py
 import numpy as np
 import healpy as hp
@@ -12,34 +10,62 @@ logger = logging.getLogger(__name__)
 def setup_logging(
     name=__name__,
     level=logging.INFO,
+    scripts_level=None,
+    base_level=logging.WARNING,
     handlers=[logging.StreamHandler(sys.stdout)],
-    set_base=True,
-    base_level=None,
-    use_rich=False,
 ):
-    if set_base:
-        if use_rich:
-            from rich.logging import RichHandler
+    """
+    Set up logging configuration for the application. scripts_level and base_level will default to level if None.
 
-            handlers = [
-                RichHandler(show_time=False, show_level=False, rich_tracebacks=True)
-            ]
+    Args:
+        name (str, optional): The name of the logger. Defaults to __name__.
+        level (int, optional): The logging level for the logger. Defaults to logging.DEBUG.
+        scripts_level (int, optional): The logging level for any 'scripts' loggers. Defaults to None.
+        base_level (int, optional): The logging level for most loggers, includes 3rd party loggers.
+        handlers (list, optional): The list of logging handlers. Defaults to [logging.StreamHandler(sys.stdout)].
 
-        logging.basicConfig(
-            level=base_level or level,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            datefmt="%d-%b-%y %H:%M:%S",
-            handlers=handlers,
-        )
+    Returns:
+        logger (logging.Logger): The configured logger object.
+    """
+    if scripts_level is None:
+        scripts_level = level
+
+    if base_level is None:
+        base_level = level
+
+    logging.basicConfig(
+        level=base_level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%d-%b-%y %H:%M:%S",
+        handlers=handlers,
+    )
 
     logger = logging.getLogger(name)
     logger.setLevel(level)
-    logging.getLogger("matplotlib").setLevel(logging.WARNING)
-    logging.getLogger("healpy").setLevel(logging.WARNING)
+
+    # this sets the log level for all of the scripts.* loggers
+    logging.getLogger("scripts").setLevel(scripts_level)
+
     return logger
 
 
+# TODO: low, get the size of the dataset at once and make it instead of resize
+# should greatly improve performance since right now the resize can take 50s per entry for large (lmax 2000, nside 2048) data
 def save_data(file_path, data_dict, mode="x"):
+    """
+    Save data to an HDF5 file.
+
+    Args:
+        file_path (str): The path to the HDF5 file.
+        data_dict (dict): A dictionary containing the data to be saved.
+        mode (str, optional): The file mode to use when opening the HDF5 file. Defaults to "x".
+
+    Raises:
+        None
+
+    Returns:
+        None
+    """
     logger.info("Saving data to %s", file_path)
     with h5py.File(file_path, mode) as hf:
         for key, value in data_dict.items():
@@ -76,6 +102,19 @@ def save_data(file_path, data_dict, mode="x"):
 
 
 def load_data(data_file, keys):
+    """
+    Load data from an HDF5 file.
+
+    Args:
+        data_file (str): The path to the HDF5 file.
+        keys (str or list): The key(s) of the data to load.
+
+    Returns:
+        dict: A dictionary containing the loaded data, where the keys are the provided key(s) and the values are the corresponding data arrays.
+
+    Raises:
+        ValueError: If any of the provided keys are not found in the HDF5 file.
+    """
     logger.info("Loading data %s from %s", keys, data_file)
 
     if isinstance(keys, str):
@@ -98,6 +137,15 @@ def load_data(data_file, keys):
 
 
 def get_fisher(file):
+    """
+    Load the fisher matrix from an HDF5 file.
+
+    Parameters:
+    - file (str): The path to the HDF5 file.
+
+    Returns:
+    - fisher (numpy.ndarray or None): The loaded fisher matrix, or None if it couldn't be loaded.
+    """
     try:
         with h5py.File(file, "r", swmr=True, locking=False) as hdf:
             fisher = hdf.get("fisher", [None])[0]
@@ -106,20 +154,28 @@ def get_fisher(file):
         logger.error(f"Could not load fisher matrix: {e}")
         fisher = None
 
-
-def log_source(func):
-    source = inspect.getsource(func)
-    source = re.sub(r"#.*", "", source)
-    source = re.sub(r"\n\s*\n", "\n", source)
-    logger.info(f"Model source:\n{source}")
+    return fisher
 
 
-def remove_mono_dipole(alm):
+def remove_mono_dipole(alm, inplace=True):
     """
     Remove the monopole and dipole terms from the alms.
-    Note that we do not need -m's due to symmetry
+
+    Parameters:
+        alm (array-like): The input alms.
+        inplace (bool, optional): If True, the input alms will be modified in-place.
+                                 If False, a copy of the input alms will be made before modification.
+                                 Default is True.
+
+    Returns:
+        array-like: The alms with the monopole and dipole terms removed.
     """
+    if not inplace:
+        alm = alm.copy()
+
     lmax = hp.Alm.getlmax(len(alm))
+
+    # Note: that we do not need -m's due to symmetry
     alm[..., hp.Alm.getidx(lmax, 0, 0)] = 0.0
     alm[..., hp.Alm.getidx(lmax, 1, 0)] = 0.0
     alm[..., hp.Alm.getidx(lmax, 1, 1)] = 0.0

@@ -190,7 +190,7 @@ class Core:
 
         # setup the fnl and shape
         self.fnl_min, self.fnl_max = self._get("fnl_range", (-1, 1))
-        self.fnl_shape = (self.nsims, self.npol, 1)
+        self.fnl_shape = (self.nsims, 1)
 
         # get a tuple of the sim and pol, used a few times in the code
         self.sim_pol = list(product(range(self.nsims), range(self.npol)))
@@ -526,11 +526,16 @@ class Core:
         Returns:
             None
         """
+
+        def convert(x):
+            """Helper function to convert from arcmin to radians."""
+            return (x * u.arcmin).to_value(u.radian)
+
         self.noise = self._get("noise", True)
         if not self.noise:
             # we cannot set the noise to 0 as this will cause a singular matrix in the inverse covariance
             # so we set it to a very small value
-            epsilon_noise = (1e-6 * u.arcmin).to_value(u.radian)
+            epsilon_noise = convert(1e-6)
             self.beam_width = 0  # the beam can be 0, no problems
 
             self.noise_scale_tt = self.noise_scale_ee = self.noise_scale_te = (
@@ -541,10 +546,6 @@ class Core:
             )
             self.beam_ell = np.ones((self.npol, self.nell), dtype=self.r_dtype)
             return
-
-        def convert(x):
-            """Helper function to convert from arcmin to radians."""
-            return (x * u.arcmin).to_value(u.radian)
 
         self.beam_width = convert(self._get("beam_width", 0))
         self.noise_scale_tt = convert(self._get("noise_scale_tt", 1))
@@ -566,7 +567,7 @@ class Core:
             beam_ell.append(beam[1])
             noise_ell.append(noise * self.noise_scale_ee**2)
         if self.pols == ["T", "E"]:
-            # beam_ell.append(beam[3]) # beam doesnt need to be set for TE
+            # beam_ell.append(beam[3]) # beam doesn't need to be set for TE
             noise_ell.append(noise * self.noise_scale_te**2)
         self.noise_ell = np.array(noise_ell)
         self.beam_ell = np.array(beam_ell)

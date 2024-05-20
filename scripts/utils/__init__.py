@@ -2,7 +2,6 @@ from .utils import (
     setup_logging,
     save_data,
     load_data,
-    log_source,
     remove_mono_dipole,
     get_fisher,
 )

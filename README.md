@@ -4,11 +4,11 @@ An $A_{lm}^{NG}$ generator and training pipeline for machine learning models to 
 
 ## Overview
 
-This code is designed to do two things; provide a generation framework for generating non-gaussian CMB data, and provide a training framework to run models on the generated data. It will generate both full $A_{lm}$ arrays and flat sky patch cuts. These can be of arbitrary lmax and nside, T and/or E polarizations, and with or without lensing. It has been run and tested extensively on SMU's Superpod and M3 systems but may require some tweaking to run on other systems. In particular, the main bash scripts and the sbatch script will need to be updated for new systems. 
+This code is designed to do two things; provide a generation framework for generating non-gaussian CMB data, and provide a training framework to run models on the generated data. It will generate both full $A_{lm}$ arrays and flat sky patch cuts. These can be of arbitrary lmax and nside, T and/or E polarizations, and with or without lensing. It has been run and tested extensively on SMU's Superpod and M3 systems but may require some tweaking to run on other systems. In particular, the main bash scripts and the sbatch script will need to be updated for new systems.
 
 The code has been broken into 2 different parts, this is due to policies not allowing for the data generation on the same system as the training. If you are not limited by this you may want to combine the conda environments and the generation and training scripts into one.
 
-The data generation is controlled by settings files, which are used to specify the parameters of the data to be generated. The data is then generated in two steps, first the $A_{lm}\text{s}$ are created in batches according to the settings file. Secondly, if enabled in the `generator.sh` script, cut sky patches will be generated from the $A_{lm}\text{s}$. Finally, the code will run the `combiner.py` script to combine the large number of data files into 2, one for the alms and one for the patches. Data will be saved to the `data_dir` with the alm's being placed in `data_dir/alm_dir`, which by default will be `data/alms`. Similar settings can be used to change where the patches, plots, and other large files will be saved. 
+The data generation is controlled by settings files, which are used to specify the parameters of the data to be generated. The data is then generated in two steps, first the $A_{lm}\text{s}$ are created in batches according to the settings file. Secondly, if enabled in the `generator.sh` script, cut sky patches will be generated from the $A_{lm}\text{s}$. Finally, the code will run the `combiner.py` script to combine the large number of data files into 2, one for the alms and one for the patches. Data will be saved to the `data_dir` with the alm's being placed in `data_dir/alm_dir`, which by default will be `data/alms`. Similar settings can be used to change where the patches, plots, and other large files will be saved.
 
 The training is controlled by the `scripts/models/` files, which specify the architecture of the model to be trained. The `trainer.sh` script will run the `scripts/trainer.py` script with the specified model and settings file. The model will be trained on the data matching the setting file used.
 
@@ -72,7 +72,7 @@ You can then generate the patch data by running the patchgen module with the sam
 python -m scripts.patchgen --lensing settings/planck.json
 ```
 
-After data generation, the data will be in separate files based on the array size you have used. You can use the `combiner.py` module to combine the data into a single file. Simply give it the correct settings. 
+After data generation, the data will be in separate files based on the array size you have used. You can use the `combiner.py` module to combine the data into a single file. Simply give it the correct settings.
 
 ```sh
 python -m scripts.combiner --lensing settings/planck.json
@@ -96,7 +96,6 @@ The training pipeline is very simple. From Superpod,
    - See `scripts/models/isensee.py` for a standalone example which can also be manually run.
 3. Point the `trainer.sh` script to the correct settings for the data you are using and to the models.
 
-
 #### Manual Training
 
 To manually train a model, you can run the `scripts/trainer.py` module with the desired settings file, you will need to provide a CLI model option. For example, to train the `isensee` model on the `planck` data:
@@ -114,11 +113,11 @@ python -m scripts.trainer --model isensee --lensing settings/planck.json
 The data is stored in `hdf5` files as they allow reading and appending data without needing to load the whole dataset into memory. You can think of these files as Python dicts. The data is stored in the following format:
 
 - For alms in `data/alms` the following key and values are stored:
-  - `alm` : The $a_{\ell m}^{NG,loc}$ values. `Shape: (nsims, len(polarizations), data)`
-  - `fnl`: The $f_{nl}$ values to be used. `Shape (nsims, len(polarizations), 1)`
+  - `alm` : The $a_{\ell m}^{NG,loc}$ values. `Shape: (nsims, data)`
+  - `fnl`: The $f_{nl}$ values to be used. `Shape (nsims, 1)`
 
 - For the patch data files in `data/patches/`:
-  - `fnl`: the $f_{nl}$ values used to generate the data, a copy from the alm file. `Shape: (nsims, len(polarizations), 1)`
+  - `fnl`: the $f_{nl}$ values used to generate the data, a copy from the alm file. `Shape: (nsims, 1)`
   - `patch`: the patch that has been cut from the full sky maps given by the $a_{\ell m}^{NG,loc'}$ values at `alm[nsims, pol]`. `Shape: (nsims, len(polarizations), npatches, nside, nside)`
 
 - The estimator script will add the following values to the alm file:
@@ -126,7 +125,6 @@ The data is stored in `hdf5` files as they allow reading and appending data with
   - `estimate`: the KSW estimates of the bispectrum. `Shape: (nsims,)` or `(1000,)` if `estimate_1k` is True
   - `estimate_1k`: A flag to indicate that we only calculate the estimate for the first 1k values.
   - `error`: the percent diff errors of the estimates vs true fnls. `Shape: (nsims,)`
-
 
 ### Notes on files
 
@@ -137,14 +135,17 @@ Simultaneous runs are supported as long as the filenames do not collide. The alm
 Filenames are generated from select settings for easy reading once you understand the format. It is possible to provide a `base_name` in the settings file to override the default naming scheme. The default naming scheme is as follows:
 
 For alms: `l[lmax]_n[nside]_[lensing][?-noise]_[polarizations]x[total sim]`
-   - example: `l500_n128_l-nn_Tx100000.hdf5`
-      - If you provide a `base_name` the output will be `base_name.hdf5`
+
+- example: `l500_n128_l-nn_Tx100000.hdf5`
+  - If you provide a `base_name` the output will be `base_name.hdf5`
 
 For the patches data: `l[lmax]_n[nside]_[lensing][?-_noise]_[polarizations]x[total sim]x[npatches]`.
-   - example: `l500_n128_l-nn_Tx100000x10.hdf5`
-      - If you provide a `base_name` the output will be `base_namex[npatches].hdf5`
+
+- example: `l500_n128_l-nn_Tx100000x10.hdf5`
+  - If you provide a `base_name` the output will be `base_namex[npatches].hdf5`
 
 with
+
 - `[lensing] = l | ul` for lensed or unlensed sims
 - `[?_noise] = -nn` is only included if `noise` is False
 - `[polarizations]`, will be one of `T`, `E`, or `TE`
@@ -159,25 +160,26 @@ Primary development by:
 
 Additional thanks to:
 
- - Daan Meerburg
+- Daan Meerburg
 
- - Jorik Melsen 
+- Jorik Melsen
 
- - Thomas Flöss
- 
- - Adri Duivenvoorden
+- Thomas Flöss
+
+- Adri Duivenvoorden
 
 ### Some References
-   - [Minimizing gravitational lensing contributions to the primordial bispectrum covariance](http://arxiv.org/abs/1912.07619)
-   - [Primordial Non-Gaussianity](http://arxiv.org/abs/1903.04409)
-   - [ksw github](https://github.com/AdriJD/ksw)
-   - [optweight github](https://github.com/AdriJD/optweight)
+
+- [Minimizing gravitational lensing contributions to the primordial bispectrum covariance](http://arxiv.org/abs/1912.07619)
+- [Primordial Non-Gaussianity](http://arxiv.org/abs/1903.04409)
+- [ksw github](https://github.com/AdriJD/ksw)
+- [optweight github](https://github.com/AdriJD/optweight)
 
 ## Problems
 
- - Currently running with a beam_width will cause a bias, I plan to look into this later but if anyone wants to fix that feel free.
- - The tuning code is not great, and probably won't be improved much as it isn't that useful.
- - E polarizations and lensing are not well tested.
+- Currently running with a beam_width will cause a bias, I plan to look into this later but if anyone wants to fix that feel free.
+- The tuning code is not great, and probably won't be improved much as it isn't that useful.
+- E polarizations and lensing are not well tested.
 
 ## License
 

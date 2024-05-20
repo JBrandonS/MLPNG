@@ -1,7 +1,8 @@
 import argparse
 import logging
 
-from tensorflow.keras import Model
+from tensorflow.keras import Model, Input
+
 from scripts import Core
 from scripts.utils.tf.dataloaders import PatchLoader
 
@@ -25,7 +26,7 @@ def get_model_class(name):
     if name in _MODEL_REG:
         return _MODEL_REG[name]
     else:
-        raise ValueError(f"Model {name} not found")
+        raise ValueError(f"Model {name} not found. ")
 
 
 def AutoModel(args=None, default="isensee"):
@@ -47,9 +48,7 @@ def AutoModel(args=None, default="isensee"):
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default=default, help="Model to use")
     pargs, _ = parser.parse_known_args(args)
-
-    model_cls = pargs.model
-    model = get_model_class(model_cls)(args)
+    model = get_model_class(pargs.model)(args)
     return model
 
 
@@ -121,9 +120,9 @@ class ModelCore(Core):
             self.init_dataset()
 
         # setup the name for the model, can have information such as slurm id
-        self.name = name if name is not None else self.__class__.__name__
+        self.name = name if name is not None else self.base_name
 
-        inputs = self._dataset.input()
+        inputs = Input(self._dataset.shape)
         outputs = self._model(inputs, **kwargs)
         self._keras_model = Model(inputs, outputs, name=self.name)
 
@@ -135,9 +134,6 @@ class ModelCore(Core):
         - inputs: The input tensor(s) to the model.
         - *args: Variable length argument list.
         - **kwargs: Arbitrary keyword arguments.
-
-        Raises:
-        - NotImplementedError: If the method is not implemented.
 
         Returns:
         None

@@ -6,7 +6,7 @@ import time
 
 import numpy as np
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 # os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 
 # might need to update this, but this is the path to the cuda libs
@@ -61,7 +61,7 @@ def main():
     model_cls = model.__class__.__name__
 
     # These settings, esp the batch size, should be set by the model so we do
-    MAX_EPOCHS = 300
+    MAX_EPOCHS = 30
     BATCH_SIZE = model.BATCH_SIZE
 
     run_start_time = int(time.time())
@@ -83,7 +83,7 @@ def main():
 
     # Might want to change this to be per model since some models might need different settings
     data_settings = {
-        "shuffle": False,
+        "shuffle": True,
         "seed": None,
         "batch_size": BATCH_SIZE,
         "cache": True,
@@ -93,7 +93,7 @@ def main():
     logger.debug(f"Data loader settings:\n{json.dumps(data_settings, indent=2)}")
 
     # additional metrics we are interested in
-    metrics = ["mean_absolute_error"]
+    metrics = []  # ["mean_absolute_error"]
     logger.debug(f"Looking at additional metrics: {metrics}")
 
     # callbacks to use during training
@@ -104,7 +104,6 @@ def main():
             patience=10,
             verbose=1,
             restore_best_weights=True,
-            start_from_epoch=40,
         ),
         # model checkpointing to save the best model
         ModelCheckpoint(
@@ -115,11 +114,11 @@ def main():
             initial_value_threshold=40000,  # mse, only want to bother saving decent models
         ),
         # TimedLoggingCallback(print_frequency=15),  # custom logger to work a little better with text logs
-        # TensorBoard(log_dir=f"{core.tb_dir}"),
+        # TensorBoard(log_dir=f"{model.tb_dir}/{model_settings['name']}"),
         TerminateOnNaN(),
     ]
 
-    # enable wandb, if using
+    # enable wandb, if using, to log the model and data settings
     if False:
         try_init_wandb(
             notes=extra_info["comment"],
@@ -130,10 +129,11 @@ def main():
 
     # lr_schedule = AttentionSchedule(model.lmax)
     # lr_schedule = WarmupLearningRate(warmup_steps=1000)
-    lr_schedule = ExponentialDecay(1e-5, 10000, 0.96)
+    lr_schedule = ExponentialDecay(1e-3, 10000, 0.96)
 
     # get the dataset from the model, also sets the internal dataset for the model
     dataset = model.init_dataset(**data_settings)
+
     # split the dataset used for the model into train, test, and validation
     train_ds, test_ds, val_ds = dataset.get_split(0.8, 0.1, 0.1)
 
@@ -141,15 +141,14 @@ def main():
     strategy = tf.distribute.MirroredStrategy()
     with strategy.scope():
         # RMSE needs to be made in scope and at current version you cannot use the name
-        ext_metrics = [tf.keras.metrics.RootMeanSquaredError()]
+        metrics.append([tf.keras.metrics.RootMeanSquaredError()])
 
         opt = Adam(learning_rate=lr_schedule)
         model.make_model(**model_settings)
         model.compile(
             optimizer=opt,
             loss="mse",
-            metrics=metrics + ext_metrics,
-            # jit_compile=True,
+            metrics=metrics,
         )
         model.summary()
 

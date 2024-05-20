@@ -18,6 +18,8 @@ from tensorflow.keras.layers import (
 )
 
 from scripts.models import ModelCore, register_model
+from scripts.utils.tf.dataloaders import PatchLoader
+from scripts.utils.tf.dataloaders_v2 import DataLoaderBase_v2
 
 
 class PeriodicPadding2D(Layer):
@@ -38,6 +40,10 @@ class PeriodicPadding2D(Layer):
 class ISENSEE_V2(ModelCore):
     """This is a clone of model taken from Thomas' UNET_fnl notebook, with modifications"""
 
+    def init_dataset(self, *args, **kwargs):
+        self._dataset = PatchLoader(self.patch_file, *args, **kwargs)
+        return self._dataset
+
     def create_localization_module(self, input_layer, current_grid, n_filters):
         layer1 = PeriodicPadding2D(current_grid)(input_layer)
         convolution1 = self.create_convolution_block(layer1, n_filters)
@@ -50,7 +56,7 @@ class ISENSEE_V2(ModelCore):
         self, input_layer, current_grid, n_filters, size=(2, 2)
     ):
         # interpolation is set to bilinear because the default, nearest, is not XLA compatible
-        up_sample = UpSampling2D(size=size, interpolation="bilinear")(input_layer)
+        up_sample = UpSampling2D(size=size, interpolation="bicubic")(input_layer)
         layer1 = PeriodicPadding2D(current_grid)(up_sample)
         convolution = self.create_convolution_block(layer1, n_filters)
         return convolution
@@ -82,7 +88,8 @@ class ISENSEE_V2(ModelCore):
         n_filters,
         batch_normalization=False,
         kernel=(3, 3),
-        activation=LeakyReLU,
+        # activation=LeakyReLU,
+        activation=ReLU,
         padding="valid",
         strides=(1, 1),
         instance_normalization=True,
@@ -98,11 +105,12 @@ class ISENSEE_V2(ModelCore):
         else:
             return activation()(layer)
 
-    def _model(self, inputs, depth=3, n_base_filters=16, dropout_rate=0.3, n_labels=32):
+    def _model(self, inputs, depth=7, n_base_filters=16, dropout_rate=0.3, n_labels=8):
         x = inputs
         level_output_layers = list()
         level_filters = list()
         current_grid = x.shape[1]
+        print(f"Current grid: {current_grid}, {x.shape}")
 
         for level_number in range(depth):
             n_level_filters = (2**level_number) * n_base_filters
@@ -134,14 +142,14 @@ class ISENSEE_V2(ModelCore):
                 x, current_grid, level_filters[level_number]
             )
 
-        x = Conv2D(n_labels, (1, 1))(x)
+        x = Conv2D(8 * n_labels, (1, 1))(x)
         x = PeriodicPadding2D(current_grid)(x)
-        x = Conv2D(n_labels, (3, 3), strides=(2, 2))(x)
+        x = Conv2D(4 * n_labels, (3, 3), strides=(2, 2))(x)
         x = PeriodicPadding2D(current_grid)(x)
-        x = Conv2D(n_labels, (3, 3), strides=(2, 2))(x)
+        x = Conv2D(2 * n_labels, (3, 3), strides=(2, 2))(x)
         x = PeriodicPadding2D(current_grid)(x)
         x = Conv2D(n_labels, (3, 3), strides=(2, 2))(x)
 
         x = Flatten()(x)
-        # x = Dense(32)(x)
+        x = Dense(32)(x)
         return Dense(1)(x)
