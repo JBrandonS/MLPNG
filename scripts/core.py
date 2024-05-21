@@ -97,7 +97,7 @@ class Core:
         parser.add_argument("--beam_width", type=float)
 
         parser.add_argument("--fnl_range", type=float, nargs=2)
-        parser.add_argument("--polarizations", nargs="*", type=str)
+        parser.add_argument("--polarizations", type=str)
 
         # for BooleanOptionalAction: --flag will set the value `flag` to True, --no-flag will set `flag` to False
         # otherwise it will be none
@@ -180,7 +180,7 @@ class Core:
         # main parameters
         self.lmax = self.cosmo_params["lmax"]
         self.nside = self._get("nside", 1024)
-        self.pols = self._get("polarizations", "T")
+        self.pols = list(self._get("polarizations", "T"))
         self.lensing = self._get("lensing", False)
         self.npol = len(self.pols)
         self.nsims = self._get("nsims", 100)
@@ -380,7 +380,7 @@ class Core:
 
         logger.debug("Setting up data and KSW")
         logger.info(
-            f"beam {self.beam_ell.shape}, noise {self.noise_ell.shape}, pols {self.pols}"
+            f"beam {self.beam_ell.shape}, noise {self.noise_ell.shape}, pols {self.pols}, npols {self.npol}"
         )
         self.data = Data(self.lmax, self.noise_ell, self.beam_ell, self.pols, cosmo)
         if self.lensing:
@@ -535,15 +535,15 @@ class Core:
         if not self.noise:
             # we cannot set the noise to 0 as this will cause a singular matrix in the inverse covariance
             # so we set it to a very small value
-            epsilon_noise = convert(1e-6)
+            epsilon_noise = 1e-6
             self.beam_width = 0  # the beam can be 0, no problems
 
             self.noise_scale_tt = self.noise_scale_ee = self.noise_scale_te = (
                 epsilon_noise
             )
-            self.noise_ell = np.full(
-                (self.npol, self.nell), epsilon_noise**2, dtype=self.r_dtype
-            )
+            # FIX: singular matrix with TE pol and no noise...
+            n_shape = (3, self.nell) if self.npol == 2 else (1, self.nell)
+            self.noise_ell = np.full(n_shape, epsilon_noise**2, dtype=self.r_dtype)
             self.beam_ell = np.ones((self.npol, self.nell), dtype=self.r_dtype)
             return
 

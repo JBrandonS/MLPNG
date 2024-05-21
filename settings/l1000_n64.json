@@ -14,5 +14,5 @@
     "npatches" : 10,
     "fnl_range":[-1000, 1000],        
     "nside": 64,
-    "noise": false
+    "noise": true
 }
