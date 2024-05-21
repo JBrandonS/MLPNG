@@ -155,7 +155,7 @@ def main():
             logger.warning("Found partial alm file, skipping alm generation")
             sys.exit(0)
 
-    # Get our alms, very fast so no need to parallelize
+    # Get our gaussian alms, very fast so no need to parallelize
     logger.info("Starting Alm generation")
     alm_l = np.array(
         [core.data.compute_alm_sim(core.lensing) for _ in range(core.nsims)],  # type: ignore

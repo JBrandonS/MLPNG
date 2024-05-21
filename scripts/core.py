@@ -13,6 +13,13 @@ from astropy import units as u
 
 logger = logging.getLogger(__name__)
 
+# try to import ksw, we want this in the main body so we can monkey patch in notebooks
+# but, we wont have ksw on the trainer due to OMPI install issues on superpod, so catch that
+try:
+    from ksw import KSW, Cosmology, Data, Shape
+except ImportError:
+    logger.info("Could not import ksw, this is expected if training")
+
 
 def cosmo_defaults():
     """Some default settings that are required by KSW / camb."""
@@ -119,12 +126,12 @@ class Core:
             for pol in parsed_args.polarizations:
                 if pol not in ["T", "E"]:
                     raise ValueError(
-                        f"Invalid polarization: {pol}. Polarizations must be either 'T' or 'E'."
+                        f"Invalid polarization: {pol}. Polarizations must be one of 'T', 'E', or 'TE'."
                     )
 
         return parsed_args
 
-    def __init__(self, argv=None, inspect_class=False):
+    def __init__(self, argv=None):
         """
         Initializes a new instance of the `Core` class.
 
@@ -133,12 +140,14 @@ class Core:
             If None, sys.argv will be used.
             inspect_class (bool): Whether to inspect the class using the `rich` library. Default is False.
         """
+
+        # handle the CLI args first
         args = self.parse_args(argv)
 
-        ## We start by loading in the settings from the provided file
-        ## From there we store the settings in the settings dict attribute
-        ## We then override the settings with the command line arguments
-        ## We then set the cosmological parameters to the defaults and override them with the settings
+        # We start by loading in the settings from the provided file
+        # From there we store the settings in the settings dict attribute
+        # We then override the settings with the command line arguments
+        # We then set the cosmological parameters to the defaults and override them with the settings
         logger.info(f"Loading settings from file {args.settings_file}")
         with open(args.settings_file, "r") as f:
             settings = self.settings = json.load(f)
@@ -173,6 +182,7 @@ class Core:
 
         # we setup a RNG here for reproducibility
         # TODO: needs more implementation, and testing of reproducibility, need to setup tensorflow seed and probably others
+        # overall, dont expect reproducibility, not a high priority
         self.seed = self._get("seed", np.random.default_rng().integers(0, 2**32 - 1))
         self.rng = np.random.default_rng(self.seed)
         np.random.seed(self.seed)
@@ -189,7 +199,7 @@ class Core:
         self.force_gen = self._get("force_generation", False)
 
         # setup the fnl and shape
-        self.fnl_min, self.fnl_max = self._get("fnl_range", (-1, 1))
+        self.fnl_min, self.fnl_max = self._get("fnl_range", (-1000, 1000))
         self.fnl_shape = (self.nsims, 1)
 
         # get a tuple of the sim and pol, used a few times in the code
@@ -202,8 +212,9 @@ class Core:
         self.ells = np.arange(self.nell)
 
         # setup our precision types to be consistent
-        # TODO: More testing with double precision, some areas default to single, some double
-        # also, tensorflow seems to mostly use float32, so is there a benefit for us to use double?
+        # also, tensorflow seems to mostly use float32, and is actually moving to half-bit registers
+        # aka float16, it probably gets us nothing to go higher other than making everything take longer
+        # but we could test double_precision more
         if self._get("double_precision", False):
             self.r_dtype = np.float64
             self.c_dtype = np.complex128
@@ -230,15 +241,13 @@ class Core:
             dir = os.path.join("settings", "runs")
             file = os.path.join(dir, f"{self.sjob}_{self.base_name}.json")
             os.makedirs(dir, exist_ok=True)
+
             if not os.path.exists(file):
                 logger.info(f"Saving run settings to file: {file}")
                 with open(file, "w") as f:
                     json.dump(self.settings, f, indent=2)
             else:
                 logger.warning(f"Settings file already exists: {file}, not overwriting")
-
-        if inspect_class:
-            rich.inspect(self, all=True)
 
     def _get(self, name, default: Any = None):
         """
@@ -292,7 +301,7 @@ class Core:
 
             self.job_array_index = int(os.getenv("SLURM_ARRAY_TASK_ID", "-1"))
             logger.info(
-                f"SLURM array id: {os.getenv('SLURM_ARRAY_JOB_ID')}, index: {self.job_array_index} / {job_tasks}"
+                f"SLURM array id: {os.getenv('SLURM_ARRAY_JOB_ID')}, index: {self.job_array_index} of {job_tasks} jobs"
             )
 
             self.is_main_job = self.job_array_index == 1
@@ -342,10 +351,12 @@ class Core:
         self.plot_dir = join_paths(self._get("plot_dir", "plots"))
         self.tb_dir = join_paths(self._get("tb_dir", "tensorboard"))
         self.model_dir = join_paths(self._get("model_dir", "models"))
+
         self.alm_dir = join_paths(self._get("alm_dir", "alms"))
-        self.patch_dir = join_paths(self._get("patch_dir", "patches"))
         self.alm_file_partial = os.path.join(self.alm_dir, f"{self.base_name}{j}.hdf5")
         self.alm_file = os.path.join(self.alm_dir, f"{self.base_name}.hdf5")
+
+        self.patch_dir = join_paths(self._get("patch_dir", "patches"))
         self.patch_str = f"{self.base_name}x{self.npatches}"
         self.patch_file = os.path.join(self.patch_dir, f"{self.patch_str}{j}.hdf5")
 
@@ -363,8 +374,6 @@ class Core:
         Returns:
             None
         """
-        # import here so we dont need these for the model code
-        from ksw import KSW, Cosmology, Data, Shape
 
         cosmo_params = self.cosmo_params
         camb_params_obj = camb.set_params(**cosmo_params)
@@ -493,20 +502,18 @@ class Core:
         Returns:
             function: A function that takes alm values and returns the convolved beam.
         """
-        # for now we disable due to some issue with the beaming, need to look into this more
-        # if self.beam_width == 0.0:
-        #     # Dont need to bother with anything if beam_width is 0
-        #     return lambda alm: alm
+        if self.beam_width == 0.0:
+            # Dont need to bother with anything if beam_width is 0
+            return lambda alm: alm
 
-        # def __beam(alm):
-        #     # Convolve the beam with the alm values
-        #     ret = np.empty_like(alm)
-        #     for pol in range(alm.shape[0]):
-        #         ret[pol] = hp.almxfl(alm[pol], self.beam_ell[pol], inplace=False)
-        #     return ret
+        def __beam(alm):
+            # Convolve the beam with the alm values
+            ret = np.empty_like(alm)
+            for pol in range(alm.shape[0]):
+                ret[pol] = hp.almxfl(alm[pol], self.beam_ell[pol], inplace=False)
+            return ret
 
-        # return __beam
-        return lambda alm: alm
+        return __beam
 
     def _setup_noise_beam(self):
         """

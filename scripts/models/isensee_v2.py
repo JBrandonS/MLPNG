@@ -100,12 +100,15 @@ class ISENSEE_V2(ModelCore):
             layer = BatchNormalization()(layer)
         elif instance_normalization:
             layer = GroupNormalization(n_filters)(layer)
+
         if activation is None:
             return Activation("relu")(layer)
         else:
             return activation()(layer)
 
-    def _model(self, inputs, depth=7, n_base_filters=16, dropout_rate=0.3, n_labels=8):
+    def _model(
+        self, inputs, depth=9, n_base_filters=8, dropout_rate=0.3, n_base_labels=32
+    ):
         x = inputs
         level_output_layers = list()
         level_filters = list()
@@ -142,14 +145,14 @@ class ISENSEE_V2(ModelCore):
                 x, current_grid, level_filters[level_number]
             )
 
-        x = Conv2D(8 * n_labels, (1, 1))(x)
+        x = Conv2D(8 * n_base_labels, (1, 1))(x)
         x = PeriodicPadding2D(current_grid)(x)
-        x = Conv2D(4 * n_labels, (3, 3), strides=(2, 2))(x)
+        x = Conv2D(4 * n_base_labels, (3, 3), strides=(2, 2))(x)
         x = PeriodicPadding2D(current_grid)(x)
-        x = Conv2D(2 * n_labels, (3, 3), strides=(2, 2))(x)
+        x = Conv2D(2 * n_base_labels, (3, 3), strides=(2, 2))(x)
         x = PeriodicPadding2D(current_grid)(x)
-        x = Conv2D(n_labels, (3, 3), strides=(2, 2))(x)
+        x = Conv2D(n_base_labels, (3, 3), strides=(2, 2))(x)
 
         x = Flatten()(x)
-        x = Dense(32)(x)
+        # x = Dense(32)(x)
         return Dense(1)(x)

@@ -105,6 +105,9 @@ class TimedLoggingCallback(Callback):
     This callback logs the progress of training along with the time taken for each batch and epoch.
     The frequency of logging can be controlled with the `print_frequency` parameter.
 
+
+    TODO: time to tf.timestamp, but only if in graph mode otherwise use time
+
     Attributes:
         print_frequency (int): The frequency of logging in seconds. Default is 60 seconds.
         last_print_time (float): The last time the log was printed.

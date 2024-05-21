@@ -50,18 +50,18 @@ class ALM(ModelCore):
         # Some fully connected layers and down sampling to get the model to a reasonable size
         # the last layer is the m's with real and complex values, but will have 0 for half the values
         # This should give us a good amount of room to reduce the size without much impact on the model
-        # layer = Dense(2 * self.lmax)(layer)
-        # layer = Dense(self.lmax)(layer)
-        # layer = Dense(self.lmax // 8)(layer)
-        d_model = 2 * self.lmax
+        layer = Dense(2 * self.lmax)(layer)
+        layer = Dense(self.lmax)(layer)
+        layer = Dense(self.lmax // 8)(layer)
+        d_model = layer.shape[-1]  # // mha_num_heads
 
         for _ in range(depth):
             x = MultiHeadAttention(
                 num_heads=mha_num_heads,
                 key_dim=d_model,
                 dropout=mha_dropout,
-                kernel_initializer=TruncatedNormal(stddev=0.01),
-                bias_initializer=TruncatedNormal(stddev=0.01),
+                # kernel_initializer=TruncatedNormal(stddev=0.01),
+                # bias_initializer=TruncatedNormal(stddev=0.01),
             )(layer, layer)
             layer = Add()([layer, x])
             # this normalization applies to all the data vs just a single channel
@@ -78,5 +78,5 @@ class ALM(ModelCore):
         layer = Flatten()(layer)
         # layer = Dense(512)(layer)
         # layer = Dense(128)(layer)
-        layer = Dense(64)(layer)
+        layer = Dense(64, activation="relu")(layer)
         return Dense(1)(layer)

@@ -102,21 +102,25 @@ class DataLoaderBase(Sequence):
     def __getitem__(self, index):
         raise NotImplementedError("This method must be implemented in a subclass")
 
-    def _get_dataset(self, start, step):
+    def _get_dataset(self, start, step, shuffle=None):
         """
         Creates a subset of the dataset starting from the 'start' index and taking 'step' number of elements.
 
         The subset is processed according to the class's settings: it is normalized if 'normalize' is True,
         cached if 'cache' is True, and shuffled if 'shuffle' is True. The subset is then batched with
-        'batch_size' number of elements per batch.
+        'batch_size' number of elements per batch. The shuffle argument will override the classes option, needed
+        so that we can not have the test dataset shuffle so we can correctly plot the predictions vs truth.
 
         Parameters:
         start (int): The index to start the subset from.
         step (int): The number of elements to include in the subset.
+        shuffle (bool, optional): Whether to shuffle the subset. If None, the class's 'shuffle' attribute is used. Defaults to None.
 
         Returns:
         tf.data.Dataset: The processed subset of the dataset, ready for training or evaluation.
         """
+        if shuffle is None:
+            shuffle = self.shuffle
 
         if step == 0:
             # lets you disable the dataset by setting step to 0, will need to check for this later if needed
@@ -133,7 +137,7 @@ class DataLoaderBase(Sequence):
         if self.cache:
             data = data.cache()
 
-        if self.shuffle:
+        if shuffle:
             buffer_size = step if self.shuffle_buffer is None else self.shuffle_buffer
             data = data.shuffle(buffer_size, self.seed, reshuffle_each_iteration=True)
 
@@ -171,7 +175,9 @@ class DataLoaderBase(Sequence):
         )
 
         train_ds = self._get_dataset(0, train_size)
-        test_ds = self._get_dataset(train_size, test_size)
+        test_ds = self._get_dataset(
+            train_size, test_size, shuffle=False
+        )  # disable shuffle for test
         val_ds = self._get_dataset(train_size + test_size, val_size)
         return train_ds, test_ds, val_ds
 
@@ -194,8 +200,8 @@ class DataLoaderBase(Sequence):
         mean = tf.math.reduce_mean(masked_data)
         std = tf.math.reduce_std(masked_data)
 
-        data = tf.where(mask, (data - mean) / std, data)
-        return data, label
+        d = tf.where(mask, (data - mean) / std, data)
+        return d, label
 
     def _get_tfds_filename(self):
         # save to different files depending on the channels_last setting
@@ -284,7 +290,7 @@ class TFDSLoader(DataLoaderBase):
 
 
 class PatchLoader(DataLoaderBase):
-    """Loads the patches in as channel last format, shape: (nside, nside, 1)"""
+    """Loads the patches in as channel last format, shape: (nside, nside, npol)"""
 
     def __init__(self, file_path, **kwargs):
         super().__init__(file_path, **kwargs)
@@ -302,7 +308,20 @@ class PatchLoader(DataLoaderBase):
         ) = self.patches.shape
 
         self.length = self._nsims * self._npatches
-        self.shape = (self._nside, self._nside, self._npol)
+        # for patch loader we use the polarizations as the channels
+        if self.channels_last:
+            self.shape = (self._nside, self._nside, self._npol)
+        else:
+            self.shape = (self._npol, self._nside, self._nside)
+
+        if len(self.fnls.shape) == 3:
+            # fnls have been generated with a pol dimension. This has been changed but the datasets take a while to generate
+            # just check and drop the pol dim,
+            # note: the previous code which generated this has a design flaw where the pols had unique FNLs, so they will not work thus we drop them
+            logger.error(
+                "Dropping fnl pol dimension, please regenerate data with new setup so all pols have the same FNL and can be used in the mode"
+            )
+            self.fnls = self.fnls[:, 0]
 
         logger.info(
             f"Loading {self.file_path} with {self.length} samples, and data shape {self.shape}"
@@ -324,19 +343,11 @@ class PatchLoader(DataLoaderBase):
         # start with patch as (nsim, npol, npatch, nside, nside)
         # we get the sim and patch requested by the index to get (npol, nside, nside)
         patch = np.array(self.patches[i, :, j])
-
-        if len(self.fnls.shape) == 3:
-            # fnls have been generated with a pol dimension. This has been changed but the datasets take a while to generate so
-            # just check and drop the pol dim
-            logger.debug("Dropping fnl pol dimension, please regenerate data with new setup so all pols have the same FNL and can be used in the mode")
-            fnl = self.fnls[i, 0]
-        else:
-            fnl = self.fnls[i]
+        fnl = self.fnls[i]
 
         # if we are channels_last we need to transpose the data, pol will be our channels
         if self.channels_last:
             patch = tf.transpose(patch, perm=[1, 2, 0])
-            # fnl = tf.transpose(fnl, perm=[1, 0])
 
         return patch, fnl
 
@@ -345,6 +356,8 @@ class AlmLoader(DataLoaderBase):
     """
     A class used to load and manage the Alm datasets.
     Converts the raw(flat) alms into a square tensor with the real and imaginary parts interleaved.
+    Currently pols will be used as individual samples, so the data will be (nsims * npol, lmax, lmax, 2)
+    will think about this later
     Shape: (lmax, lmax, 2) if channels_last else (2, lmax, lmax)
     """
 
@@ -357,6 +370,15 @@ class AlmLoader(DataLoaderBase):
         # this lazy loads the alm and fnl data
         self.alms = file["alm"]
         self.fnls = file["fnl"]
+
+        if len(self.fnls.shape) == 3:
+            # fnls have been generated with a pol dimension. This has been changed but the datasets take a while to generate
+            # just check and drop the pol dim,
+            # note: the previous code which generated this has a design flaw where the pols had unique FNLs, so they will not work thus we drop them
+            logger.error(
+                "Dropping fnl pol dimension, please regenerate data with new setup so all pols have the same FNL and can be used in the mode"
+            )
+            self.fnls = self.fnls[:, 0]
 
         (self.nsims, self.npol, self.ndata) = self.alms.shape
         self.lmax = Alm.getlmax(self.ndata)
@@ -383,7 +405,7 @@ class AlmLoader(DataLoaderBase):
         )
 
         # generate a positional encoding which is just a small value from 0 - 1e-3
-        self.pos_enc = self.idx_map / self.ndata * 1e-3
+        self.pos_enc = self.idx_map / self.ndata * 1e-5
 
         self._ds = Dataset.from_generator(
             self.__iter__,
@@ -400,7 +422,7 @@ class AlmLoader(DataLoaderBase):
 
         # now we can get the data and label
         alm = np.array(self.alms[i, j])[self.idx_map]
-        fnl = self.fnls[i, j]
+        fnl = self.fnls[i]
 
         # converts data(i) -> data(l, m), also splits the real and imaginary parts and adds the positional encoding
         data = np.empty(self.shape, dtype=self.dtype)

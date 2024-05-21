@@ -49,7 +49,7 @@ def setup_logging(
     return logger
 
 
-# TODO: low, get the size of the dataset at once and make it instead of resize
+# TODO: get the size of the dataset at once and make it instead of resize
 # should greatly improve performance since right now the resize can take 50s per entry for large (lmax 2000, nside 2048) data
 def save_data(file_path, data_dict, mode="x"):
     """
@@ -170,13 +170,11 @@ def remove_mono_dipole(alm, inplace=True):
     Returns:
         array-like: The alms with the monopole and dipole terms removed.
     """
-    if not inplace:
-        alm = alm.copy()
-
-    lmax = hp.Alm.getlmax(len(alm))
+    data = alm if inplace else alm.copy()
+    lmax = hp.Alm.getlmax(len(data))
 
     # Note: that we do not need -m's due to symmetry
-    alm[..., hp.Alm.getidx(lmax, 0, 0)] = 0.0
-    alm[..., hp.Alm.getidx(lmax, 1, 0)] = 0.0
-    alm[..., hp.Alm.getidx(lmax, 1, 1)] = 0.0
-    return alm
+    data[..., hp.Alm.getidx(lmax, 0, 0)] = 0.0
+    data[..., hp.Alm.getidx(lmax, 1, 0)] = 0.0
+    data[..., hp.Alm.getidx(lmax, 1, 1)] = 0.0
+    return data

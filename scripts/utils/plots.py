@@ -176,14 +176,14 @@ def plot_predictions(
     """
     df = pd.DataFrame(
         {
-            "True Labels": np.array(truth).flatten(),
-            "Predicted Labels": np.array(preds).flatten(),
+            "True Fnl": np.array(truth).flatten(),
+            "Predicted Fnl": np.array(preds).flatten(),
         }
     )
 
     # Create a scatter plot with seaborn
     plt.figure(figsize=(12, 6))
-    sns.scatterplot(data=df, x="True Labels", y="Predicted Labels")
+    sns.scatterplot(data=df, x="True Fnl", y="Predicted Fnl")
 
     # Truth line
     line = [min(truth), max(truth)]
@@ -203,11 +203,10 @@ def plot_predictions(
             linestyle="--",
             label=r"Scaled Variance (1/$\sqrt{f_{sky} f}$)",
         )
-        plt.plot(line, line + scaled_variance, color="green", linestyle="--")
         plt.plot(line, line - scaled_variance, color="green", linestyle="--")
 
     # Line for perfect fit
-    r2 = r2_score(df["True Labels"], df["Predicted Labels"])
+    r2 = r2_score(df["True Fnl"], df["Predicted Fnl"])
     plt.text(min(truth), max(truth), f"$R^2$ = {r2:.2f}", verticalalignment="top")
     plt.title(title)
 

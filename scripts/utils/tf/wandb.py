@@ -53,7 +53,7 @@ def try_init_wandb(
     wandb.init(
         project=project,
         notes=notes,
-        tags=["dev"] + tags,
+        tags=tags,
         config=config,
         dir=dir,
         **kwargs

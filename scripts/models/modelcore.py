@@ -211,6 +211,20 @@ class ModelCore(Core):
         self._check_model()
         return self._keras_model.predict(*args, **kwargs)
 
+    def evaluate(self, *args, **kwargs):
+        """
+        Evaluates the model using the keras model.
+
+        Parameters:
+        - *args: Variable length argument list.
+        - **kwargs: Arbitrary keyword arguments.
+
+        Returns:
+        The evaluation results.
+        """
+        self._check_model()
+        return self._keras_model.evaluate(*args, **kwargs)
+
     def keras_model(self):
         """
         Returns the keras model.

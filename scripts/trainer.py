@@ -35,7 +35,6 @@ from tensorflow.keras.losses import mse
 from .models import AutoModel
 from .utils import (
     setup_logging,
-    log_source,
     get_fisher,
     plot_histogram,
     plot_predictions,
@@ -93,7 +92,7 @@ def main():
     logger.debug(f"Data loader settings:\n{json.dumps(data_settings, indent=2)}")
 
     # additional metrics we are interested in
-    metrics = []  # ["mean_absolute_error"]
+    metrics = ["mean_absolute_error"]
     logger.debug(f"Looking at additional metrics: {metrics}")
 
     # callbacks to use during training
@@ -141,7 +140,7 @@ def main():
     strategy = tf.distribute.MirroredStrategy()
     with strategy.scope():
         # RMSE needs to be made in scope and at current version you cannot use the name
-        metrics.append([tf.keras.metrics.RootMeanSquaredError()])
+        metrics.append(tf.keras.metrics.RootMeanSquaredError())
 
         opt = Adam(learning_rate=lr_schedule)
         model.make_model(**model_settings)
