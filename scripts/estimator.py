@@ -34,10 +34,10 @@ def main():
     # early loading to fail fast if the file does not exist
     alm_file = h5py.File(core.alm_file, "r", swmr=True, locking=False)
 
-    # The default theta_batch size is 25, which is really small
-    # Calculate the power of two that lmax is greater than 512 and use this to limit size
-    divisor = 2 ** max(0, math.ceil(math.log2(core.lmax / 512)))
-    theta_batch = int(np.floor(1.5 * core.lmax + 1)) // divisor
+    # The default theta_batch size is 25, which is really small, we want to increase it
+    # going too high can cause memory issues, so we will cap it at 512
+    theta_batch = int(np.floor(1.5 * core.lmax + 1)) # org from KSW code
+    theta_batch = min(512, theta_batch)
     logger.debug("Using theta_batch %s", theta_batch)
 
     # check for existing ksw state, if it exists, load it
