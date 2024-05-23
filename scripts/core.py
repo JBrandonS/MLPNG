@@ -8,7 +8,6 @@ from typing import Any
 import camb
 import healpy as hp
 import numpy as np
-import rich
 from astropy import units as u
 
 logger = logging.getLogger(__name__)
@@ -18,7 +17,7 @@ logger = logging.getLogger(__name__)
 try:
     from ksw import KSW, Cosmology, Data, Shape
 except ImportError:
-    logger.info("Could not import ksw, this is expected if training")
+    logger.info("Could not import ksw, this is expected only if training")
 
 
 def cosmo_defaults():
@@ -541,23 +540,15 @@ class Core:
         self.noise = self._get("noise", True)
         if not self.noise:
             # we cannot set the noise to 0 as this will cause a singular matrix in the inverse covariance
-            # so we set it to a very small value
-            epsilon_noise = 1e-6
-            self.beam_width = 0  # the beam can be 0, no problems
-
-            self.noise_scale_tt = self.noise_scale_ee = self.noise_scale_te = (
-                epsilon_noise
-            )
-            # FIX: singular matrix with TE pol and no noise...
-            n_shape = (3, self.nell) if self.npol == 2 else (1, self.nell)
-            self.noise_ell = np.full(n_shape, epsilon_noise**2, dtype=self.r_dtype)
-            self.beam_ell = np.ones((self.npol, self.nell), dtype=self.r_dtype)
-            return
-
-        self.beam_width = convert(self._get("beam_width", 0))
-        self.noise_scale_tt = convert(self._get("noise_scale_tt", 1))
-        self.noise_scale_ee = convert(self._get("noise_scale_ee", 1))
-        self.noise_scale_te = convert(self._get("noise_scale_te", 1))
+            # so we set it to a very small value in such a way that we will not get a singular matrix
+            noise_scale_tt = noise_scale_ee = convert(1e-6)
+            noise_scale_te = convert(1e-12)
+            self.beam_width = 0
+        else:
+            self.beam_width = convert(self._get("beam_width", 0))
+            noise_scale_tt = convert(self._get("noise_scale_tt", 1))
+            noise_scale_ee = convert(self._get("noise_scale_ee", 1))
+            noise_scale_te = convert(self._get("noise_scale_te", 1))
 
         beam = hp.gauss_beam(self.beam_width, lmax=self.lmax, pol=True)  # (nell, npol)
         beam = np.swapaxes(beam, 0, 1)  # convert beam to (npol, nell)
@@ -569,13 +560,13 @@ class Core:
         beam_ell = []
         if "T" in self.pols:
             beam_ell.append(beam[0])
-            noise_ell.append(noise * self.noise_scale_tt**2)
+            noise_ell.append(noise * noise_scale_tt**2)
         if "E" in self.pols:
             beam_ell.append(beam[1])
-            noise_ell.append(noise * self.noise_scale_ee**2)
+            noise_ell.append(noise * noise_scale_ee**2)
         if self.pols == ["T", "E"]:
             # beam_ell.append(beam[3]) # beam doesn't need to be set for TE
-            noise_ell.append(noise * self.noise_scale_te**2)
+            noise_ell.append(noise * noise_scale_te**2)
         self.noise_ell = np.array(noise_ell)
         self.beam_ell = np.array(beam_ell)
 
@@ -618,4 +609,4 @@ class Core:
             radii.extend(temp_radii)
 
         self.radii = np.array([r for r in radii if r_min <= r < r_max])
-        self.drs = np.diff(radii) / 2.0
+        self.drs = np.diff(radii)
