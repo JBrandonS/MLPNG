@@ -56,6 +56,7 @@ def plot_cl(
     plot_func=plt.semilogy,
     plot_camb=False,
     c_ells=None,
+    camb_pol = 0,
     camb_noise=False,
     noise=None,
     beam_width=None,
@@ -72,6 +73,7 @@ def plot_cl(
         plot_func (function, optional): Plotting function to use. Defaults to plt.semilogy.
         plot_camb (bool, optional): Whether to plot the camb values. Defaults to False.
         c_ells (array-like, optional): Array of camb values. Required if plot_camb is True.
+        camb_pol (int, optional): The polarization from camb to plot. Defaults to 0.
         camb_noise (bool, optional): Whether to plot camb values with noise. Defaults to False.
         noise (array-like, optional): Array of noise values. Required if camb_noise is True.
         beam_width (float, optional): Beam width value. Required if camb_noise is True.
@@ -80,7 +82,6 @@ def plot_cl(
     Returns:
         None
     """
-    pol = 0
     nell = lmax + 1
     ells = np.arange(2, nell)
     scale = ells * (ells + 1) / 2 / np.pi if scale else 1
@@ -90,7 +91,7 @@ def plot_cl(
         if c_ells is None:
             raise ValueError("Need to provide c_ells if plt_camb is True.")
 
-        camb_cl = c_ells[2:nell, pol]
+        camb_cl = c_ells[2:nell, camb_pol]
         plot_func(ells, scale * camb_cl, label="camb")
 
         if camb_noise:
