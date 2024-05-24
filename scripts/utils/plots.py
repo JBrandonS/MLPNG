@@ -56,7 +56,6 @@ def plot_cl(
     plot_func=plt.semilogy,
     plot_camb=False,
     c_ells=None,
-    camb_pol = 0,
     camb_noise=False,
     noise=None,
     beam_width=None,
@@ -91,7 +90,7 @@ def plot_cl(
         if c_ells is None:
             raise ValueError("Need to provide c_ells if plt_camb is True.")
 
-        camb_cl = c_ells[2:nell, camb_pol]
+        camb_cl = c_ells[2:nell]
         plot_func(ells, scale * camb_cl, label="camb")
 
         if camb_noise:
