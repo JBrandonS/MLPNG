@@ -48,8 +48,12 @@ def recursive_copy(hf_source, hf_dest, num_files, index):
 
         if key not in hf_dest:
             ds_shape = (num_files * num_elem,) + data_shape
-            logger.debug("%s: Creating dataset with shape %s", key, ds_shape)
-            hf_dest.create_dataset(key, shape=ds_shape)
+            dtype = hf_source[key].dtype
+
+            logger.info(
+                "%s: Creating dataset with shape %s, and dtype %s", key, ds_shape, dtype
+            )
+            hf_dest.create_dataset(key, shape=ds_shape, dtype=dtype)
 
         logger.debug(
             "%s: Copying data to index range %s",
@@ -97,7 +101,6 @@ def combine_data(directory, base_name, ext=".hdf5", remove_files=True, expected=
 
     # sort by the index number so that we combine in order, not needed but doing anyways
     files_to_combine = sorted(files_to_combine, key=extract_number)
-    # logger.debug("Found files to combine: %s", files_to_combine)
 
     # Create a new h5py file to hold all the combined data
     with h5py.File(nc_file, "x") as hf_combined:
