@@ -13,27 +13,28 @@
 # list of the settings file to be used, will be ran in order
 # these must be in settings/ and have the .json extension
 SETTINGS=(
-  "l1000_n64"
-  "l500_n128"
+  "l256_n64"
+  # "l500_n128"
   "heidelberg"
-  "planck"
-  "l2000_n2048"
+  # "planck"
+  # "l2000_n2048"
 )
 
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
 ARGS=(
-  # "--nsims" "100"
+  "--nsims" "100"
   # "--lensing"
   # "--noise" 
-  # "--narray" "10" # change slurm args array to match this
+  "--narray" "10" # change slurm args array to match this
   # "--base_name" "planck_fnl50"
   # "--fnl_range" "-50" "50"
-  # "--force_generation"
+  "--force_generation"
+  "--polarizations" "TE"
 )
 
 # override some slurm settings, only used for narray
 SLURM_ARGS=(
-  # "--array" "1-10"
+  "--array" "1-10"
 )
 
 # Just log the overrides to the console
@@ -52,15 +53,15 @@ for x in "${SETTINGS[@]}"; do
     SETTINGS_FILE="settings/$x.json"
 
     # generate the alms
-    job_id=$(sbatch "${SLURM_ARGS[@]}" "sbatch/almgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+    # job_id=$(sbatch "${SLURM_ARGS[@]}" "sbatch/almgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
 
     ### generates the patches
-    job_id=$(sbatch --dependency=afterok:"$job_id" "${SLURM_ARGS[@]}" "sbatch/patchgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
-    # JOB1_ID=$(sbatch "${SLURM_ARGS[@]}" "sbatch/patchgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+    # job_id=$(sbatch --dependency=afterok:"$job_id" "${SLURM_ARGS[@]}" "sbatch/patchgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+    job_id=$(sbatch "${SLURM_ARGS[@]}" "sbatch/patchgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
 
     # combines the data into a single file
     job_id=$(sbatch --dependency=afterok:"$job_id" "sbatch/combiner.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
-    # JOB2_ID=$(sbatch "sbatch/combiner.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+    # job_id=$(sbatch "sbatch/combiner.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
 
     # runs the estimator on the combined data
     sbatch --dependency=afterok:"$job_id" "sbatch/estimator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" > /dev/null 2>&1

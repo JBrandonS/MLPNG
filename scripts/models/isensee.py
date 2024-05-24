@@ -221,8 +221,8 @@ def main():
     )
 
     # Lets plot the predictions from the unseen test set
-    y_pred = model.predict(test_ds, verbose=1).flatten()
-    y_test = np.concatenate([y.numpy() for _, y in test_ds])
+    preds = model.predict(test_ds, verbose=1).flatten()
+    truth = np.concatenate([y.numpy() for _, y in test_ds])
 
     # Plot the loss curves and metrics
     plot_metrics(
@@ -230,8 +230,8 @@ def main():
         f"{model.plot_dir}/{name}-metrics.png",
         metrics=["loss"],
     )
-    plot_predictions(y_test, y_pred, f"{model.plot_dir}/{name}-preds.png")
-    plot_histogram(y_test, y_pred, f"{model.plot_dir}/{name}-histogram.png")
+    plot_predictions(truth, preds, f"{model.plot_dir}/{name}-preds.png")
+    plot_histogram(truth, preds, f"{model.plot_dir}/{name}-histogram.png")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
     "cosmo_params" : {
         "H0": 70.1,
         "As": 2.457e-09,
+        "pivot_scalar": 0.002,
         "ns": 0.96,
         "ombh2": 0.02256,
         "omch2": 0.1143,

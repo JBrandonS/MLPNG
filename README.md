@@ -6,7 +6,7 @@ An $A_{lm}^{NG}$ generator and training pipeline for machine learning models to 
 
 This code is designed to do two things; provide a generation framework for generating non-gaussian CMB data, and provide a training framework to run models on the generated data. It will generate both full $A_{lm}$ arrays and flat sky patch cuts. These can be of arbitrary lmax and nside, T and/or E polarizations, and with or without lensing. It has been run and tested extensively on SMU's Superpod and M3 systems but may require some tweaking to run on other systems. In particular, the main bash scripts and the sbatch script will need to be updated for new systems.
 
-The code has been broken into 2 different parts, this is due to policies not allowing for the data generation on the same system as the training. If you are not limited by this you may want to combine the conda environments and the generation and training scripts into one.
+The code has been broken into 2 different parts, this is due to SMU policies not allowing for the CPU based data generation on the same system as the GPU based training. If you are not limited by this you may want to combine the conda environments and the generation and training scripts into one.
 
 The data generation is controlled by settings files, which are used to specify the parameters of the data to be generated. The data is then generated in two steps, first the $A_{lm}\text{s}$ are created in batches according to the settings file. Secondly, if enabled in the `generator.sh` script, cut sky patches will be generated from the $A_{lm}\text{s}$. Finally, the code will run the `combiner.py` script to combine the large number of data files into 2, one for the alms and one for the patches. Data will be saved to the `data_dir` with the alm's being placed in `data_dir/alm_dir`, which by default will be `data/alms`. Similar settings can be used to change where the patches, plots, and other large files will be saved.
 
@@ -128,7 +128,7 @@ The data is stored in `hdf5` files as they allow reading and appending data with
 
 ### Notes on files
 
-Simultaneous runs are supported as long as the filenames do not collide. The alms settings may match as long as they have been previously generated. Existing non-completed files (ending with `.nc`) will be overwritten in the data generation step. Completed alm files will be overwritten once the alms are fully generated and, if using slurm job arrays, combined.
+Simultaneous runs are supported as long as the filenames do not collide. If files are found to exists the scripts are designed to exit quickly but will not fail. This allows easy continuation of incomplete runs, i.e. if some of the sims timed out everything is designed so you can just change the time in the slurm settings and rerunning should then only generate the missing sims. This will cause issues if two runs are started at the same time with the same settings file, I do not plan to handel that case.
 
 #### Filenames
 
@@ -159,27 +159,14 @@ Primary development by:
    Brandon Stevenson, Joe Ryan, Joel Meyers
 
 Additional thanks to:
-
 - Daan Meerburg
-
 - Jorik Melsen
-
 - Thomas Flöss
-
-- Adri Duivenvoorden
-
-### Some References
-
-- [Minimizing gravitational lensing contributions to the primordial bispectrum covariance](http://arxiv.org/abs/1912.07619)
-- [Primordial Non-Gaussianity](http://arxiv.org/abs/1903.04409)
-- [ksw github](https://github.com/AdriJD/ksw)
-- [optweight github](https://github.com/AdriJD/optweight)
 
 ## Problems
 
 - Currently running with a beam_width will cause a bias, I plan to look into this later but if anyone wants to fix that feel free.
-- The tuning code is not great, and probably won't be improved much as it isn't that useful.
-- E polarizations and lensing are not well tested.
+- lensing may be wrong
 
 ## License
 

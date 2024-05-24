@@ -161,8 +161,8 @@ def main():
     )
 
     # Lets plot the predictions from the unseen test set
-    y_pred = model.predict(test_ds, verbose=2).flatten()
-    y_test = np.concatenate([y.numpy() for _, y in test_ds])
+    preds = model.predict(test_ds, verbose=2).flatten()
+    truth = np.concatenate([y.numpy() for _, y in test_ds])
 
     # Plot the loss curves and metrics
     plot_dir = os.path.join(model.plot_dir, "trainer")
@@ -171,8 +171,8 @@ def main():
 
     fisher = get_fisher(model.alm_file)
     plot_metrics(history, save_file=f"{file_base}.png", metrics=["loss"] + metrics)
-    plot_predictions(y_test, y_pred, fisher=fisher, save_file=f"{file_base}-preds.png")
-    plot_histogram(y_test, y_pred, save_file=f"{file_base}-hist.png")
+    plot_predictions(truth, preds, fisher=fisher, save_file=f"{file_base}-preds.png")
+    plot_histogram(truth, preds, save_file=f"{file_base}-hist.png")
 
 
 if __name__ == "__main__":

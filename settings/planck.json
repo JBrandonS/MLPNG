@@ -13,10 +13,10 @@
     "narray": 100,
     "fnl_range":[-1000, 1000],
     "npatches": 10,        
-    "nside":2500,
+    "nside":2048,
     "noise_scale_tt" : 29.336,
     "beam_width" : 0,
     "lensing": false,
     "noise": true,
-    "base_name": "planck_050724"
+    "base_name": "planck"
 }

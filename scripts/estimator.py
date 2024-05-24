@@ -35,17 +35,18 @@ def main():
     alm_file = h5py.File(core.alm_file, "r", swmr=True, locking=False)
 
     # The default theta_batch size is 25, which is really small, we want to increase it
-    # going too high can cause memory issues, so we will cap it at 512
-    theta_batch = int(np.floor(1.5 * core.lmax + 1)) # org from KSW code
-    theta_batch = min(512, theta_batch)
+    # going too high can cause memory issues, so we will cap it at 256
+    theta_batch = int(np.floor(1.5 * core.lmax + 1)) // mpi_size
+    theta_batch = min(256, theta_batch)
     logger.debug("Using theta_batch %s", theta_batch)
 
     # check for existing ksw state, if it exists, load it
     # otherwise, run the MC, can take a few hours
     use_mc_file = True  # just a quick disable
-    mc_path = os.path.join(core.alm_dir, "kswmc")
+    mc_path = os.path.join(core.base_dir, "kswmc")
     os.makedirs(mc_path, exist_ok=True)
     mc_file = os.path.join(mc_path, f"{core.base_name}.hdf5")
+    
     if use_mc_file and os.path.exists(mc_file):
         logger.info("Loading KSW state from %s", mc_file)
         core.ksw.start_from_read_state(mc_file, mpi_comm)
@@ -90,9 +91,8 @@ def main():
 
     def estimator_loader(idx):
         """Loads in a single alm given an idx."""
-        sim, pol = np.unravel_index(int(idx), (core.total_sims, core.npol))
-        logger.debug("Sending alm (%s, %s) with fnl %s", sim, pol, fnls[sim])
-        return np.array(alms[sim, pol])
+        logger.debug("Sending %s with fnl %s", idx, fnls[idx])
+        return np.array(alms[idx])
 
     estimates = core.ksw.compute_estimate_batch(
         estimator_loader,
@@ -123,9 +123,11 @@ def main():
         # make and save some plots
         plot_dir = os.path.join(core.plot_dir, "estimator")
         os.makedirs(plot_dir, exist_ok=True)
+        
         pred_file = os.path.join(plot_dir, f"{core.sjob}_{core.base_name}_preds.png")
-        hist_file = os.path.join(plot_dir, f"{core.sjob}_{core.base_name}_hist.png")
         plot_predictions(fnls, estimates, fisher=fisher, save_file=pred_file)
+                
+        hist_file = os.path.join(plot_dir, f"{core.sjob}_{core.base_name}_hist.png")
         plot_histogram(fnls, estimates, save_file=hist_file)
 
     logger.info("Finished %s!", mpi_rank)

@@ -66,7 +66,7 @@ def process_batch_estimate(
 class KSW_joblib(OriginalKSW):
     """
     Jupyter on the clusters doesn't like MPI, so this uses joblib to parallelize the loop.
-    I made some small changes to the logging, so that it is clear that this is being used, 
+    I made some small changes to the logging, so that it is clear that this is being used,
     and some minor copy have been added due to pickling
 
     Example Import:
@@ -78,16 +78,18 @@ class KSW_joblib(OriginalKSW):
     core.KSW = KSW_joblib
     ```
 
-    Also See: 
+    Also See:
         the simulator.ipynb notebook in the same directory.
     """
 
     def __init__(self, *args, **kwargs):
         logger.info("Using KSW_joblib")
         super().__init__(*args, **kwargs)
-        
+
         temp_folder = os.environ.get("SCRATCH", None)
-        self.parallel = Parallel(n_jobs=-1, return_as="generator", temp_folder=temp_folder)
+        self.parallel = Parallel(
+            n_jobs=-1, return_as="generator", temp_folder=temp_folder
+        )
 
     def _step(self, alm, theta_batch=25):
         alm = utils.alm_return_2d(alm, self.npol, self.lmax)
@@ -201,4 +203,5 @@ class KSW_joblib(OriginalKSW):
         )
 
         t_cubic = sum(estimates)
+        logger.debug("t_cubic: %s, lin_term: %s, fisher: %s", t_cubic, lin_term, fisher)
         return (t_cubic - lin_term) / fisher

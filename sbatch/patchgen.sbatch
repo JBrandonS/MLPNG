@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=32
 #SBATCH --output=logs/patchgen/%A/%j.log
 #SBATCH --array=1-100
-#SBATCH --time=02:00:00
+#SBATCH --time=24:00:00
 
 # create the logging dir
 mkdir -p logs/patchgen/"$SLURM_ARRAY_JOB_ID"/

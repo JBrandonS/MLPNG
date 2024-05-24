@@ -101,7 +101,7 @@ def generate_alm_ng(core, alms):
 
     logger.info("Starting Alm_ng generation")
 
-    # We use joblib.parallel to generate the patches in parallel
+    # This uses joblib.parallel to generate the patches in parallel
     # by default (temp_folder=None) this will use a ram disk /dev/shm
     # if the data files are larger than the available memory, it will error
     # so we give it a temp folder to use, which wont have that problem
@@ -112,10 +112,10 @@ def generate_alm_ng(core, alms):
 
     parallel = Parallel(n_jobs=-1, return_as="generator", temp_folder=temp_folder)
     alm_ng = np.empty(core.alm_shape, dtype=core.c_dtype)
-    for i, pol in tqdm(core.sim_pol, total=core.sim_pol_len, desc="Alm_ng"):
+    for sim, pol in tqdm(core.sim_pol, total=core.sim_pol_len, desc="Alm_ng"):
         generator = parallel(
             delayed(integrand)(
-                alms[i, pol],
+                alms[sim, pol],
                 bl_div_cl[ri, :, pol],
                 alpha_l[ri, :, pol],
                 core.radii[ri],
@@ -127,12 +127,12 @@ def generate_alm_ng(core, alms):
         )
 
         # here we consume the generator and sum the results
-        alm_ng[i, pol] = sum(generator)
+        alm_ng[sim, pol] = sum(generator)
     return alm_ng
 
 
 def main():
-    """
+    r"""
     This code generates the alms
     $$a_{\ell m} = a_{\ell m}^{{G}} + f_{NL}^X a_{\ell m}^{NG}$$
     with
@@ -202,7 +202,7 @@ def main():
             plot_camb=True,
             c_ells=core.c_ells,
             camb_noise=True,
-            noise=core.noise_ell[0],
+            noise=core.noise_ell[j],
             beam_width=core.beam_width,
         )
 

@@ -11,7 +11,8 @@ from .utils import remove_mono_dipole, setup_logging
 from .utils.plots import plot_cl_alm, plot_predictions
 
 mpi_comm = MPI.COMM_WORLD
-mpi_rank = mpi_comm.rank
+mpi_rank = mpi_comm.Get_rank()
+mpi_size = mpi_comm.Get_size()
 mpi_root = mpi_rank == 0
 
 logger = setup_logging(
@@ -37,7 +38,12 @@ def main():
 
     logger.info("Running KSW step")
     alm_step_strs = np.arange(1, 101).astype(str)
-    thetas = int(np.floor(1.5 * core.lmax + 1))
+
+    # The default theta_batch size is 25, which is really small, we want to increase it
+    # going too high can cause memory issues, so we will cap it at 256
+    thetas = int(np.floor(1.5 * core.lmax + 1)) // mpi_size
+    thetas = min(256, int(np.floor(1.5 * core.lmax + 1)))
+
     core.ksw.step_batch(
         alm_step_loader, alm_step_strs, comm=mpi_comm, theta_batch=thetas
     )
@@ -80,6 +86,7 @@ def main():
         plot_cl_alm(alm_loader("1"), save_file=cl_file, plot_camb=True, c_ells=c_ells)
 
     logger.info("Finished %s!", mpi_rank)
+
 
 if __name__ == "__main__":
     sys.exit(main())
