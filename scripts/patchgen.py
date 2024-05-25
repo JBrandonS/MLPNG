@@ -131,15 +131,25 @@ def cutSqPatches_pixell(
         plot_dir = os.path.join(plot_dir, "patchgen")
         os.makedirs(plot_dir, exist_ok=True)
 
-        map2hp = reproject.map2healpix(car_map, lmax)
-        hp.mollview(map2hp, min=-650.0, max=650, title=f"fnl = {fnl}")
-        plt.savefig(os.path.join(plot_dir, f"{base_name}_{fnl}_fullsky.png"))
-        plt.close()
+        map2hp = reproject.map2healpix(car_map, lmax, spin=[0, 0])
+        for pol in range(map2hp.shape[0]):
+            hp.mollview(map2hp[pol], min=-650.0, max=650, title=f"fnl = {fnl}")
+            plt.savefig(
+                os.path.join(plot_dir, f"{base_name}_{fnl}_pol{pol}_fullsky.png")
+            )
+            plt.close()
 
-        map_path = os.path.join(plot_dir, f"{base_name}_{fnl}_pixell_cl_map.png")
-        plot_cl_map(
-            car_map, fs_wcs, lmax, plot_camb=True, c_ells=c_ells, save_file=map_path
-        )
+            map_path = os.path.join(
+                plot_dir, f"{base_name}_{fnl}_pol{pol}_pixell_cl_map.png"
+            )
+            plot_cl_map(
+                car_map[pol],
+                fs_wcs,
+                lmax,
+                plot_camb=True,
+                c_ells=c_ells[:, pol],
+                save_file=map_path,
+            )
 
     # we want the shape to be (pol, patchs, nside, nside)
     result = np.transpose(patches, (1, 0, 2, 3))
@@ -297,9 +307,11 @@ def main():
         plot_dir = os.path.join(core.plot_dir, "patchgen")
         os.makedirs(plot_dir, exist_ok=True)
 
-        plot_file = os.path.join(plot_dir, f"{core.base_name}_patches.png")
-        i, j = core.rng.integers(core.nsims), core.rng.integers(core.npol)
-        plot_patches(patches[i, j], 10, save_file=plot_file)
+        # lets plot the patches from a random sim
+        sim = core.rng.integers(core.nsims)
+        for pol in range(core.npol):
+            plot_file = os.path.join(plot_dir, f"{core.base_name}_pol{pol}_patches.png")
+            plot_patches(patches[sim, pol], core.npatches, save_file=plot_file)
 
     logger.info("Done with Generation!")
 
