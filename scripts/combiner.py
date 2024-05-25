@@ -2,6 +2,7 @@ import sys
 import glob
 import os
 import re
+import logging
 
 import h5py
 from tqdm.auto import tqdm
@@ -9,7 +10,7 @@ from tqdm.auto import tqdm
 from . import Core
 from .utils import setup_logging
 
-logger = setup_logging(__name__)  # , level=logging.DEBUG)
+logger = setup_logging(__name__, level=logging.DEBUG)
 
 
 def extract_number(filename):
@@ -60,6 +61,8 @@ def recursive_copy(hf_source, hf_dest, num_files, index):
             key,
             (index * num_elem, (index + 1) * num_elem),
         )
+        logger.debug(f"Data type of hf_source[{key}]: {hf_source[key].dtype}")
+        logger.debug(f"Data type of hf_dest[{key}]: {hf_dest[key].dtype}")
         hf_dest[key][index * num_elem : (index + 1) * num_elem] = hf_source[key]
         logger.debug("%s: Done", key)
 
@@ -86,12 +89,21 @@ def combine_data(directory, base_name, ext=".hdf5", remove_files=True, expected=
     files_to_combine = glob.glob(file_pattern)
 
     if len(files_to_combine) == 0:
-        logger.error("Did not find any files to combine with %s", file_pattern)
+        logger.info(
+            "Did not find any files to combine with %s."
+            "This is expected if some of the data has already been combined.",
+            file_pattern,
+        )
         return  # We do not exit(1) here since we want to keep going with other jobs ie. patchgen
 
     if len(files_to_combine) != expected:
-        logger.error("Found %d files, expected %d", len(files_to_combine), expected)
-        return  # We do not exit(1) here since we want to keep going with other jobs ie. patchgen
+        logger.error(
+            "Found %d files, expected %d for pattern %s",
+            len(files_to_combine),
+            expected,
+            file_pattern,
+        )
+        sys.exit(1)
 
     # check for existing incomplete combined file and remove it
     # this should only happen if the combiner failed, i.e. timed out
