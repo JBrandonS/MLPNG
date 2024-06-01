@@ -76,6 +76,8 @@ class Core:
         patch_file (str): The full path to the patch file.
         cosmo (ksw.Cosmology): The cosmology object.
         radii (numpy.ndarray): An array of radii for the bispectrum estimator.
+        force_ksw (bool): Whether to force the KSW estimator to run otherwise can use save states.
+        num_estimates (int): The number of estimates to compute. Default: The total number of simulations.
     """
 
     def parse_args(self, args=None):
@@ -105,11 +107,14 @@ class Core:
         parser.add_argument("--fnl_range", type=float, nargs=2)
         parser.add_argument("--polarizations", type=str)
 
+        parser.add_argument("--num_estimates", type=int)
+
         # for BooleanOptionalAction: --flag will set the value `flag` to True, --no-flag will set `flag` to False
         # otherwise it will be none
         parser.add_argument("--lensing", action=argparse.BooleanOptionalAction)
         parser.add_argument("--noise", action=argparse.BooleanOptionalAction)
         parser.add_argument("--force_generation", action=argparse.BooleanOptionalAction)
+        parser.add_argument("--force_ksw", action=argparse.BooleanOptionalAction)
 
         # this allows us to save a copy of the final settings used for the run
         # only really useful for debugging, must be provided by the CLI and not in the settings file
@@ -197,6 +202,9 @@ class Core:
         self.total_sims = self.nsims * self.npol * self.narray
         self.force_gen = self._get("force_generation", False)
 
+        self.force_ksw = self._get("force_ksw", False)
+        self.num_estimates = self._get("num_estimates", self.total_sims)
+
         # setup the fnl and shape
         self.fnl_min, self.fnl_max = self._get("fnl_range", (-1000, 1000))
         self.fnl_shape = (self.nsims, 1)
@@ -209,6 +217,8 @@ class Core:
         self.nell = self.lmax + 1
         self.nelem = hp.Alm.getsize(self.lmax)
         self.ells = np.arange(self.nell)
+        
+        self.alm_shape = (self.nsims, self.npol, self.nelem)
 
         # setup our precision types to be consistent
         # also, tensorflow seems to mostly use float32, and is actually moving to half-bit registers
@@ -231,7 +241,6 @@ class Core:
 
         self._init_slurm()
         self._init_cosmo()
-        self._init_almgen()
         self._init_patchgen()
         self._init_paths()
 
@@ -387,14 +396,16 @@ class Core:
         cosmo.add_prim_reduced_bispectrum(loc_shape, self.radii)
 
         logger.debug("Setting up data and KSW")
-        logger.info(
+        logger.debug(
             f"beam {self.beam_ell.shape}, noise {self.noise_ell.shape}, pols {self.pols}, npols {self.npol}"
         )
         self.data = Data(self.lmax, self.noise_ell, self.beam_ell, self.pols, cosmo)
+
         if self.lensing:
             self.c_ells = cosmo.c_ell["lensed_scalar"]  # type: ignore
         else:
             self.c_ells = cosmo.c_ell["unlensed_scalar"]  # type: ignore
+
         self.c_ells = self.c_ells["c_ell"][: self.nell]
 
         self.ksw = KSW(
@@ -406,34 +417,6 @@ class Core:
             self.precision,
         )
         logger.debug("done with KSW")
-
-    def _init_almgen(self):
-        """
-        Initialize the alm generator attributes.
-
-        This method initializes the alm generator by setting up the alm shape,
-        determining whether to force alm generation, and preparing the transfer
-        function for the given cosmology.
-
-        Attributes:
-            alm_shape (tuple): The shape of the alm array, given by (nsims, npol, nelem).
-            tr_ells (array): The ells values from the transfer function that are less than or equal to lmax.
-            tr_k (array): The k values from the transfer function.
-            tr_ell_k (array): The tr_ell_k values from the transfer function that correspond to tr_ells.
-
-        Side Effects:
-            Modifies the alm_shape, tr_ells, tr_k, and tr_ell_k attributes.
-
-        Assumptions:
-            Assumes that the cosmology object has generated transfers with ells, k, and tr_ell_k keys.
-        """
-        self.alm_shape = (self.nsims, self.npol, self.nelem)
-
-        tr_ells = self.cosmo.transfer["ells"]  # type: ignore
-        mask = tr_ells <= self.lmax
-        self.tr_ells = tr_ells[mask]
-        self.tr_k = self.cosmo.transfer["k"]  # type: ignore
-        self.tr_ell_k = self.cosmo.transfer["tr_ell_k"][mask]  # type: ignore
 
     def _init_patchgen(self):
         """
@@ -483,14 +466,18 @@ class Core:
         - ndarray: Inverse-variance-weighted version of the input array.
 
         """
+
+        # small speed up by removing these from the loop, using np.reciprocal incase its faster
+        B_inv = np.reciprocal(self.beam_ell)
+        N = self.noise_ell[: self.npol]  # drop the TE noise
+        S = np.transpose(self.c_ells, (1, 0))[: self.npol]  # convert to (npol, nell)
+        factor = np.reciprocal(B_inv * N * B_inv + S) * B_inv
+
+        # hp.almxfl does not handle the npol dimension, so we need to loop over it
+        # TODO: is inplace safe here? Need to look at KSW code
         ret = np.empty_like(alm)
-        for pol in range(alm.shape[0]):
-            B = self.beam_ell[pol]
-            iB = 1 / B
-            N = self.noise_ell[pol]
-            S = self.c_ells[:, pol]
-            factor = (iB * N * iB + S) ** -1 * iB
-            ret[pol] = hp.almxfl(alm[pol], factor, inplace=False)
+        for pol in range(self.npol):
+            ret[pol] = hp.almxfl(alm[pol], factor[pol], inplace=False)
         return ret
 
     def conv_beam_func(self):  # change name
@@ -508,7 +495,7 @@ class Core:
         def __beam(alm):
             # Convolve the beam with the alm values
             ret = np.empty_like(alm)
-            for pol in range(alm.shape[0]):
+            for pol in range(self.npol):
                 ret[pol] = hp.almxfl(alm[pol], self.beam_ell[pol], inplace=False)
             return ret
 
@@ -598,7 +585,7 @@ class Core:
             start = max(r_min, r[0])
             end = min(r_max, r[1])
 
-            if start > end:
+            if start >= end:
                 continue
 
             if r == ranges[-1]:  # For the last range, use logspace
@@ -608,5 +595,4 @@ class Core:
 
             radii.extend(temp_radii)
 
-        self.radii = np.array([r for r in radii if r_min <= r < r_max])
-        self.drs = np.diff(radii)
+        self.radii = np.array([r for r in radii if r_min <= r <= r_max])

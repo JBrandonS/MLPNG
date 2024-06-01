@@ -14,5 +14,9 @@
     "npatches" : 10,
     "fnl_range":[-1000, 1000],        
     "nside": 64,
-    "noise": true
+    "noise": true,
+    "noise_scale_tt" : 500, 
+    "noise_scale_ee" : 50,
+    "noise_scale_te" : 5,
+    "beam_width" : 10
 }

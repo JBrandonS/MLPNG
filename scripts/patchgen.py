@@ -88,7 +88,9 @@ def cutSqPatches_lenspyx(
 
             comp_path = base + "_lenspyx_cl_comp.png"
             geom = lenspyx.get_geom(geom_info)
-            unl_map = geom.alm2map(alm[pol], lmax, None, nthreads=1)
+            unl_map = geom.alm2map(
+                alm[pol], lmax, None, nthreads=len(os.sched_getaffinity(0))
+            )
             hp.mollzoom(
                 lens_map[pol] - unl_map,
                 title=f"lensed - unlensed, pol: {pol}, fnl: {fnl[0]}",

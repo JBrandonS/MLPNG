@@ -16,7 +16,7 @@ from .utils.plots import plot_cl_alm
 logger = setup_logging(__name__, level=logging.DEBUG)
 
 
-def integrand(alm, bl_div_cl, alpha_l, r, dr, nside, lmax):
+def integrand(alm, bl_div_cl, alpha_l, nside, lmax, radii):
     """
     Calculate the integrand for a given set of parameters.
 
@@ -34,15 +34,16 @@ def integrand(alm, bl_div_cl, alpha_l, r, dr, nside, lmax):
 
     """
 
-    # TODO figure out where I got these from....
-    Balm = hp.almxfl(alm, bl_div_cl, inplace=False)
-    B = hp.alm2map(Balm, nside=nside, lmax=lmax, inplace=True)
+    Balm = hp.almxfl(alm, bl_div_cl)
+    # logger.info("Balm shape %s", Balm.shape)
+    B = hp.alm2map(Balm, nside=nside)
+    # logger.info("B shape %s", B.shape)
     inner = hp.map2alm(B**2, lmax=lmax, use_pixel_weights=True)
-    kernel = hp.almxfl(inner, alpha_l, inplace=True)
-    return dr * r**2 * kernel
+    # logger.info("inner shape %s", inner.shape)
+    return radii**2 * hp.almxfl(inner, alpha_l)
 
 
-def interpolator(func, ells_sparse, axis=1, cubic=True):
+def interpolator(func, ells_sparse, axis=1, cubic=False):
     """
     Interpolates a function using either cubic spline or linear interpolation.
 
@@ -74,32 +75,40 @@ def generate_alm_ng(core, alms):
     - alm_ng: The calculated almng array.
     """
 
+    tr_ells = core.cosmo.transfer["ells"]
+    tr_k = core.cosmo.transfer["k"]
+    tr_ell_k = core.cosmo.transfer["tr_ell_k"]
+
     # just trim the ells so we do not go beyond what ells we have for the transfer functions
-    ells = core.ells[
-        (core.ells >= core.tr_ells.min()) & (core.ells <= core.tr_ells.max())
-    ]
+    ells = core.ells[2:]
+
+    # logger.info("Using ells %s, %s", ells.shape, ells)
 
     # the following few blocks of code calculate eq 14 and 15 from Smith and Zal.
-    # the radian_func does the $2 / pi \int_0^\infy dk k^2 j_\ell(kr) \Delta_\ell^T(k)$
+    # the radian_func does the f_ell^X(r) = (2/pi) int k^2 dk f(k) transfer^X_ell(k) j_ell(k r),
+    # where f(k) is an arbitrary function of wavenumber k.
+
     # A is slightly different due to the KSW code, see the notes in KSW's cosmo.py::add_prim_reduced_bispectrum
     A = (3 / 5) ** 2 * 2 * np.pi**2 * core.cosmo_params["As"]
-    delta_phi = (core.tr_k) ** ((core.cosmo_params["ns"] - 4))
+    delta_phi = (tr_k) ** ((core.cosmo_params["ns"] - 4))
 
-    f_k = np.full((len(core.tr_k), 2), 5 / 3, dtype=core.r_dtype)
-    # f_k[:, 0] *= 1             # f_k for alpha
+    f_k = np.full((len(tr_k), 2), 5 / 3, dtype=core.r_dtype)
+    # f_k[:, 0] *= 1            # f_k for alpha
     f_k[:, 1] *= A * delta_phi  # f_k for beta
 
-    rad = radial_func(f_k, core.tr_ell_k, core.tr_k, core.radii, core.tr_ells)
+    rad = radial_func(f_k, tr_ell_k, tr_k, core.radii, tr_ells)
 
     alpha_ell = rad[..., 0]
-    alpha_l = interpolator(alpha_ell, core.tr_ells)(ells)
+    alpha_l = interpolator(alpha_ell, tr_ells)(ells)
 
     beta_ell = rad[..., 1]
-    tr_c_ells = core.c_ells[core.tr_ells, : core.npol]
-    div = beta_ell / tr_c_ells[np.newaxis, :, :]
-    bl_div_cl = interpolator(div, core.tr_ells)(ells)
+    beta_l = interpolator(beta_ell, tr_ells)(ells)
+    bl_div_cl = beta_l / core.c_ells[ells, : core.npol]
 
     logger.info("Starting Alm_ng generation")
+
+    drs = np.diff(core.radii)
+    alm_ng = np.zeros_like(alms)
 
     # This uses joblib.parallel to generate the patches in parallel
     # by default (temp_folder=None) this will use a ram disk /dev/shm
@@ -111,23 +120,21 @@ def generate_alm_ng(core, alms):
     logger.debug(f"Using temp folder for Alm_ng generation: {temp_folder}")
 
     parallel = Parallel(n_jobs=-1, return_as="generator", temp_folder=temp_folder)
-    alm_ng = np.empty(core.alm_shape, dtype=core.c_dtype)
     for sim, pol in tqdm(core.sim_pol, total=core.sim_pol_len, desc="Alm_ng"):
         generator = parallel(
             delayed(integrand)(
                 alms[sim, pol],
-                bl_div_cl[ri, :, pol],
-                alpha_l[ri, :, pol],
-                core.radii[ri],
-                core.drs[ri],
+                bl_div_cl[r, :, pol],
+                alpha_l[r, :, pol],
                 core.nside,
                 core.lmax,
+                core.radii[r],
             )
-            for ri in range(len(core.drs))
+            for r in range(len(core.radii))
         )
 
-        # here we consume the generator and sum the results
-        alm_ng[sim, pol] = sum(generator)
+        alm_ng[sim, pol] += np.trapz(list(generator), core.radii, dx=drs, axis=0)
+
     return alm_ng
 
 
@@ -161,6 +168,7 @@ def main():
         [core.data.compute_alm_sim(core.lensing) for _ in range(core.nsims)],  # type: ignore
         dtype=core.c_dtype,
     )
+    logger.info("alm_l shape %s", alm_l.shape)
 
     # get the non-gaussian alms, this will take a long time
     alm_ng = generate_alm_ng(core, alm_l)
@@ -200,7 +208,7 @@ def main():
             alms[i, j],
             save_file=filebase,
             plot_camb=True,
-            c_ells=core.c_ells,
+            c_ells=core.c_ells[:, j],
             camb_noise=True,
             noise=core.noise_ell[j],
             beam_width=core.beam_width,

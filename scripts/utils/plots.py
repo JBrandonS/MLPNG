@@ -100,6 +100,7 @@ def plot_cl(
                 )
 
             beam = np.exp(-(ells * (ells + 1) * beam_width**2) / (16 * np.log(2)))
+            
             camb_cl_noise = camb_cl * beam**2 + noise[2:nell]
             plot_func(
                 ells,

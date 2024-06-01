@@ -23,10 +23,50 @@ logger = setup_logging(
 )
 
 
+def compute_iso_icov(core, N, b):
+    # Inverse covariance matrix diagonal in ell. Unlike "icov" this should be: 1 / (S_ell + (b^{-1} N b^{-1})_ell)
+    S_ell = core.cosmo._camb_data.get_cmb_power_spectra(
+        core.cosmo.camb_params,
+        core.lmax,
+        ["total"],
+        "muK",
+        True,
+    )["total"]
+    S_ell = np.transpose(S_ell, (1, 0))[: core.npol]
+    b_inv = 1 / b
+    return 1 / (S_ell + b_inv * N * b_inv)
+
+
+def run_ksw_step(core, theta_batch):
+    def step_loader(idx):
+        """
+        for stepping the KSW estimator, we just generate new unique sims
+        """
+        logger.debug("Sending alm step %s", idx)
+        return core.data.compute_alm_sim(core.lensing)
+
+    logger.info("Running KSW step")
+
+    # lets get our iso fisher so we can find the base line
+    icov_ell = compute_iso_icov(core, core.noise_ell[: core.npol], core.beam_ell)
+    fisher_iso = core.ksw.compute_fisher_isotropic(icov_ell)
+    # N_fact = core.cosmo.red_bispectra[0].nfact
+
+    core.ksw.step_batch(
+        step_loader, np.arange(100), comm=mpi_comm, theta_batch=theta_batch
+    )
+
+    # compute the new fisher and the distance
+    fisher = core.ksw.compute_fisher() / core.npol  # note bug fix here
+    distance = np.abs(fisher - fisher_iso)
+    logger.debug("Distance: %s", distance)
+
+
 def main():
     core = Core()
 
     # the KSW code requires the total_sims to be >= mpi_size
+    # best usage would have total_sims % mpi_size == 0, but not required
     assert (
         core.total_sims >= mpi_size
     ), "total_sims < mpi_size, lower ntasks or increase sims"
@@ -46,42 +86,34 @@ def main():
     mc_path = os.path.join(core.base_dir, "kswmc")
     os.makedirs(mc_path, exist_ok=True)
     mc_file = os.path.join(mc_path, f"{core.base_name}.hdf5")
-    
+
+    # remove the file to force its recreation
+    if core.force_ksw and use_mc_file and os.path.exists(mc_file):
+        logger.info("Removing existing KSW state")
+        os.remove(mc_file)
+
     if use_mc_file and os.path.exists(mc_file):
         logger.info("Loading KSW state from %s", mc_file)
         core.ksw.start_from_read_state(mc_file, mpi_comm)
     else:
-        logger.info("Running KSW step")
-
-        # we only need to step the MC about 100 time to get a good convergence
-        # there is an issue with the KSW code when the total number of steps < mpi_size
-        # so we just set it to mpi_size if mpi_size > 100
-        idxs = range(max(100, mpi_size))
-
-        def step_loader(idx):
-            """
-            for stepping the KSW estimator, we just generate new unique sims
-            """
-            logger.debug("Sending alm step %s", idx)
-            return core.data.compute_alm_sim(core.lensing)
-
-        # step the MC, actually does the work
-        core.ksw.step_batch(step_loader, idxs, comm=mpi_comm, theta_batch=theta_batch)
+        run_ksw_step(core, theta_batch)
 
         # save the mc state if we are using the mc file
         if use_mc_file and mpi_root:
             logger.info("Saving KSW state to %s", mc_file)
             core.ksw.write_state(mc_file, mpi_comm)
 
-    fisher = float(core.ksw.compute_fisher())
+    # NOTE: There seems to be an issue with the fisher computation with TE pols being a factor 2 higher than expected
+    # I do not know why but this seems to fix the issue
+    # TODO: This is a hack, we need to figure out why the TE pols are off by a factor of 2
+    fisher = float(core.ksw.compute_fisher()) / core.npol
     logger.info("Fisher: %s, standard deviation: %s", fisher, np.sqrt(1 / fisher))
 
     # note that these are not fully loaded into memory
     alms = alm_file["alm"]
     fnls = alm_file["fnl"]
 
-    # only do at most 1k estimates right now, just for time
-    num_est = min(1000, core.total_sims)
+    num_est = min(core.num_estimates, core.total_sims)
     idxs = np.arange(num_est)
     logger.info(
         "Computing %s estimates in %.2f batches",
@@ -115,7 +147,6 @@ def main():
         # save the data, this will append to the alm_file
         sdata = {}
         sdata["fisher"] = [fisher]
-        sdata["estimate_1k"] = True
         sdata["estimate"] = estimates
         sdata["error"] = (estimates - fnls) * np.sqrt(fisher)
         save_data(core.alm_file, sdata, mode="a")
@@ -123,10 +154,10 @@ def main():
         # make and save some plots
         plot_dir = os.path.join(core.plot_dir, "estimator")
         os.makedirs(plot_dir, exist_ok=True)
-        
+
         pred_file = os.path.join(plot_dir, f"{core.sjob}_{core.base_name}_preds.png")
         plot_predictions(fnls, estimates, fisher=fisher, save_file=pred_file)
-                
+
         hist_file = os.path.join(plot_dir, f"{core.sjob}_{core.base_name}_hist.png")
         plot_histogram(fnls, estimates, save_file=hist_file)
 

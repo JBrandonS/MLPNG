@@ -15,7 +15,7 @@
 SETTINGS=(
   "l256_n64"
   # "l500_n128"
-  "heidelberg"
+  # "heidelberg"
   # "planck"
   # "l2000_n2048"
 )
@@ -28,7 +28,7 @@ ARGS=(
   "--narray" "10" # change slurm args array to match this
   # "--base_name" "planck_fnl50"
   # "--fnl_range" "-50" "50"
-  "--force_generation"
+  # "--force_generation"
   "--polarizations" "TE"
 )
 

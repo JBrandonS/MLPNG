@@ -122,8 +122,7 @@ The data is stored in `hdf5` files as they allow reading and appending data with
 
 - The estimator script will add the following values to the alm file:
   - `fisher`:  the fisher value found by the estimator. `Shape: (nsims,)`
-  - `estimate`: the KSW estimates of the bispectrum. `Shape: (nsims,)` or `(1000,)` if `estimate_1k` is True
-  - `estimate_1k`: A flag to indicate that we only calculate the estimate for the first 1k values.
+  - `estimate`: the KSW estimates of the bispectrum. `Shape: (nsims,)` or `(num_estimates,)` if `num_estimates` setting is provided and smaller than `nsims`.
   - `error`: the percent diff errors of the estimates vs true fnls. `Shape: (nsims,)`
 
 ### Notes on files
@@ -159,6 +158,7 @@ Primary development by:
    Brandon Stevenson, Joe Ryan, Joel Meyers
 
 Additional thanks to:
+
 - Daan Meerburg
 - Jorik Melsen
 - Thomas Flöss

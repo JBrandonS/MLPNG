@@ -5,7 +5,7 @@
 #SBATCH --mem-per-cpu=10G
 #SBATCH --cpus-per-task=1
 #SBATCH --output=logs/estimator/%j.log
-#SBATCH --time=24:00:00
+#SBATCH --time=1-00:00:00
 
 # create the logging dir
 mkdir -p logs/estimator
