@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=jupyter
 #SBATCH --output=.vscj.out
-#SBATCH --partition=dev
+#SBATCH --partition=standard-s
 #SBATCH --ntasks=1
 #SBATCH --mem=256G
 #SBATCH --cpus-per-task=64
-#SBATCH --time=2:00:00
+#SBATCH --time=12:00:00
 
 
 module purge

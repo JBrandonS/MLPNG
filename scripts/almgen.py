@@ -9,6 +9,8 @@ from ksw.radial_functional import radial_func
 from scipy.interpolate import CubicSpline, interp1d
 from tqdm.auto import tqdm
 
+import camb
+
 from . import Core
 from .utils import remove_mono_dipole, save_data, setup_logging
 from .utils.plots import plot_cl_alm
@@ -35,11 +37,8 @@ def integrand(alm, bl_div_cl, alpha_l, nside, lmax, radii):
     """
 
     Balm = hp.almxfl(alm, bl_div_cl)
-    # logger.info("Balm shape %s", Balm.shape)
     B = hp.alm2map(Balm, nside=nside)
-    # logger.info("B shape %s", B.shape)
     inner = hp.map2alm(B**2, lmax=lmax, use_pixel_weights=True)
-    # logger.info("inner shape %s", inner.shape)
     return radii**2 * hp.almxfl(inner, alpha_l)
 
 
@@ -79,23 +78,21 @@ def generate_alm_ng(core, alms):
     tr_k = core.cosmo.transfer["k"]
     tr_ell_k = core.cosmo.transfer["tr_ell_k"]
 
-    # just trim the ells so we do not go beyond what ells we have for the transfer functions
     ells = core.ells[2:]
 
-    # logger.info("Using ells %s, %s", ells.shape, ells)
+    params = core.cosmo.camb_params
+    pk = params.primordial_power(tr_k, 0)
+    delta_phi = (2 * np.pi**2) / (tr_k**3) * pk
 
-    # the following few blocks of code calculate eq 14 and 15 from Smith and Zal.
+    # this will be the f(k) value to be placed in the radial function
+    # first will be for alpha_ell, second will be beta_ell
+    f_k = np.ones((len(tr_k), 2), dtype=core.r_dtype)
+    # $\alpha_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^2 \Delta_\ell^T(k) j_\ell(k r)$
+    f_k[:, 0] *= 5 / 3  # f_k for alpha
+    # $\beta_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^{-1} \Delta_\phi \Delta_\ell^T(k) j_\ell(k r)$
+    f_k[:, 1] *= (5 / 3) ** 2 * delta_phi  # f_k for beta
+
     # the radian_func does the f_ell^X(r) = (2/pi) int k^2 dk f(k) transfer^X_ell(k) j_ell(k r),
-    # where f(k) is an arbitrary function of wavenumber k.
-
-    # A is slightly different due to the KSW code, see the notes in KSW's cosmo.py::add_prim_reduced_bispectrum
-    A = (3 / 5) ** 2 * 2 * np.pi**2 * core.cosmo_params["As"]
-    delta_phi = (tr_k) ** ((core.cosmo_params["ns"] - 4))
-
-    f_k = np.full((len(tr_k), 2), 5 / 3, dtype=core.r_dtype)
-    # f_k[:, 0] *= 1            # f_k for alpha
-    f_k[:, 1] *= A * delta_phi  # f_k for beta
-
     rad = radial_func(f_k, tr_ell_k, tr_k, core.radii, tr_ells)
 
     alpha_ell = rad[..., 0]
@@ -107,19 +104,19 @@ def generate_alm_ng(core, alms):
 
     logger.info("Starting Alm_ng generation")
 
+    # get the delta_r for the integral
     drs = np.diff(core.radii)
-    alm_ng = np.zeros_like(alms)
 
     # This uses joblib.parallel to generate the patches in parallel
     # by default (temp_folder=None) this will use a ram disk /dev/shm
     # if the data files are larger than the available memory, it will error
     # so we give it a temp folder to use, which wont have that problem
-    # I also use return_as generator which allows us to consume the results as they are generated (in order),
-    # this helps prevent memory issues
     temp_folder = os.environ.get("SCRATCH", None)
     logger.debug(f"Using temp folder for Alm_ng generation: {temp_folder}")
 
+    # use return_as generator which allows us to consume the results as they are generated (in order)
     parallel = Parallel(n_jobs=-1, return_as="generator", temp_folder=temp_folder)
+    alm_ng = np.zeros_like(alms)
     for sim, pol in tqdm(core.sim_pol, total=core.sim_pol_len, desc="Alm_ng"):
         generator = parallel(
             delayed(integrand)(
@@ -133,8 +130,13 @@ def generate_alm_ng(core, alms):
             for r in range(len(core.radii))
         )
 
-        alm_ng[sim, pol] += np.trapz(list(generator), core.radii, dx=drs, axis=0)
+        # now doing 2 point center integration, consuming as we go
+        # left = next(generator)  # type: ignore
+        # for i, right in enumerate(generator):
+        #     alm_ng[sim, pol] += (left + right) * drs[i] / 2  # type: ignore
+        #     left = right
 
+        alm_ng[sim, pol] += np.trapz(list(generator), core.radii, dx=drs, axis=0)
     return alm_ng
 
 

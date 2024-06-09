@@ -217,7 +217,7 @@ class Core:
         self.nell = self.lmax + 1
         self.nelem = hp.Alm.getsize(self.lmax)
         self.ells = np.arange(self.nell)
-        
+
         self.alm_shape = (self.nsims, self.npol, self.nelem)
 
         # setup our precision types to be consistent
@@ -589,6 +589,7 @@ class Core:
                 continue
 
             if r == ranges[-1]:  # For the last range, use logspace
+                logger.info("setting up last range")
                 temp_radii = np.logspace(np.log10(start), np.log10(end), num=r[2])
             else:
                 temp_radii = np.linspace(start, end, num=r[2], endpoint=False)

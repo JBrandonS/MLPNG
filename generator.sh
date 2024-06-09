@@ -17,7 +17,7 @@ SETTINGS=(
   # "l500_n128"
   # "heidelberg"
   # "planck"
-  # "l2000_n2048"
+  "l2000_n2048"
 )
 
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
@@ -25,16 +25,16 @@ ARGS=(
   "--nsims" "100"
   # "--lensing"
   # "--noise" 
-  "--narray" "10" # change slurm args array to match this
+  "--narray" "100" # change slurm args array to match this
   # "--base_name" "planck_fnl50"
   # "--fnl_range" "-50" "50"
   # "--force_generation"
-  "--polarizations" "TE"
+  # "--polarizations" "TE"
 )
 
 # override some slurm settings, only used for narray
 SLURM_ARGS=(
-  "--array" "1-10"
+  "--array" "1-100"
 )
 
 # Just log the overrides to the console
@@ -53,11 +53,11 @@ for x in "${SETTINGS[@]}"; do
     SETTINGS_FILE="settings/$x.json"
 
     # generate the alms
-    # job_id=$(sbatch "${SLURM_ARGS[@]}" "sbatch/almgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+    job_id=$(sbatch "${SLURM_ARGS[@]}" "sbatch/almgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
 
     ### generates the patches
-    # job_id=$(sbatch --dependency=afterok:"$job_id" "${SLURM_ARGS[@]}" "sbatch/patchgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
-    job_id=$(sbatch "${SLURM_ARGS[@]}" "sbatch/patchgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+    job_id=$(sbatch --dependency=afterok:"$job_id" "${SLURM_ARGS[@]}" "sbatch/patchgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+    # job_id=$(sbatch "${SLURM_ARGS[@]}" "sbatch/patchgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
 
     # combines the data into a single file
     job_id=$(sbatch --dependency=afterok:"$job_id" "sbatch/combiner.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
