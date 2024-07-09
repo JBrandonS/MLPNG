@@ -105,7 +105,7 @@ python -m scripts.trainer --model isensee --lensing settings/planck.json
 The data is stored in `hdf5` files as they allow reading and appending data without needing to load the whole dataset into memory. You can think of these files as Python dicts. The data is stored in the following format:
 
 - `alm` : The $a_{\ell m}^{NG,loc}$ values. `Shape: (nsims, npol, nelem)`
-- `alm_lensed` : If lensing is enabled, The lensed $a_{\ell m}^{NG,loc}$ values. `Shape: (nsims, , npol, nelem)`
+- `alm_lensed` : If lensing is enabled, The lensed $a_{\ell m}^{NG,loc}$ values. `Shape: (nsims, npol, nelem)`
 - `fnl`: The $f_{nl}$ values to be used. `Shape (nsims, 1)`
 - `patch`: the patch that has been cut from the full sky maps given by the $a_{\ell m}^{NG,loc'}$ values at `alm[nsims, pol]`. `Shape: (nsims, len(polarizations), npatches, nside, nside)`
 
