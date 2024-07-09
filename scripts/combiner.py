@@ -94,7 +94,7 @@ def combine_data(directory, base_name, ext=".hdf5", remove_files=True, expected=
             "This is expected if some of the data has already been combined.",
             file_pattern,
         )
-        return  # We do not exit(1) here since we want to keep going with other jobs ie. patchgen
+        return  # We do not exit(1) here since we want to keep going with other jobs
 
     if len(files_to_combine) != expected:
         logger.error(

@@ -173,6 +173,19 @@ class Core:
         self.nelem = hp.Alm.getsize(self.lmax)
         self.ells = np.arange(self.nell)
         self.alm_shape = (self.nsims, self.npol, self.nelem)
+        
+        self.patch_side_deg = self._get("patch_side_deg", 10)
+        self.npatches = self._get("npatches", 2)
+        self.total_patches = self.npatches * self.total_sims
+        self.patch_shape = (
+            self.nsims,
+            self.npol,
+            self.npatches,
+            self.nside,
+            self.nside,
+        )
+        
+        assert self.npatches % 2 == 0, "Number of patches must be even"
 
         # split the rest of this function into a few smaller functions for readability
         # each of these modifies attributes of the object
@@ -181,7 +194,6 @@ class Core:
 
         self._init_slurm()
         self._init_cosmo()
-        self._init_patchgen()
         self._init_paths()
 
         # save a copy of the settings file iff --save_settings is set
@@ -442,14 +454,6 @@ class Core:
         self.file_partial = os.path.join(self.data_dir, f"{self.base_name}{j}.hdf5")
         self.file_complete = os.path.join(self.data_dir, f"{self.base_name}.hdf5")
 
-        # self.alm_dir = join_paths(self._get("alm_dir", "alms"))
-        # self.alm_file_partial = os.path.join(self.alm_dir, f"{self.base_name}{j}.hdf5")
-        # self.alm_file = os.path.join(self.alm_dir, f"{self.base_name}.hdf5")
-
-        # self.patch_dir = join_paths(self._get("patch_dir", "patches"))
-        # self.patch_str = f"{self.base_name}x{self.npatches}"
-        # self.patch_file = os.path.join(self.patch_dir, f"{self.patch_str}{j}.hdf5")
-
     def _init_cosmo(self):
         """
         Initializes the cosmology parameters and sets up the necessary objects for computation.
@@ -473,34 +477,3 @@ class Core:
 
         # CAMB Cls are (nell, 4), convert to (4, nell).
         self.c_ells = self.c_ells.transpose()
-
-    def _init_patchgen(self):
-        """
-        Initialize the patch generator attributes.
-
-        This method initializes the patch generator by setting up the patch side in degrees,
-        the number of patches, the total number of patches, and the patch shape.
-
-        Attributes:
-            patch_side_deg (int): The side of the patch in degrees. Default is 10.
-            npatches (int): The number of patches. Default is 2. Must be even.
-            total_patches (int): The total number of patches, given by npatches * total_sims.
-            patch_shape (tuple): The shape of the patch array, given by (nsims, npol, npatches, nside, nside).
-
-        Side Effects:
-            Modifies the patch_side_deg, npatches, total_patches, and patch_shape attributes.
-
-        Raises:
-            AssertionError: If the number of patches is not even.
-        """
-        self.patch_side_deg = self._get("patch_side_deg", 10)
-        self.npatches = self._get("npatches", 2)
-        assert self.npatches % 2 == 0, "Number of patches must be even"
-        self.total_patches = self.npatches * self.total_sims
-        self.patch_shape = (
-            self.nsims,
-            self.npol,
-            self.npatches,
-            self.nside,
-            self.nside,
-        )

@@ -9,7 +9,7 @@ import numpy as np
 from mpi4py import MPI
 
 from . import Core
-from .almgen import generate_alm
+from .generator import generate_alm
 from .utils import save_data, setup_logging
 from .utils.plots import plot_histogram, plot_predictions
 

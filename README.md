@@ -10,11 +10,9 @@ The code has been broken into 2 different parts, this is due to SMU policies not
 
 > See `notebooks/` for some example jupyter notebooks that are representative of the code.
 
-The data generation is controlled by settings files, which are used to specify the parameters of the data to be generated. The data is then generated in two steps, first the $A_{lm}\text{s}$ are created in batches according to the settings file. Secondly, if enabled in the `generator.sh` script, cut sky patches will be generated from the $A_{lm}\text{s}$. Finally, the code will run the `combiner.py` script to combine the large number of data files into 2, one for the alms and one for the patches. Data will be saved to the `data_dir` with the alm's being placed in `data_dir/alm_dir`, which by default will be `data/alms`. Similar settings can be used to change where the patches, plots, and other large files will be saved.
+The data generation is controlled by settings files, which are used to specify the parameters of the data to be generated. The data is then generated in two steps, first the $A_{lm}\text{s}$ are created, then if lensing has been enabled the $A_{lm}\text{s}$ will lensed before cut sky patches are generated. Secondly, the code will run the `combiner.py` script to combine the large number of data files into 2, one for the alms and one for the patches. Data will be saved to the `data_dir`, which by default will be `data/data`. Similar settings can be used to change where the plots, and other large files will be saved.
 
 The training is controlled by the `scripts/models/` files, which specify the architecture of the model to be trained. The `trainer.sh` script will run the `scripts/trainer.py` script with the specified model and settings file. The model will be trained on the data matching the setting file used.
-
-> The setting matching may not be perfect, and some collisions can occur. If in doubt generate with a unique `base_name` in the settings file.
 
 ## Installing
 
@@ -28,7 +26,7 @@ The training is controlled by the `scripts/models/` files, which specify the arc
    - `optweight` should be installed first, you will just need to run `pip install -e .` in the root directory.
    - For `ksw` run `make && pip install -e . && make check` in the root.
       - You will probably see an error on the make check, this seems to be an issue with the ksw test code and does not affect anything.
-4. You can now run the code, using the pipeline with `generator.sh` or manually with `scripts/almgen.py`, `scripts/patchgen.py`, `scripts/combiner.py`, and `scripts/estimator.py`. See [Running](#running) for more information.
+4. You can now run the code, using the pipeline with `generator.sh` or manually with `scripts/generator.py`, `scripts/combiner.py`, and `scripts/estimator.py`. See [Running](#running) for more information.
 
 ### Trainer
 
@@ -60,16 +58,10 @@ This script will use SLURMs run chaining to queue up runs but only start them on
 
 The data generator is controlled by settings files located in the `settings/` directory. You can specify a different settings file as an argument when running the Python scripts. For some arguments, a command line option is available which will take priority. All options have defaults. See `scripts/core.py` for how everything is implemented.
 
-To manually generate the $A_{lm}$ values you will need to run the almgen python module, providing at least a settings file with optional CLI overrides, from the root folder:
+To manually generate the data you will need to run the generator python module, providing at least a settings file with optional CLI overrides, from the root folder:
 
 ```sh
-python -m scripts.almgen --lensing settings/planck.json
-```
-
-You can then generate the patch data by running the patchgen module with the same settings:
-
-```sh
-python -m scripts.patchgen --lensing settings/planck.json
+python -m scripts.generator --lensing settings/planck.json
 ```
 
 After data generation, the data will be in separate files based on the array size you have used. You can use the `combiner.py` module to combine the data into a single file. Simply give it the correct settings.
@@ -112,15 +104,12 @@ python -m scripts.trainer --model isensee --lensing settings/planck.json
 
 The data is stored in `hdf5` files as they allow reading and appending data without needing to load the whole dataset into memory. You can think of these files as Python dicts. The data is stored in the following format:
 
-- For alms in `data/alms` the following key and values are stored:
-  - `alm` : The $a_{\ell m}^{NG,loc}$ values. `Shape: (nsims, data)`
-  - `fnl`: The $f_{nl}$ values to be used. `Shape (nsims, 1)`
+- `alm` : The $a_{\ell m}^{NG,loc}$ values. `Shape: (nsims, npol, nelem)`
+- `alm_lensed` : If lensing is enabled, The lensed $a_{\ell m}^{NG,loc}$ values. `Shape: (nsims, , npol, nelem)`
+- `fnl`: The $f_{nl}$ values to be used. `Shape (nsims, 1)`
+- `patch`: the patch that has been cut from the full sky maps given by the $a_{\ell m}^{NG,loc'}$ values at `alm[nsims, pol]`. `Shape: (nsims, len(polarizations), npatches, nside, nside)`
 
-- For the patch data files in `data/patches/`:
-  - `fnl`: the $f_{nl}$ values used to generate the data, a copy from the alm file. `Shape: (nsims, 1)`
-  - `patch`: the patch that has been cut from the full sky maps given by the $a_{\ell m}^{NG,loc'}$ values at `alm[nsims, pol]`. `Shape: (nsims, len(polarizations), npatches, nside, nside)`
-
-- The estimator script will add the following values to the alm file:
+- The estimator script will add the following values to the data file:
   - `fisher`:  the fisher value found by the estimator. `Shape: (nsims,)`
   - `estimate`: the KSW estimates of the bispectrum. `Shape: (nsims,)` or `(num_estimates,)` if `num_estimates` setting is provided and smaller than `nsims`.
   - `error`: the percent diff errors of the estimates vs true fnls. `Shape: (nsims,)`

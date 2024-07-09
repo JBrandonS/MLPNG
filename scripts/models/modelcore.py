@@ -142,13 +142,6 @@ class ModelCore(Core):
             "_model not implemented. Please subclass ModelCore and implement _model."
         )
 
-    ## override some functions from Core that need KSW which does not work with the models (TF)
-    def _init_cosmo(self):
-        pass
-
-    def _init_almgen(self):
-        pass
-
     #
     # I wanted a cleaner drop in for the keras.Model class, subclassing was bad
     # So we just pass through the calls to the keras.Model class

@@ -53,11 +53,6 @@ fi
 for x in "${SETTINGS[@]}"; do
     SETTINGS_FILE="settings/$x.json"
 
-    # generate the alms
-    # job_id=$(sbatch "${SLURM_ARGS[@]}" "sbatch/almgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
-    # job_id=$(sbatch --dependency=afterok:"$job_id" "${SLURM_ARGS[@]}" "sbatch/patchgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
-    # job_id=$(sbatch "${SLURM_ARGS[@]}" "sbatch/patchgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
-
     job_id=$(sbatch "${SLURM_ARGS[@]}" "sbatch/generator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
 
     # combines the data into a single file

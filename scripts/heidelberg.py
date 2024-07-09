@@ -9,7 +9,7 @@ import camb
 from ksw import KSW, Cosmology, Shape
 
 from . import Core
-from .almgen import generate_alm
+from .generator import generate_alm
 from .estimator import icov_func, conv_beam_func
 from .utils import remove_mono_dipole, setup_logging
 from .utils.plots import plot_cl_alm, plot_predictions
