@@ -1,3 +1,4 @@
+import os
 import logging
 import sys
 import h5py
@@ -49,9 +50,7 @@ def setup_logging(
     return logger
 
 
-# TODO: get the size of the dataset at once and make it instead of resize
-# should greatly improve performance since right now the resize can take 50s per entry for large (lmax 2000, nside 2048) data
-def save_data(file_path, data_dict, mode="x"):
+def save_data(file_path, data_dict, mode="x", remove_if_exists=False):
     """
     Save data to an HDF5 file.
 
@@ -59,6 +58,7 @@ def save_data(file_path, data_dict, mode="x"):
         file_path (str): The path to the HDF5 file.
         data_dict (dict): A dictionary containing the data to be saved.
         mode (str, optional): The file mode to use when opening the HDF5 file. Defaults to "x".
+        remove_if_exists (bool, optional): If True, the file will be removed if it already exists. Defaults to False.
 
     Raises:
         None
@@ -67,6 +67,10 @@ def save_data(file_path, data_dict, mode="x"):
         None
     """
     logger.info("Saving data to %s", file_path)
+    if remove_if_exists and os.path.isfile(file_path):
+        logger.info("Removing existing file %s prior to saving", file_path)
+        os.remove(file_path)
+
     with h5py.File(file_path, mode) as hf:
         for key, value in data_dict.items():
             logger.debug("%s: Processing key", key)
@@ -149,7 +153,7 @@ def get_fisher(file):
     try:
         with h5py.File(file, "r", swmr=True, locking=False) as hdf:
             fisher = hdf.get("fisher", [None])[0]
-            logger.info(f"Loaded fisher matrix: {fisher}")
+            logger.info("Loaded fisher matrix: %s", fisher)
     except Exception as e:
         logger.error(f"Could not load fisher matrix: {e}")
         fisher = None

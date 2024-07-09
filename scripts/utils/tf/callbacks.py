@@ -56,7 +56,7 @@ class WarmupLearningRate(LearningRateSchedule):
         max_warmup = warmup_learning_rate * (
             1 + warmup_scale * (warmup_steps / warmup_scale_steps)
         )
-        logger.info(f"Warmup Range: {warmup_learning_rate} -> {max_warmup}")
+        logger.info("Warmup Range: %s -> %s", warmup_learning_rate, max_warmup)
 
         # these should follow the ExponentialDecay function
         if warmed_learning_rate == "auto":

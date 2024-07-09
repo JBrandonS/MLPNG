@@ -93,7 +93,7 @@ def main():
 
         fnl = fnls[int(idx)]
         t_scale = 2.7255 * 10 ** (6)
-        logger.debug("sending fnl: %s", fnl)
+        logger.debug("Sending fnl: %s", fnl)
 
         alms = (alm_heidelberg_l + fnl * alm_heidelberg_nl) * t_scale
         alms = remove_mono_dipole(alms)

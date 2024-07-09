@@ -99,13 +99,6 @@ def plot_cl(
                     "Need to provide noise and beam_width if plotting camb with noise."
                 )
 
-            # plot_func(
-            #     ells,
-            #     scale * noise[2:nell],
-            #     label=r"noise",
-            #     linestyle="--",
-            # )
-
             beam = np.exp(-(ells * (ells + 1) * beam_width**2) / (16 * np.log(2)))
 
             camb_cl_noise = camb_cl * beam**2 + noise[2:nell]
@@ -193,8 +186,6 @@ def plot_predictions(
             "Predicted Fnl": np.array(preds).flatten(),
         }
     )
-
-    logger.debug("%s %s %s", df.shape, truth.shape, preds.shape)
 
     # Create a scatter plot with seaborn
     plt.figure(figsize=(12, 6))

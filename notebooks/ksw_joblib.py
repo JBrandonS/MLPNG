@@ -127,7 +127,7 @@ class KSW_joblib(OriginalKSW):
         return grad_t
 
     def _process_file_step(self, alm_loader, alm_file, **kwargs):
-        logger.info(f"processing {alm_file}")
+        logger.info("Processing %s", alm_file)
         alm = alm_loader(alm_file)
         grad_t = self._step(alm, **kwargs)
         mc_gt_sq = utils.contract_almxblm(grad_t, self.icov(self.beam(np.conj(grad_t))))
@@ -160,7 +160,7 @@ class KSW_joblib(OriginalKSW):
             alm = alm_loader(alm_file)
 
             estimate = self.compute_estimate(alm, fisher=fisher, **kwargs)
-            logger.info("estimate: {}".format(estimate))
+            logger.info("Estimate: {}".format(estimate))
 
             estimates[aidx] = estimate
 

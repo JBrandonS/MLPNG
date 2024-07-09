@@ -89,7 +89,7 @@ class DataLoaderBase(Sequence):
         else:
             # make sure num_replicas is >= 1
             self.num_replicas = int(num_replicas) if int(num_replicas) > 0 else 1
-        logger.debug(f"num_replicas: {self.num_replicas}")
+        logger.debug("num_replicas: %s", self.num_replicas)
 
         # need to set these in subclass, after __init__ is called
         self._ds = None
@@ -221,7 +221,7 @@ class DataLoaderBase(Sequence):
         if os.path.exists(tfds_file):
             if exists_ok:
                 if not force:
-                    logger.info(f"File {tfds_file} already exists, skipping save")
+                    logger.info("File %s already exists, skipping save", tfds_file)
                     return
                 else:
                     logger.info("Overwriting existing tfds file")
@@ -229,7 +229,7 @@ class DataLoaderBase(Sequence):
             else:
                 raise ValueError(f"File {self.file_path} already exists")
 
-        logger.info(f"Saving {self.file_path} as {tfds_file}")
+        logger.info("Saving %s as %s", self.file_path, tfds_file)
         if self.normalize:
             self.normalize = False
             logger.debug("Disabling normalization for saving")
@@ -246,7 +246,7 @@ class DataLoaderBase(Sequence):
         tfds_file = self._get_tfds_filename()
         if not os.path.exists(tfds_file):
             if auto_convert:
-                logger.info(f"Converting {self.file_path} to tfds")
+                logger.info("Converting %s to tfds", self.file_path)
                 self.save_as_tfds()
             else:
                 raise FileNotFoundError(f"File {tfds_file} does not exist")
@@ -274,7 +274,7 @@ class TFDSLoader(DataLoaderBase):
         super().__init__(file_path, **kwargs)
 
         if self.file_path.endswith(".hdf5"):
-            logger.debug(f"Converting file extension for {self.file_path} to tfds")
+            logger.debug("Converting file extension for %s to tfds", self.file_path)
             self.file_path = self._get_tfds_filename()
 
         self._ds = Dataset.load(self.file_path)

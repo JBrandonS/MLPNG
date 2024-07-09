@@ -10,7 +10,7 @@ from tqdm.auto import tqdm
 from . import Core
 from .utils import setup_logging
 
-logger = setup_logging(__name__)  # , level=logging.DEBUG)
+logger = setup_logging(__name__, level=logging.DEBUG)
 
 
 def extract_number(filename):
@@ -51,7 +51,7 @@ def recursive_copy(hf_source, hf_dest, num_files, index):
             ds_shape = (num_files * num_elem,) + data_shape
             dtype = hf_source[key].dtype
 
-            logger.info(
+            logger.debug(
                 "%s: Creating dataset with shape %s, and dtype %s", key, ds_shape, dtype
             )
             hf_dest.create_dataset(key, shape=ds_shape, dtype=dtype)
@@ -61,8 +61,8 @@ def recursive_copy(hf_source, hf_dest, num_files, index):
             key,
             (index * num_elem, (index + 1) * num_elem),
         )
-        logger.debug(f"Data type of hf_source[{key}]: {hf_source[key].dtype}")
-        logger.debug(f"Data type of hf_dest[{key}]: {hf_dest[key].dtype}")
+        logger.debug("%s: Data type of hf_source: %s", key, hf_source[key].dtype)
+        logger.debug("%s: Data type of hf_dest: %s", key, hf_dest[key].dtype)
         hf_dest[key][index * num_elem : (index + 1) * num_elem] = hf_source[key]
         logger.debug("%s: Done", key)
 
@@ -137,9 +137,7 @@ def combine_data(directory, base_name, ext=".hdf5", remove_files=True, expected=
 
 def main():
     core = Core()
-
     combine_data(core.data_dir, core.base_name, ".hdf5", expected=core.narray)
-    # combine_data(core.patch_dir, core.patch_str, ".hdf5", expected=core.narray)
 
 
 if __name__ == "__main__":
