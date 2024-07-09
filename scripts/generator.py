@@ -288,7 +288,7 @@ def main():
     sdata = {}
     sdata["alm"] = alms
     sdata["fnl"] = fnls
-    sdata["patches"] = patches
+    sdata["patch"] = patches
     if core.lensing:
         sdata["alm_lensed"] = alm_lensed
     save_data(core.file_partial, sdata)
