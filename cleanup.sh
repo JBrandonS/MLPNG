@@ -7,6 +7,7 @@ if [[ ! $(squeue --me -h -n jupyter) && -f .vscj.out ]]; then
     rm .vscj.out
 fi
 
+# logs
 rm -rvf logs/almgen/*/*.log
 rmdir logs/almgen/*/
 rm -rvf logs/patchgen/*/*.log
@@ -16,9 +17,20 @@ rm -rvf logs/estimator/*.log
 rm -rvf logs/heidelberg/*.log
 rm -rvf logs/training/*.log
 rm -rvf logs/tuning/*.log
+rm -rvf logs/generator/*.log
+rm -rvf logs/generator/*/
 
-# rm -rvf data/plots
+# some data
 rm -rvf data/models
 rm -rvf data/tensorboard
 rm -rvf data/wandb
 rm -rvf data/tuning
+
+# jupyter logs
+rm -rvf .jupyter*.out
+
+# important data
+rm -rvf data/alms
+rm -rvf data/patches
+rm -rvf data/kswmc
+rm -rvf data/plots

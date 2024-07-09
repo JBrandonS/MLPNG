@@ -6,6 +6,7 @@
 #
 
 #### Uncomment to run the heidelberg estimator test
+# see the heidelberg.txt file for information and code to get the files
 # JOBH_ID=$(sbatch "sbatch/heidelberg.sbatch" | awk '{print $4}')
 # echo "Submitted Heidelberg Estimator with ID $JOBH_ID"
 
@@ -14,9 +15,9 @@
 # these must be in settings/ and have the .json extension
 SETTINGS=(
   "l256_n64"
-  # "l500_n128"
-  # "heidelberg"
-  # "planck"
+  "l500_n128"
+  "heidelberg"
+  "planck"
   "l2000_n2048"
 )
 
@@ -25,16 +26,16 @@ ARGS=(
   "--nsims" "100"
   # "--lensing"
   # "--noise" 
-  "--narray" "100" # change slurm args array to match this
   # "--base_name" "planck_fnl50"
   # "--fnl_range" "-50" "50"
   # "--force_generation"
-  # "--polarizations" "TE"
+  # "--pols"
+  "--narray" "1"
 )
 
 # override some slurm settings, only used for narray
 SLURM_ARGS=(
-  "--array" "1-100"
+  "--array" "1-${ARGS[@]: -1}"
 )
 
 # Just log the overrides to the console
@@ -53,11 +54,11 @@ for x in "${SETTINGS[@]}"; do
     SETTINGS_FILE="settings/$x.json"
 
     # generate the alms
-    job_id=$(sbatch "${SLURM_ARGS[@]}" "sbatch/almgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
-
-    ### generates the patches
-    job_id=$(sbatch --dependency=afterok:"$job_id" "${SLURM_ARGS[@]}" "sbatch/patchgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+    # job_id=$(sbatch "${SLURM_ARGS[@]}" "sbatch/almgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+    # job_id=$(sbatch --dependency=afterok:"$job_id" "${SLURM_ARGS[@]}" "sbatch/patchgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
     # job_id=$(sbatch "${SLURM_ARGS[@]}" "sbatch/patchgen.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+
+    job_id=$(sbatch "${SLURM_ARGS[@]}" "sbatch/generator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
 
     # combines the data into a single file
     job_id=$(sbatch --dependency=afterok:"$job_id" "sbatch/combiner.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')

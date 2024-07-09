@@ -24,6 +24,7 @@ def cutSqPatches_lenspyx(
     base_name,
     npatches,
     c_ells,
+    npol,
     fs_shape,
     fs_wcs,
     fs_map,
@@ -40,24 +41,31 @@ def cutSqPatches_lenspyx(
     """Uses lenspyx to generate and cut the lensed flat maps"""
     geom_info = ("healpix", {"nside": nside})
 
-    # get the synalm from the lensing potential cl's
-    plm = lenspyx.utils_hp.synalm(cl_phi, lmax=max_l, mmax=None)
+    patches = np.empty((npatches, npol, nside, nside), dtype=r_dtype)
+    plm = []
+    for pol in range(npol):
+        # get the synalm from the lensing potential cl's
+        plm.append(lenspyx.utils_hp.synalm(cl_phi[:, pol], lmax=max_l, mmax=None))
+    plm = np.array(plm)
+    # logger.info("plm shape: %s", plm.shape)
 
     # transform the lensing potential into spin-1 deflection field
     fl = np.sqrt(np.arange(max_l + 1) * np.arange(1, max_l + 2))
     dlm = lenspyx.utils_hp.almxfl(plm, fl, mmax=None, inplace=False)
+    # logger.info("dlm shape: %s", dlm.shape)
 
     # get the lensed map
-    lens_map = lenspyx.alm2lenmap(alm, dlm, geometry=geom_info)
+    # logger.info("alm shape: %s", alm.shape)
+    lens_map = lenspyx.alm2lenmap(alm, dlm[:2], geometry=geom_info)
+    # logger.info("lens_map shape: %s", len(lens_map))
 
     # convert the map into a pixell map to allow for projection
     pixell_map = reproject.healpix2map(lens_map, fs_shape, fs_wcs, lmax)
+    # logger.info("pixell_map shape: %s", pixell_map.shape)
 
     # cut the patches
-    patches = []
     for i in range(npatches):
-        patch = pixell_map.project(pshapes[i], pwcs[i])
-        patches.append(patch)
+        patches[i] = pixell_map.project(pshapes[i], pwcs[i])
 
     if plot:
         plot_dir = os.path.join(plot_dir, "patchgen")
@@ -65,10 +73,7 @@ def cutSqPatches_lenspyx(
 
         map2hp = reproject.map2healpix(pixell_map, lmax)
         cls = hp.anafast(map2hp, lmax=lmax, use_pixel_weights=True)
-
-        # reshape for when we are only doing a single pol
-        if len(np.shape(cls)) == 1:
-            cls = [cls]
+        cls = np.atleast_1d(cls)
 
         for pol in range(np.shape(alm)[0]):
             base = os.path.join(plot_dir, f"{base_name}_{pol}_{fnl[0]:.2f}")
@@ -82,7 +87,7 @@ def cutSqPatches_lenspyx(
                 cls[pol],
                 lmax,
                 plot_camb=True,
-                c_ells=c_ells[:, pol],
+                c_ells=c_ells[pol],
                 save_file=map_path,
             )
 
@@ -99,10 +104,7 @@ def cutSqPatches_lenspyx(
             plt.close()
 
     # we want the shape to be (pol, patchs, nside, nside)
-    result = np.transpose(patches, (1, 0, 2, 3))
-
-    # need to get rid of the last pol, which is not used
-    return result[:2]
+    return np.transpose(patches, (1, 0, 2, 3))
 
 
 def cutSqPatches_pixell(
@@ -111,6 +113,7 @@ def cutSqPatches_pixell(
     base_name,
     npatches,
     c_ells,
+    npol,
     fs_shape,
     fs_wcs,
     fs_map,
@@ -122,6 +125,8 @@ def cutSqPatches_pixell(
 ):
     """Uses pixell to generate and cut the flat sky patches, unlensed"""
     fs_map = enmap.empty(fs_shape, fs_wcs)
+    # logger.info("alms shape: %s", alms.shape)
+    # logger.info("fs_map shape: %s", fs_map.shape)
     car_map = curvedsky.alm2map(alms, fs_map, spin=[0, 0])
 
     patches = []
@@ -149,13 +154,12 @@ def cutSqPatches_pixell(
                 fs_wcs,
                 lmax,
                 plot_camb=True,
-                c_ells=c_ells[:, pol],
+                c_ells=c_ells[pol],
                 save_file=map_path,
             )
 
     # we want the shape to be (pol, patchs, nside, nside)
-    result = np.transpose(patches, (1, 0, 2, 3))
-    return result
+    return np.transpose(patches, (1, 0, 2, 3))
 
 
 def get_fs_patch_geo(core):
@@ -201,7 +205,7 @@ def main():
         # for partial files, we can just start at 0
         start_idx = 0
     elif os.path.isfile(core.alm_file):
-        logger.info(f"loading alms from completed file {core.alm_file}")
+        logger.info(f"Loading alms from completed file {core.alm_file}")
         ldata = load_data(core.alm_file, ["alm", "fnl"])
 
         # if using a completed file, we need to adjust the start index for generation
@@ -224,9 +228,6 @@ def main():
     fnls = ldata["fnl"]
 
     ## Start the patch generation
-
-    # create the array to store the patches
-    patches = np.empty(core.patch_shape, dtype=core.r_dtype)
 
     # We setup an array with all our possible arguments to pass to the function
     # if we are using a completed alm file, we offset our sim index by the start index
@@ -252,8 +253,10 @@ def main():
         core.base_name,
         core.npatches,
         core.c_ells,
+        core.npol,
         *get_fs_patch_geo(core),
     ]
+
     if core.lensing:
         max_l = core.cosmo_params["max_l"]
         cl_phi = core.cosmo._camb_data.get_lens_potential_cls(  # type: ignore
@@ -284,6 +287,8 @@ def main():
             for sim in sim_arr
         )
 
+    # create the array to store the patches
+    patches = np.empty(core.patch_shape, dtype=core.r_dtype)
     # Get our data from the generator, takes a long time
     for idx, result in enumerate(
         tqdm(patch_generator, desc="patch progress", total=len(sim_arr))

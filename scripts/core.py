@@ -2,7 +2,6 @@ import argparse
 import json
 import logging
 import os
-from itertools import product
 from typing import Any
 
 import camb
@@ -10,14 +9,9 @@ import healpy as hp
 import numpy as np
 from astropy import units as u
 
-logger = logging.getLogger(__name__)
+from .cosmo import Cosmology
 
-# try to import ksw, we want this in the main body so we can monkey patch in notebooks
-# but, we wont have ksw on the trainer due to OMPI install issues on superpod, so catch that
-try:
-    from ksw import KSW, Cosmology, Data, Shape
-except ImportError:
-    logger.info("Could not import ksw, this is expected only if training")
+logger = logging.getLogger(__name__)
 
 
 def cosmo_defaults():
@@ -26,7 +20,6 @@ def cosmo_defaults():
         "As": 2.13e-09,
         "ns": 0.9624,
         "pivot_scalar": 0.05,
-        "max_l": 1000,
         "lmax": 500,
     }
 
@@ -49,8 +42,6 @@ class Core:
         nsims (int): The number of simulations to run. Default: 100
         narray (int): The number of arrays to process. Default: 1
         total_sims (int): The total number of simulations to process.
-        sim_pol (list): A list of tuples representing the simulation and polarization indices.
-        sim_pol_len (int): The number of simulations and polarizations to process.
         fnl_min (float): The minimum value of the local non-Gaussianity parameter (fnl). Default: -1
         fnl_max (float): The maximum value of the local non-Gaussianity parameter (fnl). Default: 1
         fnl_shape (tuple): The shape of the fnl array.
@@ -79,61 +70,6 @@ class Core:
         force_ksw (bool): Whether to force the KSW estimator to run otherwise can use save states.
         num_estimates (int): The number of estimates to compute. Default: The total number of simulations.
     """
-
-    def parse_args(self, args=None):
-        """
-        Parse command line arguments.
-
-        Args:
-            args (list): List of command line arguments. If None, sys.argv will be used.
-
-        Returns:
-            argparse.Namespace: Parsed command line arguments.
-        """
-        parser = argparse.ArgumentParser()
-
-        parser.add_argument("settings_file")
-
-        # some standard arguments heres, we can add more as needed
-        parser.add_argument("--nsims", type=int)
-        parser.add_argument("--narray", type=int)
-        parser.add_argument("--npatches", type=int)
-        parser.add_argument("--base_dir", type=str)
-        parser.add_argument("--seed", type=int)
-        parser.add_argument("--base_name", type=str)
-        parser.add_argument("--noise_scale_tt", type=float)
-        parser.add_argument("--beam_width", type=float)
-
-        parser.add_argument("--fnl_range", type=float, nargs=2)
-        parser.add_argument("--polarizations", type=str)
-
-        parser.add_argument("--num_estimates", type=int)
-
-        # for BooleanOptionalAction: --flag will set the value `flag` to True, --no-flag will set `flag` to False
-        # otherwise it will be none
-        parser.add_argument("--lensing", action=argparse.BooleanOptionalAction)
-        parser.add_argument("--noise", action=argparse.BooleanOptionalAction)
-        parser.add_argument("--force_generation", action=argparse.BooleanOptionalAction)
-        parser.add_argument("--force_ksw", action=argparse.BooleanOptionalAction)
-
-        # this allows us to save a copy of the final settings used for the run
-        # only really useful for debugging, must be provided by the CLI and not in the settings file
-        parser.add_argument("--save_settings", action="store_true")
-
-        # sets the model name to be used by the trainer
-        parser.add_argument("--model", type=str)
-
-        logger.debug(f"Parsing CLI args: {args}")
-        parsed_args = parser.parse_args(args)
-
-        if parsed_args.polarizations is not None:
-            for pol in parsed_args.polarizations:
-                if pol not in ["T", "E"]:
-                    raise ValueError(
-                        f"Invalid polarization: {pol}. Polarizations must be one of 'T', 'E', or 'TE'."
-                    )
-
-        return parsed_args
 
     def __init__(self, argv=None):
         """
@@ -169,6 +105,7 @@ class Core:
             **cosmo_defaults(),
             **cosmo_params,
         }
+
         if logger.getEffectiveLevel() <= logging.DEBUG:
             # This just logs any changes to the defaults, but only if in debug mode
             # Not really needed, but good logs can be helpful
@@ -178,6 +115,7 @@ class Core:
                     logger.debug(
                         f"Overriding cosmo param {key} from {defaults[key]} to {cosmo_params[key]}"
                     )
+
         logger.info(f"Running with settings: \n{json.dumps(settings, indent=2)}")
 
         ##
@@ -194,31 +132,25 @@ class Core:
         # main parameters
         self.lmax = self.cosmo_params["lmax"]
         self.nside = self._get("nside", 1024)
-        self.pols = list(self._get("polarizations", "T"))
         self.lensing = self._get("lensing", False)
-        self.npol = len(self.pols)
+        self.use_pols = self._get("pols", False)
         self.nsims = self._get("nsims", 100)
         self.narray = self._get("narray", 1)
-        self.total_sims = self.nsims * self.npol * self.narray
-        self.force_gen = self._get("force_generation", False)
+        self.force_gen = self._get("force-generation", False)
+        self.force_ksw = self._get("force-ksw", False)
 
-        self.force_ksw = self._get("force_ksw", False)
-        self.num_estimates = self._get("num_estimates", self.total_sims)
+        self.max_l = self.lmax + self._get("l_buffer", 512)
 
-        # setup the fnl and shape
         self.fnl_min, self.fnl_max = self._get("fnl_range", (-1000, 1000))
         self.fnl_shape = (self.nsims, 1)
 
-        # get a tuple of the sim and pol, used a few times in the code
-        self.sim_pol = list(product(range(self.nsims), range(self.npol)))
-        self.sim_pol_len = self.nsims * self.npol
-
-        # setup the ell values, just to have them for later
-        self.nell = self.lmax + 1
-        self.nelem = hp.Alm.getsize(self.lmax)
-        self.ells = np.arange(self.nell)
-
-        self.alm_shape = (self.nsims, self.npol, self.nelem)
+        if self.use_pols:
+            self.pols = ("T", "E")
+            self.npol = 2
+        else:
+            self.pols = "T"
+            self.npol = 1
+        logger.debug(f"Using polarizations: {self.pols}")
 
         # setup our precision types to be consistent
         # also, tensorflow seems to mostly use float32, and is actually moving to half-bit registers
@@ -233,6 +165,14 @@ class Core:
             self.c_dtype = np.complex64
             self.precision = "single"
         logger.debug(f"Using {self.precision} precision, where possible")
+
+        self.total_sims = self.nsims * self.npol * self.narray
+        self.num_estimates = self._get("num-estimates", self.nsims)
+
+        self.nell = self.lmax + 1
+        self.nelem = hp.Alm.getsize(self.lmax)
+        self.ells = np.arange(self.nell)
+        self.alm_shape = (self.nsims, self.npol, self.nelem)
 
         # split the rest of this function into a few smaller functions for readability
         # each of these modifies attributes of the object
@@ -257,6 +197,52 @@ class Core:
             else:
                 logger.warning(f"Settings file already exists: {file}, not overwriting")
 
+    def parse_args(self, args=None):
+        """
+        Parse command line arguments.
+
+        Args:
+            args (list): List of command line arguments. If None, sys.argv will be used.
+
+        Returns:
+            argparse.Namespace: Parsed command line arguments.
+        """
+        parser = argparse.ArgumentParser()
+
+        parser.add_argument("settings_file")
+
+        # some standard arguments heres, we can add more as needed
+        parser.add_argument("--nsims", type=int)
+        parser.add_argument("--narray", type=int)
+        parser.add_argument("--npatches", type=int)
+        parser.add_argument("--base_dir", type=str)
+        parser.add_argument("--seed", type=int)
+        parser.add_argument("--base-name", type=str)
+        parser.add_argument("--noise_scale_tt", type=float)
+        parser.add_argument("--beam_width", type=float)
+
+        parser.add_argument("--fnl_range", type=float, nargs=2)
+
+        parser.add_argument("--num_estimates", type=int)
+
+        # for BooleanOptionalAction: --flag will set the value `flag` to True, --no-flag will set `flag` to False
+        # otherwise it will be none
+        parser.add_argument("--lensing", action=argparse.BooleanOptionalAction)
+        parser.add_argument("--noise", action=argparse.BooleanOptionalAction)
+        parser.add_argument("--force-generation", action=argparse.BooleanOptionalAction)
+        parser.add_argument("--force-ksw", action=argparse.BooleanOptionalAction)
+        parser.add_argument("--pols", action=argparse.BooleanOptionalAction)
+
+        # this allows us to save a copy of the final settings used for the run
+        # only really useful for debugging, must be provided by the CLI and not in the settings file
+        parser.add_argument("--save-settings", action="store_true")
+
+        # sets the model name to be used by the trainer
+        parser.add_argument("--model", type=str)
+
+        logger.debug(f"Parsing CLI args: {args}")
+        return parser.parse_args(args)
+
     def _get(self, name, default: Any = None):
         """
         Get the value of a setting, providing the default if the setting is not found in self.settings.
@@ -279,6 +265,99 @@ class Core:
                     f"Found non-default value for '{name}': {repr(val)} (default: {repr(default)})"
                 )
             return val
+
+    def _setup_noise_beam(self):
+        """
+        Set up the noise and beam parameters for the Core object.
+
+        This method initializes the noise and beam parameters based on the configuration settings.
+        If the noise parameter is set to False, the noise is set to a very small value to avoid a singular matrix
+        in the inverse covariance. The beam width is set to 0 in this case.
+
+        If the noise parameter is set to True, the noise and beam parameters are retrieved from the configuration
+        settings. The beam width and noise scales for temperature (TT), E-mode polarization (EE), and
+        temperature-E-mode polarization (TE) are converted from muK arcminutes to muK radians.
+
+        The beam and noise ell values are computed based on the polarization settings and stored in the
+        `noise_ell` and `beam_ell` attributes.
+
+        Returns:
+            None
+        """
+
+        def convert(x):
+            """Helper function to convert from arcmin to radians."""
+            return (x * u.arcmin).to_value(u.radian)
+
+        self.noise = self._get("noise", True)
+        if not self.noise:
+            # we cannot set the noise to 0 as this will cause a singular matrix in the inverse covariance
+            # so we set it to a very small value in such a way that we will not get a singular matrix
+            noise_scale_tt = noise_scale_ee = noise_scale_bb = convert(1e-6)
+            noise_scale_te = convert(1e-12)
+            self.beam_width = 0
+        else:
+            self.beam_width = convert(self._get("beam_width", 0))
+            noise_scale_tt = convert(self._get("noise_scale_tt", 1))
+            noise_scale_ee = convert(self._get("noise_scale_ee", 1))
+            noise_scale_bb = convert(self._get("noise_scale_bb", 0))
+            noise_scale_te = convert(self._get("noise_scale_te", 1))
+
+        beam = hp.gauss_beam(self.beam_width, lmax=self.lmax, pol=True)  # (nell, npol)
+        beam = np.swapaxes(beam, 0, 1)  # convert beam to (npol, nell)
+        noise = np.ones((self.nell), dtype=self.r_dtype)
+
+        # here we setup the noise_ell and beam_ell attributes, these are in TT, EE, BB, TE order
+        beam_ell = [beam[0]]
+        noise_ell = [noise * noise_scale_tt**2]
+        if self.use_pols:
+            beam_ell.extend(beam[1:])
+            noise_ell.append(noise * noise_scale_ee**2)
+            noise_ell.append(noise * noise_scale_bb**2)
+            noise_ell.append(noise * noise_scale_te**2)
+
+        self.noise_ell = np.array(noise_ell)
+        self.beam_ell = np.array(beam_ell)
+
+    def _setup_radii(self):
+        """
+        Setup the radii and drs arrays.
+
+        This method sets up the radii and drs arrays based on the r_min and r_max attributes and a predefined set of ranges.
+        See Smith and Zaldarriaga (2011) Section 5.2 for more details.
+
+        Side Effects:
+            Modifies the radii and drs attributes.
+        """
+        #    start,  stop, resolution
+        ranges = [
+            (0, 9500, 150),
+            (9500, 11000, 300),
+            (11000, 13800, 150),
+            (13800, 14600, 400),
+            (14600, 16000, 100),
+            (16000, 50000, 100),
+        ]
+        radii = []
+
+        r_min = int(self._get("r_min", 1))
+        r_max = int(self._get("r_max", 50000))
+
+        for r in ranges:
+            start = max(r_min, r[0])
+            end = min(r_max, r[1])
+
+            if start >= end:
+                continue
+
+            if r == ranges[-1]:  # For the last range, use logspace
+                temp_radii = np.logspace(np.log10(start), np.log10(end), num=r[2])
+            else:
+                temp_radii = np.linspace(start, end, num=r[2], endpoint=False)
+
+            radii.extend(temp_radii)
+
+        self.radii = np.array([r for r in radii if r_min <= r <= r_max])
 
     def _init_slurm(self):
         """
@@ -341,32 +420,35 @@ class Core:
         Returns:
             None
         """
-        lens = "l" if self.lensing else "ul"
-        nn = "-nn" if not self.noise else ""
-        j = "" if self.job_array_index is None else f"_{self.job_array_index}"
-        pol = "".join(self.pols)
-
-        self.base_dir = self._get("base_dir", "data")
-        self.base_name = (
-            self._get("base_name", f"l{self.lmax}_n{self.nside}_{lens}{nn}_{pol}")
-            + f"x{self.total_sims}"
-        )
-        logger.info(f"Base name: {self.base_name}")
 
         def join_paths(*args):
             return os.path.join(self.base_dir, *args)
+
+        lens = "l" if self.lensing else "ul"
+        nn = "-nn" if not self.noise else ""
+        j = "" if self.job_array_index is None else f"_{self.job_array_index}"
+        pol_str = "T" if not self.use_pols else "TEB"
+
+        self.base_dir = self._get("base_dir", "data")
+        def_name = f"l{self.lmax}_n{self.nside}_{lens}{nn}_{pol_str}x{self.total_sims}"
+        self.base_name = self._get("base_name", def_name)
+        logger.info(f"Using base name: {self.base_name}")
 
         self.plot_dir = join_paths(self._get("plot_dir", "plots"))
         self.tb_dir = join_paths(self._get("tb_dir", "tensorboard"))
         self.model_dir = join_paths(self._get("model_dir", "models"))
 
-        self.alm_dir = join_paths(self._get("alm_dir", "alms"))
-        self.alm_file_partial = os.path.join(self.alm_dir, f"{self.base_name}{j}.hdf5")
-        self.alm_file = os.path.join(self.alm_dir, f"{self.base_name}.hdf5")
+        self.data_dir = join_paths(self._get("data_dir", "data"))
+        self.file_partial = os.path.join(self.data_dir, f"{self.base_name}{j}.hdf5")
+        self.file_complete = os.path.join(self.data_dir, f"{self.base_name}.hdf5")
 
-        self.patch_dir = join_paths(self._get("patch_dir", "patches"))
-        self.patch_str = f"{self.base_name}x{self.npatches}"
-        self.patch_file = os.path.join(self.patch_dir, f"{self.patch_str}{j}.hdf5")
+        # self.alm_dir = join_paths(self._get("alm_dir", "alms"))
+        # self.alm_file_partial = os.path.join(self.alm_dir, f"{self.base_name}{j}.hdf5")
+        # self.alm_file = os.path.join(self.alm_dir, f"{self.base_name}.hdf5")
+
+        # self.patch_dir = join_paths(self._get("patch_dir", "patches"))
+        # self.patch_str = f"{self.base_name}x{self.npatches}"
+        # self.patch_file = os.path.join(self.patch_dir, f"{self.patch_str}{j}.hdf5")
 
     def _init_cosmo(self):
         """
@@ -375,9 +457,6 @@ class Core:
         Attributes:
             cosmo (Cosmology): An instance of the `Cosmology` class.
             c_ells (numpy.ndarray): An array of C_ell values from camb. These values have been noised and beamed via B_\\ell^2 C_\\ell + N_\\ell.
-            icov (func): gives a mapping function from alm to the inverse covariance of the data. Is lensed or unlested depending on the lensing flag.
-            data (Data): An instance of the `Data` class.
-            ksw (KSW): An instance of the `KSW` class.
 
         Returns:
             None
@@ -385,38 +464,15 @@ class Core:
 
         cosmo_params = self.cosmo_params
         camb_params_obj = camb.set_params(**cosmo_params)
-        self.cosmo = cosmo = Cosmology(camb_params_obj)
+        self.cosmo = cosmo = Cosmology(self, camb_params_obj)
 
-        logger.debug("Computing transfer functions and C_ell")
-        cosmo.compute_transfer(cosmo_params["max_l"])
+        cosmo.compute_transfer()
         cosmo.compute_c_ell()
 
-        # We only should need the shape information for the estimator, but we can add it here
-        loc_shape = Shape.prim_local(cosmo_params["ns"], cosmo_params["pivot_scalar"])
-        cosmo.add_prim_reduced_bispectrum(loc_shape, self.radii)
+        self.c_ells = cosmo.c_ell["c_ell"][: self.nell]
 
-        logger.debug("Setting up data and KSW")
-        logger.debug(
-            f"beam {self.beam_ell.shape}, noise {self.noise_ell.shape}, pols {self.pols}, npols {self.npol}"
-        )
-        self.data = Data(self.lmax, self.noise_ell, self.beam_ell, self.pols, cosmo)
-
-        if self.lensing:
-            self.c_ells = cosmo.c_ell["lensed_scalar"]  # type: ignore
-        else:
-            self.c_ells = cosmo.c_ell["unlensed_scalar"]  # type: ignore
-
-        self.c_ells = self.c_ells["c_ell"][: self.nell]
-
-        self.ksw = KSW(
-            self.cosmo.red_bispectra,
-            self.icov,
-            self.conv_beam_func(),
-            self.lmax,
-            self.pols,
-            self.precision,
-        )
-        logger.debug("done with KSW")
+        # CAMB Cls are (nell, 4), convert to (4, nell).
+        self.c_ells = self.c_ells.transpose()
 
     def _init_patchgen(self):
         """
@@ -448,152 +504,3 @@ class Core:
             self.nside,
             self.nside,
         )
-
-    def icov(self, alm):
-        """
-        Returned the inverse covariance of the data, used in the KSW estimator.
-
-        Function takes (npol, nelem) alm-like complex array "alm" and returns the
-        inverse-variance-weighted version of that array. Specifically:
-        (B^{-1} N B^{-1} + S)^{-1} B^{-1} a, where a = B s + n, B is the beam
-        and N^{-1} and S^{-1} are the inverse noise and signal covariance
-        matrices, respectively.
-
-        Parameters:
-        - alm (ndarray): (npol, nelem) alm-like complex array.
-
-        Returns:
-        - ndarray: Inverse-variance-weighted version of the input array.
-
-        """
-
-        # small speed up by removing these from the loop, using np.reciprocal incase its faster
-        B_inv = np.reciprocal(self.beam_ell)
-        N = self.noise_ell[: self.npol]  # drop the TE noise
-        S = np.transpose(self.c_ells, (1, 0))[: self.npol]  # convert to (npol, nell)
-        factor = np.reciprocal(B_inv * N * B_inv + S) * B_inv
-
-        # hp.almxfl does not handle the npol dimension, so we need to loop over it
-        # TODO: is inplace safe here? Need to look at KSW code
-        ret = np.empty_like(alm)
-        for pol in range(self.npol):
-            ret[pol] = hp.almxfl(alm[pol], factor[pol], inplace=False)
-        return ret
-
-    def conv_beam_func(self):  # change name
-        """
-        Returns a function which KSW can use to convolve the alms with the beam.
-        If beam_width is 0, returns the identity function.
-
-        Returns:
-            function: A function that takes alm values and returns the convolved beam.
-        """
-        if self.beam_width == 0.0:
-            # Dont need to bother with anything if beam_width is 0
-            return lambda alm: alm
-
-        def __beam(alm):
-            # Convolve the beam with the alm values
-            ret = np.empty_like(alm)
-            for pol in range(self.npol):
-                ret[pol] = hp.almxfl(alm[pol], self.beam_ell[pol], inplace=False)
-            return ret
-
-        return __beam
-
-    def _setup_noise_beam(self):
-        """
-        Set up the noise and beam parameters for the Core object.
-
-        This method initializes the noise and beam parameters based on the configuration settings.
-        If the noise parameter is set to False, the noise is set to a very small value to avoid a singular matrix
-        in the inverse covariance. The beam width is set to 0 in this case.
-
-        If the noise parameter is set to True, the noise and beam parameters are retrieved from the configuration
-        settings. The beam width and noise scales for temperature (TT), E-mode polarization (EE), and
-        temperature-E-mode polarization (TE) are converted from muK arcminutes to muK radians.
-
-        The beam and noise ell values are computed based on the polarization settings and stored in the
-        `noise_ell` and `beam_ell` attributes.
-
-        Returns:
-            None
-        """
-
-        def convert(x):
-            """Helper function to convert from arcmin to radians."""
-            return (x * u.arcmin).to_value(u.radian)
-
-        self.noise = self._get("noise", True)
-        if not self.noise:
-            # we cannot set the noise to 0 as this will cause a singular matrix in the inverse covariance
-            # so we set it to a very small value in such a way that we will not get a singular matrix
-            noise_scale_tt = noise_scale_ee = convert(1e-6)
-            noise_scale_te = convert(1e-12)
-            self.beam_width = 0
-        else:
-            self.beam_width = convert(self._get("beam_width", 0))
-            noise_scale_tt = convert(self._get("noise_scale_tt", 1))
-            noise_scale_ee = convert(self._get("noise_scale_ee", 1))
-            noise_scale_te = convert(self._get("noise_scale_te", 1))
-
-        beam = hp.gauss_beam(self.beam_width, lmax=self.lmax, pol=True)  # (nell, npol)
-        beam = np.swapaxes(beam, 0, 1)  # convert beam to (npol, nell)
-        noise = np.ones((self.nell), dtype=self.r_dtype)
-
-        # here we setup the noise_ell and beam_ell attributes, these are in TT, EE, TE order
-        # Note that B modes are not supported by the KSW code, and only TT has been tested to any extent
-        noise_ell = []
-        beam_ell = []
-        if "T" in self.pols:
-            beam_ell.append(beam[0])
-            noise_ell.append(noise * noise_scale_tt**2)
-        if "E" in self.pols:
-            beam_ell.append(beam[1])
-            noise_ell.append(noise * noise_scale_ee**2)
-        if self.pols == ["T", "E"]:
-            # beam_ell.append(beam[3]) # beam doesn't need to be set for TE
-            noise_ell.append(noise * noise_scale_te**2)
-        self.noise_ell = np.array(noise_ell)
-        self.beam_ell = np.array(beam_ell)
-
-    def _setup_radii(self):
-        """
-        Setup the radii and drs arrays.
-
-        This method sets up the radii and drs arrays based on the r_min and r_max attributes and a predefined set of ranges.
-        See Smith and Zaldarriaga (2011) Section 5.2 for more details.
-
-        Side Effects:
-            Modifies the radii and drs attributes.
-        """
-        #    start,  stop, resolution
-        ranges = [
-            (0, 9500, 150),
-            (9500, 11000, 300),
-            (11000, 13800, 150),
-            (13800, 14600, 400),
-            (14600, 16000, 100),
-            (16000, 50000, 100),
-        ]
-        radii = []
-
-        r_min = int(self._get("r_min", 1))
-        r_max = int(self._get("r_max", 50000))
-
-        for r in ranges:
-            start = max(r_min, r[0])
-            end = min(r_max, r[1])
-
-            if start >= end:
-                continue
-
-            if r == ranges[-1]:  # For the last range, use logspace
-                logger.info("setting up last range")
-                temp_radii = np.logspace(np.log10(start), np.log10(end), num=r[2])
-            else:
-                temp_radii = np.linspace(start, end, num=r[2], endpoint=False)
-
-            radii.extend(temp_radii)
-
-        self.radii = np.array([r for r in radii if r_min <= r <= r_max])

@@ -5,8 +5,12 @@ import os
 import healpy as hp
 import numpy as np
 from mpi4py import MPI
+import camb
+from ksw import KSW, Cosmology, Shape
 
 from . import Core
+from .almgen import generate_alm
+from .estimator import icov_func, conv_beam_func
 from .utils import remove_mono_dipole, setup_logging
 from .utils.plots import plot_cl_alm, plot_predictions
 
@@ -30,26 +34,53 @@ def main():
     args = sys.argv[1:]
     core = Core(["settings/heidelberg.json"] + args)
 
-    def alm_step_loader(idx):
-        return core.ksw.compute_alm_sim(core.lensing)
-
     logger.info("Generating Fnls")
     fnls = core.rng.uniform(core.fnl_min, core.fnl_max + 1, 1001)
-
-    logger.info("Running KSW step")
-    alm_step_strs = np.arange(1, 101).astype(str)
 
     # The default theta_batch size is 25, which is really small, we want to increase it
     # going too high can cause memory issues, so we will cap it at 256
     thetas = int(np.floor(1.5 * core.lmax + 1)) // mpi_size
     thetas = min(256, int(np.floor(1.5 * core.lmax + 1)))
 
-    core.ksw.step_batch(
-        alm_step_loader, alm_step_strs, comm=mpi_comm, theta_batch=thetas
+    # we need to setup the KSW here
+    cosmo_params = core.cosmo_params
+    cosmo = Cosmology(camb.set_params(**cosmo_params))
+    cosmo.compute_transfer(core.cosmo_params["max_l"])
+    cosmo.compute_c_ell()
+
+    pols = tuple([pol for pol in core.pols if pol != "B"])  # remove the b-modes
+    npols = len(pols)
+    nnoise = 1 if npols == 1 else 3
+
+    noise = core.noise_ell[:nnoise]
+    beam = core.beam_ell[:npols]
+
+    loc_shape = Shape.prim_local(cosmo_params["ns"], cosmo_params["pivot_scalar"])
+    cosmo.add_prim_reduced_bispectrum(loc_shape, core.radii)
+
+    icov = icov_func(beam, noise[:npols], core.c_ells[:npols])
+
+    ksw = KSW(
+        cosmo.red_bispectra,
+        icov,
+        conv_beam_func(core, npols),
+        core.lmax,
+        pols,
+        core.precision,
     )
+
+    logger.info("Running KSW step")
+    step_size = 100
+    alm_step_strs = np.arange(step_size)
+    step_alms = generate_alm(core, step_size)
+
+    def alm_step_loader(idx):
+        return step_alms[idx]
+
+    ksw.step_batch(alm_step_loader, alm_step_strs, comm=mpi_comm, theta_batch=thetas)
     logger.info("Done with step")
 
-    fisher = float(core.ksw.compute_fisher())
+    fisher = float(ksw.compute_fisher())
     logger.info("Fisher: %s, standard deviation: %s", fisher, np.sqrt(1 / fisher))
 
     def alm_loader(str_idx):
@@ -70,7 +101,7 @@ def main():
 
     logger.info("Computing estimates")
     alm_strs = range(1, 1001)
-    estimates = core.ksw.compute_estimate_batch(
+    estimates = ksw.compute_estimate_batch(
         alm_loader, alm_strs, comm=mpi_comm, fisher=fisher
     )
 

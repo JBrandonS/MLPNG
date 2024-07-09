@@ -10,7 +10,7 @@ from tqdm.auto import tqdm
 from . import Core
 from .utils import setup_logging
 
-logger = setup_logging(__name__, level=logging.DEBUG)
+logger = setup_logging(__name__)  # , level=logging.DEBUG)
 
 
 def extract_number(filename):
@@ -138,8 +138,8 @@ def combine_data(directory, base_name, ext=".hdf5", remove_files=True, expected=
 def main():
     core = Core()
 
-    combine_data(core.alm_dir, core.base_name, ".hdf5", expected=core.narray)
-    combine_data(core.patch_dir, core.patch_str, ".hdf5", expected=core.narray)
+    combine_data(core.data_dir, core.base_name, ".hdf5", expected=core.narray)
+    # combine_data(core.patch_dir, core.patch_str, ".hdf5", expected=core.narray)
 
 
 if __name__ == "__main__":

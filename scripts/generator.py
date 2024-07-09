@@ -9,7 +9,9 @@ from scipy.interpolate import CubicSpline, interp1d
 from scipy.integrate import simpson
 from tqdm.auto import tqdm
 from itertools import product
-import camb
+
+import lenspyx
+from pixell import curvedsky, enmap, reproject
 
 from ksw.radial_functional import radial_func
 
@@ -170,13 +172,13 @@ def main():
 
     # check for completed alm runs if we are not forcing alm generation, and fail fast
     # notice we don't exit(1) so we can use this to resume a partially completed job without having to recalculate everything
-    if not core.force_gen:
-        if os.path.isfile(core.alm_file):
-            logger.warning("Found completed alms file, skipping alm generation")
-            sys.exit(0)
-        elif os.path.isfile(core.alm_file_partial):
-            logger.warning("Found partial alm file, skipping alm generation")
-            sys.exit(0)
+    # if not core.force_gen:
+    #     if os.path.isfile(core.file_complete):
+    #         logger.warning("Found completed file, skipping alm generation")
+    #         sys.exit(0)
+    #     elif os.path.isfile(core.file_partial):
+    #         logger.warning("Found partial file, skipping alm generation")
+    #         sys.exit(0)
 
     # Get our gaussian alms, very fast so no need to parallelize
     logger.info("Starting Alm generation")
@@ -195,21 +197,104 @@ def main():
     alms = alm_l + fnls[:, None, :] * alm_ng
     alms = remove_mono_dipole(alms)
 
-    logger.info("Saving data")
-    os.makedirs(core.alm_dir, exist_ok=True)
+    logger.info("Done!")
 
+    logger.info("Starting patch generation")
+    logger.debug("Generating patch geometry")
+
+    # Generate the geometry
+    logger.debug("getting patch geo")
+    ps_rad = np.deg2rad(core.patch_side_deg)
+    res = ps_rad / core.nside
+
+    fs_shape, fs_wcs = enmap.fullsky_geometry(res, proj="car")
+    fs_shape = (core.npol,) + fs_shape
+    fs_map = enmap.empty(fs_shape, fs_wcs)
+
+    patch_shapes = []
+    patch_wcss = []
+    for counter in range(core.npatches // 2):
+        # [[dec_min,ra_min],[dec_max,ra_max]]
+        top = [[0, ps_rad * counter], [ps_rad, ps_rad * (counter + 1)]]
+        gs, w = enmap.geometry(pos=top, res=res, proj="car")
+        patch_shapes.append(gs)
+        patch_wcss.append(w)
+
+        bottom = [[-ps_rad, ps_rad * counter], [0, ps_rad * (counter + 1)]]
+        gs, w = enmap.geometry(pos=bottom, res=res, proj="car")
+        patch_shapes.append(gs)
+        patch_wcss.append(w)
+    logger.debug("done")
+
+    if core.lensing:
+        logger.debug("getting lensing cl_phi and data")
+        cl_phi = core.cosmo._camb_data.get_lens_potential_cls(  # type: ignore
+            core.max_l, CMB_unit="muK", raw_cl=True
+        )
+        plm = lenspyx.utils_hp.synalm(cl_phi[:, 0], lmax=core.max_l, mmax=None)
+
+        # transform the lensing potential into spin-1 deflection field
+        fl = np.sqrt(np.arange(core.max_l + 1) * np.arange(1, core.max_l + 2))
+        dlm = lenspyx.utils_hp.almxfl(plm, fl, mmax=None, inplace=False)
+
+        geom_info = ("healpix", {"nside": core.nside})
+        geom = lenspyx.get_geom(geom_info)
+        logger.debug("done")
+
+        logger.debug("lensing alms and getting patches")
+        # convert the map into a pixell map to allow for projection
+        patches = np.empty(
+            (core.nsims, core.npatches, 3, core.nside, core.nside), dtype=core.r_dtype
+        )
+        alm_lensed = np.empty((core.nsims, 3, core.nelem), dtype=core.c_dtype)
+        for sim in tqdm(
+            range(core.nsims), desc="Lensing and Patching", total=core.nsims
+        ):
+            lens_map = lenspyx.alm2lenmap(alms[sim], dlm, geometry=geom_info, verbose=0)
+            pixell_map = reproject.healpix2map(lens_map, fs_shape, fs_wcs, core.lmax)
+
+            alm_lensed[sim, 0] = geom.map2alm(
+                lens_map[0], core.lmax, core.lmax, nthreads=os.cpu_count()
+            )
+            alm_lensed[sim, 1:] = geom.map2alm_spin(
+                lens_map[1:], 2, core.lmax, core.lmax, nthreads=os.cpu_count()
+            )
+            # cut the patches
+            for i in range(core.npatches):
+                patches[i] = pixell_map.project(patch_shapes[i], patch_wcss[i])
+    else:
+        logger.debug("getting patches")
+        fs_map = enmap.empty(fs_shape, fs_wcs)
+        patches = np.empty(
+            (core.nsims, core.npatches, core.npol, core.nside, core.nside),
+            dtype=core.r_dtype,
+        )
+
+        for sim in tqdm(range(core.nsims), desc="Patching", total=core.nsims):
+            car_map = curvedsky.alm2map(alms[sim], fs_map, spin=[0, 0])
+
+            for i in range(core.npatches):
+                patch = car_map.project(patch_shapes[i], patch_wcss[i])  # type: ignore
+                patches[sim, i] = patch
+    logger.info("Done!")
+
+    logger.info("Saving data")
+    os.makedirs(core.data_dir, exist_ok=True)
     # we remove the stale nc file if it exists prior to saving the new one
-    if os.path.isfile(core.alm_file_partial):
-        logger.info("Removing stale alm file: %s", core.alm_file_partial)
-        os.remove(core.alm_file_partial)
+    if os.path.isfile(core.file_partial):
+        logger.info("Removing stale alm file: %s", core.file_partial)
+        os.remove(core.file_partial)
 
     sdata = {}
     sdata["alm"] = alms
     sdata["fnl"] = fnls
-    save_data(core.alm_file_partial, sdata)
+    sdata["patches"] = patches
+    if core.lensing:
+        sdata["alm_lensed"] = alm_lensed
+    save_data(core.file_partial, sdata)
 
     if core.is_main_job:
-        alm_plot_dir = os.path.join(core.plot_dir, "almgen")
+        alm_plot_dir = os.path.join(core.plot_dir, "generator")
         os.makedirs(alm_plot_dir, exist_ok=True)
 
         i, j = core.rng.integers(core.nsims), core.rng.integers(core.npol)

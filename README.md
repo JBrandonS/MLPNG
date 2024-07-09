@@ -8,13 +8,13 @@ This code is designed to do two things; provide a generation framework for gener
 
 The code has been broken into 2 different parts, this is due to SMU policies not allowing for the CPU based data generation on the same system as the GPU based training. If you are not limited by this you may want to combine the conda environments and the generation and training scripts into one.
 
+> See `notebooks/` for some example jupyter notebooks that are representative of the code.
+
 The data generation is controlled by settings files, which are used to specify the parameters of the data to be generated. The data is then generated in two steps, first the $A_{lm}\text{s}$ are created in batches according to the settings file. Secondly, if enabled in the `generator.sh` script, cut sky patches will be generated from the $A_{lm}\text{s}$. Finally, the code will run the `combiner.py` script to combine the large number of data files into 2, one for the alms and one for the patches. Data will be saved to the `data_dir` with the alm's being placed in `data_dir/alm_dir`, which by default will be `data/alms`. Similar settings can be used to change where the patches, plots, and other large files will be saved.
 
 The training is controlled by the `scripts/models/` files, which specify the architecture of the model to be trained. The `trainer.sh` script will run the `scripts/trainer.py` script with the specified model and settings file. The model will be trained on the data matching the setting file used.
 
 > The setting matching may not be perfect, and some collisions can occur. If in doubt generate with a unique `base_name` in the settings file.
-
-> See `notebooks/` for some example jupyter notebooks that are representative of the code.
 
 ## Installing
 
@@ -165,9 +165,8 @@ Additional thanks to:
 
 ## Problems
 
-- Currently running with a beam_width will cause a bias, I plan to look into this later but if anyone wants to fix that feel free.
 - lensing may be wrong
 
 ## License
 
-The current plan is to open-source this at a later date. Let me know if anyone has strong feelings on that either way.
+Will be GPL-3 thanks to the KSW import

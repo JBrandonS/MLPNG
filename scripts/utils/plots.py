@@ -99,8 +99,15 @@ def plot_cl(
                     "Need to provide noise and beam_width if plotting camb with noise."
                 )
 
+            # plot_func(
+            #     ells,
+            #     scale * noise[2:nell],
+            #     label=r"noise",
+            #     linestyle="--",
+            # )
+
             beam = np.exp(-(ells * (ells + 1) * beam_width**2) / (16 * np.log(2)))
-            
+
             camb_cl_noise = camb_cl * beam**2 + noise[2:nell]
             plot_func(
                 ells,
@@ -161,7 +168,12 @@ def plot_cl_map(map, wcs, lmax, title="Angular power spectrum from map", **kwarg
 
 
 def plot_predictions(
-    truth, preds, title="Predictions", fisher=None, scaled_variance=None, save_file=None
+    truth,
+    preds,
+    title="Predictions",
+    fisher=None,
+    scaled_variance=None,
+    save_file=None,
 ):
     """
     Plots the true labels against the predicted labels. If provided will plot the expected deviations from the provided fisher
@@ -182,6 +194,8 @@ def plot_predictions(
         }
     )
 
+    logger.debug("%s %s %s", df.shape, truth.shape, preds.shape)
+
     # Create a scatter plot with seaborn
     plt.figure(figsize=(12, 6))
     sns.scatterplot(data=df, x="True Fnl", y="Predicted Fnl")
@@ -192,7 +206,7 @@ def plot_predictions(
 
     if fisher is not None:
         std_dev = np.sqrt(1 / fisher)
-        logger.debug(f"Plotting with standard deviation: {std_dev}")
+
         plt.plot(line, line + std_dev, color="blue", linestyle="--", label="Fisher")
         plt.plot(line, line - std_dev, color="blue", linestyle="--")
 
@@ -210,6 +224,7 @@ def plot_predictions(
     r2 = r2_score(df["True Fnl"], df["Predicted Fnl"])
     plt.text(min(truth), max(truth), f"$R^2$ = {r2:.2f}", verticalalignment="top")
     plt.title(title)
+    # plt.legend()
 
     if save_file is not None:
         plt.savefig(save_file)

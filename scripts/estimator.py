@@ -1,15 +1,19 @@
 import sys
 import logging
 import os
-import math
+import healpy as hp
+import camb
 
 import h5py
 import numpy as np
 from mpi4py import MPI
 
 from . import Core
+from .almgen import generate_alm
 from .utils import save_data, setup_logging
 from .utils.plots import plot_histogram, plot_predictions
+
+from ksw import Data, KSW, Cosmology, Shape
 
 mpi_comm = MPI.COMM_WORLD
 mpi_rank = mpi_comm.Get_rank()
@@ -18,9 +22,68 @@ mpi_root = mpi_rank == 0
 
 # estimator will run multiple jobs per id which get sent to the same log file,
 # so we only want to log the root to keep from spamming the log
-logger = setup_logging(
-    name=f"{__name__}_{mpi_rank}", level=logging.DEBUG if mpi_root else logging.ERROR
-)
+if mpi_root:
+    logger = setup_logging(name=f"{__name__}_{mpi_rank}", level=logging.DEBUG)
+else:
+    logger = setup_logging(name=f"{__name__}_{mpi_rank}", level=logging.ERROR)
+
+
+def icov_func(beam, noise, c_ells):
+    """
+    Returned the inverse covariance of the data, used in the KSW estimator.
+
+    Function takes (npol, nelem) alm-like complex array "alm" and returns the
+    inverse-variance-weighted version of that array. Specifically:
+    (B^{-1} N B^{-1} + S)^{-1} B^{-1} a, where a = B s + n, B is the beam
+    and N^{-1} and S^{-1} are the inverse noise and signal covariance
+    matrices, respectively.
+
+    Parameters:
+    - alm (ndarray): (npol, nelem) alm-like complex array.
+
+    Returns:
+    - ndarray: Inverse-variance-weighted version of the input array.
+
+    """
+
+    # get needed values and remove the mono and dipole terms
+    B_inv = 1 / beam
+    S = c_ells
+
+    factor = (B_inv * noise * B_inv + S) ** (-1) * B_inv
+    npol = factor.shape[0]
+
+    def _func(alm):
+        ret = np.empty_like(alm)
+        for pol in range(npol):
+            ret[pol] = hp.almxfl(alm[pol], factor[pol])
+
+        ret[:, :2] = 0  # remove mono and dipole terms, just to be safe
+        return ret
+
+    return _func
+
+
+def conv_beam_func(core, npol):  # change name
+    """
+    Returns a function which KSW can use to convolve the alms with the beam.
+    If beam_width is 0, returns the identity function.
+
+    Returns:
+        function: A function that takes alm values and returns the convolved beam.
+    """
+    if core.beam_width == 0.0:
+        # Dont need to bother with anything if beam_width is 0
+        return lambda alm: alm
+
+    def __beam(alm):
+        # Convolve the beam with the alm values
+        ret = np.empty_like(alm)
+        for pol in range(npol):
+            ret[pol] = hp.almxfl(alm[pol], core.beam_ell[pol], inplace=False)
+        return ret
+
+    return __beam
 
 
 def compute_iso_icov(core, N, b):
@@ -37,29 +100,30 @@ def compute_iso_icov(core, N, b):
     return 1 / (S_ell + b_inv * N * b_inv)
 
 
-def run_ksw_step(core, theta_batch):
+def run_ksw_step(ksw, core, theta_batch, num_steps=100):
+    alm_steps = generate_alm(core, num_steps)
+
     def step_loader(idx):
         """
         for stepping the KSW estimator, we just generate new unique sims
         """
         logger.debug("Sending alm step %s", idx)
-        return core.data.compute_alm_sim(core.lensing)
+        return alm_steps[idx]
 
     logger.info("Running KSW step")
 
-    # lets get our iso fisher so we can find the base line
-    icov_ell = compute_iso_icov(core, core.noise_ell[: core.npol], core.beam_ell)
-    fisher_iso = core.ksw.compute_fisher_isotropic(icov_ell)
-    # N_fact = core.cosmo.red_bispectra[0].nfact
-
-    core.ksw.step_batch(
-        step_loader, np.arange(100), comm=mpi_comm, theta_batch=theta_batch
+    ksw.step_batch(
+        step_loader, np.arange(num_steps), comm=mpi_comm, theta_batch=theta_batch
     )
 
     # compute the new fisher and the distance
-    fisher = core.ksw.compute_fisher() / core.npol  # note bug fix here
+    fisher = ksw.compute_fisher()
+    icov_ell = compute_iso_icov(
+        core, core.noise_ell[: core.npol], core.beam_ell[: core.npol]
+    )
+    fisher_iso = ksw.compute_fisher_isotropic(icov_ell)
     distance = np.abs(fisher - fisher_iso)
-    logger.debug("Distance: %s", distance)
+    logger.debug("Fisher distance: %s", distance)
 
 
 def main():
@@ -72,7 +136,34 @@ def main():
     ), "total_sims < mpi_size, lower ntasks or increase sims"
 
     # early loading to fail fast if the file does not exist
-    alm_file = h5py.File(core.alm_file, "r", swmr=True, locking=False)
+    data = h5py.File(core.file_complete, "r", swmr=True, locking=False)
+
+    # we need to setup the KSW here
+    cosmo_params = core.cosmo_params
+    cosmo = Cosmology(camb.set_params(**cosmo_params))
+    cosmo.compute_transfer(core.max_l)
+    cosmo.compute_c_ell()
+
+    pols = tuple([pol for pol in core.pols if pol != "B"])  # remove the b-modes
+    npols = len(pols)
+    nnoise = 1 if npols == 1 else 3
+
+    noise = core.noise_ell[:nnoise]  # TODO check this
+    beam = core.beam_ell[:npols]
+
+    loc_shape = Shape.prim_local(cosmo_params["ns"], cosmo_params["pivot_scalar"])
+    cosmo.add_prim_reduced_bispectrum(loc_shape, core.radii)
+
+    icov = icov_func(beam, noise[:npols], core.c_ells[:npols])
+
+    ksw = KSW(
+        cosmo.red_bispectra,
+        icov,
+        conv_beam_func(core, npols),
+        core.lmax,
+        pols,
+        core.precision,
+    )
 
     # The default theta_batch size is 25, which is really small, we want to increase it
     # going too high can cause memory issues, so we will cap it at 256
@@ -82,51 +173,49 @@ def main():
 
     # check for existing ksw state, if it exists, load it
     # otherwise, run the MC, can take a few hours
-    use_mc_file = True  # just a quick disable
     mc_path = os.path.join(core.base_dir, "kswmc")
     os.makedirs(mc_path, exist_ok=True)
     mc_file = os.path.join(mc_path, f"{core.base_name}.hdf5")
 
     # remove the file to force its recreation
-    if core.force_ksw and use_mc_file and os.path.exists(mc_file):
+    if core.force_ksw and os.path.exists(mc_file):
         logger.info("Removing existing KSW state")
         os.remove(mc_file)
 
-    if use_mc_file and os.path.exists(mc_file):
+    if os.path.exists(mc_file):
         logger.info("Loading KSW state from %s", mc_file)
-        core.ksw.start_from_read_state(mc_file, mpi_comm)
+        ksw.start_from_read_state(mc_file, mpi_comm)
     else:
-        run_ksw_step(core, theta_batch)
+        run_ksw_step(ksw, core, theta_batch)
 
         # save the mc state if we are using the mc file
-        if use_mc_file and mpi_root:
+        if mpi_root:
             logger.info("Saving KSW state to %s", mc_file)
-            core.ksw.write_state(mc_file, mpi_comm)
+            ksw.write_state(mc_file, mpi_comm)
 
-    # NOTE: There seems to be an issue with the fisher computation with TE pols being a factor 2 higher than expected
-    # I do not know why but this seems to fix the issue
-    # TODO: This is a hack, we need to figure out why the TE pols are off by a factor of 2
-    fisher = float(core.ksw.compute_fisher()) / core.npol
+    fisher = float(ksw.compute_fisher())
     logger.info("Fisher: %s, standard deviation: %s", fisher, np.sqrt(1 / fisher))
 
     # note that these are not fully loaded into memory
-    alms = alm_file["alm"]
-    fnls = alm_file["fnl"]
+    if core.lensing:
+        alms = data["alm_lensed"]
+    else:
+        alms = data["alm"]
+    fnls = data["fnl"]
 
-    num_est = min(core.num_estimates, core.total_sims)
-    idxs = np.arange(num_est)
+    idxs = np.arange(core.num_estimates)
     logger.info(
         "Computing %s estimates in %.2f batches",
-        num_est,
-        num_est / mpi_size,
+        core.num_estimates,
+        core.num_estimates / mpi_size,
     )
 
     def estimator_loader(idx):
         """Loads in a single alm given an idx."""
         logger.debug("Sending %s with fnl %s", idx, fnls[idx])
-        return np.array(alms[idx])
+        return np.array(alms[idx, : core.npol])
 
-    estimates = core.ksw.compute_estimate_batch(
+    estimates = ksw.compute_estimate_batch(
         estimator_loader,
         idxs,
         comm=mpi_comm,
@@ -142,14 +231,14 @@ def main():
 
         # alm_file is read only and we need to append to it
         # close it, so we can open in append mode
-        alm_file.close()
+        data.close()
 
         # save the data, this will append to the alm_file
         sdata = {}
         sdata["fisher"] = [fisher]
         sdata["estimate"] = estimates
         sdata["error"] = (estimates - fnls) * np.sqrt(fisher)
-        save_data(core.alm_file, sdata, mode="a")
+        save_data(core.file_complete, sdata, mode="a")
 
         # make and save some plots
         plot_dir = os.path.join(core.plot_dir, "estimator")
@@ -160,6 +249,13 @@ def main():
 
         hist_file = os.path.join(plot_dir, f"{core.sjob}_{core.base_name}_hist.png")
         plot_histogram(fnls, estimates, save_file=hist_file)
+
+        diff = estimates - fnls
+        std_dev = np.sqrt(1 / fisher)
+        for i in range(5):
+            within = np.sum(np.abs(diff) < ((i + 1) * std_dev))
+            percentage = within / len(diff) * 100
+            logger.info("%s%% are within %s standard deviations", percentage, i + 1)
 
     logger.info("Finished %s!", mpi_rank)
 
