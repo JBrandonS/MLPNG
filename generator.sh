@@ -15,10 +15,10 @@
 # these must be in settings/ and have the .json extension
 SETTINGS=(
   "l256_n64"
-  "l500_n128"
-  "heidelberg"
-  "planck"
-  "l2000_n2048"
+  # "l500_n128"
+  # "heidelberg"
+  # "planck"
+  # "l2000_n2048"
 )
 
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others

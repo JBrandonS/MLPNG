@@ -41,6 +41,8 @@ and C_l^TE.
 
 Scrapped with:
 
+Cl file: http://dc.zah.uni-heidelberg.de/elsnersim/q/s/static/cl_wmap5_bao_sn.txt
+
 ```python
 import requests
 

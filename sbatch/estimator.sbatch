@@ -1,8 +1,8 @@
 #! /bin/bash
 #SBATCH --job-name=estimator
 #SBATCH --partition=standard-s
-#SBATCH --ntasks=128
-#SBATCH --mem-per-cpu=10G
+#SBATCH --ntasks=64
+#SBATCH --mem-per-cpu=2G
 #SBATCH --cpus-per-task=1
 #SBATCH --output=logs/estimator/%j.log
 #SBATCH --time=1-00:00:00

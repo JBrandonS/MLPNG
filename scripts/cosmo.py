@@ -160,9 +160,7 @@ class Cosmology:
         camb_params = self.core.cosmo.camb_params
 
         k_eta_fac = 2.5  # Default used by CAMB.
-        camb_params.set_for_lmax(
-            self.core.max_l, lens_margin=0, k_eta_fac=k_eta_fac
-        )
+        camb_params.set_for_lmax(self.core.max_l, lens_margin=0, k_eta_fac=k_eta_fac)
 
         # Make CAMB do the actual calculations (slow).
         data = camb.get_transfer_functions(camb_params)
@@ -173,9 +171,7 @@ class Cosmology:
 
         # Modify scalar E-mode, see Zaldarriaga 1997 Eqs. 18 and 39.
         # (CAMB applies these factors at a later stage).
-
         ells = tr.L.astype(int)
-
         prefactor = np.sqrt((ells + 2) * (ells + 1) * ells * (ells - 1))
         tr.delta_p_l_k[1, ...] *= prefactor[:, np.newaxis]
 
@@ -186,16 +182,12 @@ class Cosmology:
         tr_view = np.swapaxes(tr_view, 0, 2)  # (nk, nell, npol).
         tr_view = np.swapaxes(tr_view, 0, 1)  # (nell, nk, npol).
 
-        # drop the lensing potential from the ks
-        # phi = tr_view[..., 2].copy()
-        # tr_view = np.delete(tr_view, 2, axis=-1)
-
         tr_ell_k = np.ascontiguousarray(tr_view)
 
+        # note transfers are in TT, EE, PHI order
         self.transfer["tr_ell_k"] = tr_ell_k
         self.transfer["k"] = tr.q
         self.transfer["ells"] = ells  # Probably sparse.
-        # self.transfer["phi"] = phi
 
     def compute_c_ell(self):
         """
@@ -218,15 +210,15 @@ class Cosmology:
 
         if self.core.lensing:
             c_ell = self._camb_data.get_lensed_scalar_cls(
-                lmax=None, CMB_unit="muK", raw_cl=True
+                CMB_unit="muK",
+                raw_cl=True,
             )
         else:
             c_ell = self._camb_data.get_unlensed_scalar_cls(
-                lmax=None, CMB_unit="muK", raw_cl=True
+                CMB_unit="muK",
+                raw_cl=True,
             )
 
-        ells = np.arange(c_ell.shape[0])
-
         self.c_ell = {}
-        self.c_ell["ells"] = ells
+        self.c_ell["ells"] = np.arange(c_ell.shape[0])
         self.c_ell["c_ell"] = c_ell

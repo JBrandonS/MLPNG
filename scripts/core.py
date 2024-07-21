@@ -88,7 +88,7 @@ class Core:
         # From there we store the settings in the settings dict attribute
         # We then override the settings with the command line arguments
         # We then set the cosmological parameters to the defaults and override them with the settings
-        logger.info(f"Loading settings from file {args.settings_file}")
+        logger.info("Loading settings from file %s", args.settings_file)
         with open(args.settings_file, "r") as f:
             settings = self.settings = json.load(f)
 
@@ -106,17 +106,20 @@ class Core:
             **cosmo_params,
         }
 
-        if logger.getEffectiveLevel() <= logging.DEBUG:
+        if logger.isEnabledFor(logging.DEBUG):
             # This just logs any changes to the defaults, but only if in debug mode
             # Not really needed, but good logs can be helpful
             defaults = cosmo_defaults()
             for key in defaults.keys():
                 if key in cosmo_params and defaults[key] != cosmo_params[key]:
                     logger.debug(
-                        f"Overriding cosmo param {key} from {defaults[key]} to {cosmo_params[key]}"
+                        "Overriding cosmo param %s from %s to %s",
+                        key,
+                        defaults[key],
+                        cosmo_params[key],
                     )
 
-        logger.info(f"Running with settings: \n{json.dumps(settings, indent=2)}")
+        logger.info("Running with settings: \n%s", json.dumps(settings, indent=2))
 
         ##
         ## Now we can process the main parameters for the run, each is loaded in via the _get method
@@ -136,10 +139,10 @@ class Core:
         self.use_pols = self._get("pols", False)
         self.nsims = self._get("nsims", 100)
         self.narray = self._get("narray", 1)
-        self.force_gen = self._get("force-generation", False)
-        self.force_ksw = self._get("force-ksw", False)
-
-        self.max_l = self.lmax + self._get("l_buffer", 512)
+        self.force_gen = self._get("force_generation", False)
+        self.force_ksw = self._get("force_ksw", False)
+        self.num_estimates = self._get("num_estimates", self.nsims)
+        self.max_l = self.lmax + self._get("lmax_buffer", 512)
 
         self.fnl_min, self.fnl_max = self._get("fnl_range", (-1000, 1000))
         self.fnl_shape = (self.nsims, 1)
@@ -150,7 +153,7 @@ class Core:
         else:
             self.pols = "T"
             self.npol = 1
-        logger.debug(f"Using polarizations: {self.pols}")
+        logger.debug("Using polarizations: %s", self.pols)
 
         # setup our precision types to be consistent
         # also, tensorflow seems to mostly use float32, and is actually moving to half-bit registers
@@ -164,16 +167,15 @@ class Core:
             self.r_dtype = np.float32
             self.c_dtype = np.complex64
             self.precision = "single"
-        logger.debug(f"Using {self.precision} precision, where possible")
+        logger.debug("Using %s precision, where possible", self.precision)
 
         self.total_sims = self.nsims * self.npol * self.narray
-        self.num_estimates = self._get("num-estimates", self.nsims)
 
         self.nell = self.lmax + 1
         self.nelem = hp.Alm.getsize(self.lmax)
         self.ells = np.arange(self.nell)
         self.alm_shape = (self.nsims, self.npol, self.nelem)
-        
+
         self.patch_side_deg = self._get("patch_side_deg", 10)
         self.npatches = self._get("npatches", 2)
         self.total_patches = self.npatches * self.total_sims
@@ -184,7 +186,7 @@ class Core:
             self.nside,
             self.nside,
         )
-        
+
         assert self.npatches % 2 == 0, "Number of patches must be even"
 
         # split the rest of this function into a few smaller functions for readability
@@ -196,18 +198,20 @@ class Core:
         self._init_cosmo()
         self._init_paths()
 
-        # save a copy of the settings file iff --save_settings is set
+        # save a copy of the settings file iff --save-settings is set
         if args.save_settings:
             dir = os.path.join("settings", "runs")
             file = os.path.join(dir, f"{self.sjob}_{self.base_name}.json")
             os.makedirs(dir, exist_ok=True)
 
             if not os.path.exists(file):
-                logger.info(f"Saving run settings to file: {file}")
+                logger.info("Saving run settings to file: %s", file)
                 with open(file, "w") as f:
                     json.dump(self.settings, f, indent=2)
             else:
-                logger.warning(f"Settings file already exists: {file}, not overwriting")
+                logger.warning(
+                    "Settings file already exists: %s, not overwriting", file
+                )
 
     def parse_args(self, args=None):
         """
@@ -229,9 +233,10 @@ class Core:
         parser.add_argument("--npatches", type=int)
         parser.add_argument("--base_dir", type=str)
         parser.add_argument("--seed", type=int)
-        parser.add_argument("--base-name", type=str)
+        parser.add_argument("--base_name", type=str)
         parser.add_argument("--noise_scale_tt", type=float)
         parser.add_argument("--beam_width", type=float)
+        parser.add_argument("--lmax_buffer", type=int)
 
         parser.add_argument("--fnl_range", type=float, nargs=2)
 
@@ -241,13 +246,13 @@ class Core:
         # otherwise it will be none
         parser.add_argument("--lensing", action=argparse.BooleanOptionalAction)
         parser.add_argument("--noise", action=argparse.BooleanOptionalAction)
-        parser.add_argument("--force-generation", action=argparse.BooleanOptionalAction)
-        parser.add_argument("--force-ksw", action=argparse.BooleanOptionalAction)
+        parser.add_argument("--force_generation", action=argparse.BooleanOptionalAction)
+        parser.add_argument("--force_ksw", action=argparse.BooleanOptionalAction)
         parser.add_argument("--pols", action=argparse.BooleanOptionalAction)
 
         # this allows us to save a copy of the final settings used for the run
         # only really useful for debugging, must be provided by the CLI and not in the settings file
-        parser.add_argument("--save-settings", action="store_true")
+        parser.add_argument("--save_settings", action="store_true")
 
         # sets the model name to be used by the trainer
         parser.add_argument("--model", type=str)
@@ -269,12 +274,17 @@ class Core:
         """
         val = self.settings.get(name, None)
         if val is None:
-            logger.debug(f"Setting '{name}' not found, using default: {repr(default)}")
+            logger.debug(
+                "Setting '%s' not found, using default: %s", name, repr(default)
+            )
             return default
         else:
             if val != default:
                 logger.debug(
-                    f"Found non-default value for '{name}': {repr(val)} (default: {repr(default)})"
+                    "Found non-default value for '%s': %s (default: %s)",
+                    name,
+                    repr(val),
+                    repr(default),
                 )
             return val
 
@@ -287,7 +297,7 @@ class Core:
         in the inverse covariance. The beam width is set to 0 in this case.
 
         If the noise parameter is set to True, the noise and beam parameters are retrieved from the configuration
-        settings. The beam width and noise scales for temperature (TT), E-mode polarization (EE), and
+        settings. The beam width and noise scales for temperature (TT), E-mode polarization (EE), B-mode polarization (BB), and
         temperature-E-mode polarization (TE) are converted from muK arcminutes to muK radians.
 
         The beam and noise ell values are computed based on the polarization settings and stored in the
@@ -305,8 +315,9 @@ class Core:
         if not self.noise:
             # we cannot set the noise to 0 as this will cause a singular matrix in the inverse covariance
             # so we set it to a very small value in such a way that we will not get a singular matrix
-            noise_scale_tt = noise_scale_ee = noise_scale_bb = convert(1e-6)
-            noise_scale_te = convert(1e-12)
+            noise_scale_tt = noise_scale_ee = convert(1e-3)
+            noise_scale_bb = 0
+            noise_scale_te = convert(1e-6)
             self.beam_width = 0
         else:
             self.beam_width = convert(self._get("beam_width", 0))
@@ -338,8 +349,8 @@ class Core:
         This method sets up the radii and drs arrays based on the r_min and r_max attributes and a predefined set of ranges.
         See Smith and Zaldarriaga (2011) Section 5.2 for more details.
 
-        Side Effects:
-            Modifies the radii and drs attributes.
+        Attributes:
+            radii (numpy.ndarray): An array of radii for the bispectrum estimator.
         """
         #    start,  stop, resolution
         ranges = [
@@ -381,6 +392,8 @@ class Core:
 
         Attributes:
             sjob (str): The SLURM job ID.
+            n_cpus (int): The number of CPUs available for the job.
+            job_array_id (str): The id of the SLURM array job.
             job_array_index (int): The index of the current job in the SLURM array.
             is_main_job (bool): Indicates whether the current job is the main job.
 
@@ -388,7 +401,14 @@ class Core:
             ValueError: If the SLURM_ARRAY_TASK_COUNT does not match the narray value.
         """
         self.sjob = os.getenv("SLURM_JOB_ID", "-1")
-        logger.info(f"SLURM job id: {self.sjob}")
+        logger.debug("SLURM job id: %s", self.sjob)
+
+        # os.sched_getaffinity(0) gets the number of usable CPUs available, this is different from
+        # os.cpu_count() which gets the number of CPUs on the system
+        self.n_cpus = int(
+            os.getenv("SLURM_CPUS_PER_TASK", len(os.sched_getaffinity(0)))
+        )
+        logger.debug("Number of available CPUs: %s", self.n_cpus)
 
         job_tasks = os.getenv("SLURM_ARRAY_TASK_COUNT")
         if job_tasks is not None:
@@ -398,14 +418,18 @@ class Core:
                     "Make sure to update the sbatch scripts when changing narray."
                 )
 
+            self.job_array_id = os.getenv("SLURM_ARRAY_JOB_ID", "-1")
             self.job_array_index = int(os.getenv("SLURM_ARRAY_TASK_ID", "-1"))
-            logger.info(
-                f"SLURM array id: {os.getenv('SLURM_ARRAY_JOB_ID')}, index: {self.job_array_index} of {job_tasks} jobs"
+            logger.debug(
+                "SLURM array id: %s, index: %s of %s jobs",
+                self.job_array_id,
+                self.job_array_index,
+                job_tasks,
             )
 
             self.is_main_job = self.job_array_index == 1
         else:
-            self.job_array_index = None
+            self.job_array_id = self.job_array_index = None
             self.is_main_job = True
 
     def _init_paths(self):
@@ -413,21 +437,19 @@ class Core:
         Initializes the paths used by the MLPNG script.
 
         The method sets various directory paths based on the configuration parameters.
-        These paths include the base directory, plot directory, tensorboard directory,
-        model directory, alm directory, patch directory, and file paths for alm and patch files.
+        These paths include the base directory, plot directorymodel directory, data directory,
+        and file paths for data files.
 
         Attributes:
             base_dir (str): The base directory for the script.
             base_name (str): The base name for the files generated by the script.
             plot_dir (str): The directory for saving plot files.
-            tb_dir (str): The directory for saving TensorBoard files.
             model_dir (str): The directory for saving model files.
-            alm_dir (str): The directory for saving alm files.
-            patch_dir (str): The directory for saving patch files.
-            alm_file_partial (str): The file path for the partial alm file.
-            alm_file (str): The file path for the complete alm file.
-            patch_str (str): The string representation of the patch file.
-            patch_file (str): The file path for the patch file.
+            data_dir (str): The directory for saving data files.
+            file_partial (str): The file path for the partial data file.
+            file_complete (str): The file path for the complete data file.
+            mc_path (str): The directory for saving KSW Monte Carlo files.
+            mc_file (str): The file path for the KSW Monte Carlo file.
 
         Returns:
             None
@@ -439,20 +461,36 @@ class Core:
         lens = "l" if self.lensing else "ul"
         nn = "-nn" if not self.noise else ""
         j = "" if self.job_array_index is None else f"_{self.job_array_index}"
-        pol_str = "T" if not self.use_pols else "TEB"
+        pol_str = "T" if not self.use_pols else "TE"
 
-        self.base_dir = self._get("base_dir", "data")
         def_name = f"l{self.lmax}_n{self.nside}_{lens}{nn}_{pol_str}x{self.total_sims}"
         self.base_name = self._get("base_name", def_name)
-        logger.info(f"Using base name: {self.base_name}")
 
+        self.base_dir = self._get("base_dir", "data")
         self.plot_dir = join_paths(self._get("plot_dir", "plots"))
-        self.tb_dir = join_paths(self._get("tb_dir", "tensorboard"))
         self.model_dir = join_paths(self._get("model_dir", "models"))
 
         self.data_dir = join_paths(self._get("data_dir", "data"))
         self.file_partial = os.path.join(self.data_dir, f"{self.base_name}{j}.hdf5")
         self.file_complete = os.path.join(self.data_dir, f"{self.base_name}.hdf5")
+
+        self.mc_path = join_paths(self._get("mc_dir", "kswmc"))
+        self.mc_file = os.path.join(self.mc_path, f"{self.base_name}.hdf5")
+
+        # lets just make sure the main directories exist, saving the need to do this later
+        os.makedirs(self.base_dir, exist_ok=True)
+        os.makedirs(self.data_dir, exist_ok=True)
+        os.makedirs(self.plot_dir, exist_ok=True)
+        os.makedirs(self.mc_path, exist_ok=True)
+
+        logger.debug("Using base name: %s", self.base_name)
+        logger.debug("Using base directory: %s", self.base_dir)
+        logger.debug("Using plot directory: %s", self.plot_dir)
+        logger.debug("Using model directory: %s", self.model_dir)
+        logger.debug("Using data directory: %s", self.data_dir)
+        logger.debug("Using data file: %s", self.file_partial)
+        logger.debug("Using complete data file: %s", self.file_complete)
+        logger.debug("Using KSW MC file: %s", self.mc_file)
 
     def _init_cosmo(self):
         """

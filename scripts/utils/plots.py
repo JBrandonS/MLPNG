@@ -1,17 +1,19 @@
 import logging
 
 import healpy as hp
+from ksw import shape
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from pixell import curvedsky, enmap
-from sklearn.metrics import r2_score
+
+# from sklearn.metrics import r2_score
 
 logger = logging.getLogger(__name__)
 
 
-def plot_patches(patches, n_plots, title="Patches", save_file=None):
+def plot_patches(patches, n_plots=12, title="Patches", save_file=None):
     """
     Plot a grid of image patches.
 
@@ -49,59 +51,90 @@ def plot_patches(patches, n_plots, title="Patches", save_file=None):
 
 
 def plot_cl(
-    cl,
+    cls,
     lmax,
     title="Angular power spectrum from cl",
+    labels=None,
+    xlabel=r"$\ell$",
+    ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}$",
+    legend=True,
+    scale=True,
+    grid=True,
     save_file=None,
     plot_func=plt.semilogy,
     plot_camb=False,
-    c_ells=None,
-    camb_noise=False,
-    noise=None,
-    beam_width=None,
-    scale=True,
+    camb_cls=None,
+    plot_noise=False,
+    camb_noise=None,
+    camb_beam=None,
+    plot_full_camb=False,
 ):
-    """
-    Plot the angular power spectrum from cl.
+    r"""
+    Plots the angular power spectrum from given Cl values.
 
-    Args:
-        cl (array-like): Array of angular power spectrum values.
-        lmax (int): Maximum value of ell.
-        title (str, optional): Title of the plot. Defaults to "Angular power spectrum from cl".
-        save_file (str, optional): File path to save the plot. Defaults to None.
-        plot_func (function, optional): Plotting function to use. Defaults to plt.semilogy.
-        plot_camb (bool, optional): Whether to plot the camb values. Defaults to False.
-        c_ells (array-like, optional): Array of camb values. Required if plot_camb is True.
-        camb_pol (int, optional): The polarization from camb to plot. Defaults to 0.
-        camb_noise (bool, optional): Whether to plot camb values with noise. Defaults to False.
-        noise (array-like, optional): Array of noise values. Required if camb_noise is True.
-        beam_width (float, optional): Beam width value. Required if camb_noise is True.
-        scale (bool, optional): Whether to scale the values. Defaults to True.
+    Parameters:
+    cls (array-like): The Cl values to plot. Can be a single array or a list of arrays.
+    lmax (int): The maximum multipole moment to plot.
+    title (str, optional): The title of the plot. Default is "Angular power spectrum from cl".
+    labels (list of str, optional): The labels for each Cl array. Default is None.
+    xlabel (str, optional): The label for the x-axis. Default is r"$\ell$".
+    ylabel (str, optional): The label for the y-axis. Default is r"$\ell(\ell+1)/2\pi\;C_{\ell}$".
+    legend (bool, optional): Whether to display the legend. Default is True.
+    scale (bool, optional): Whether to scale the Cl values by $\ell(\ell+1)/2\pi$. Default is True.
+    grid (bool, optional): Whether to display the grid. Default is True.
+    save_file (str, optional): The file path to save the plot. If None, the plot is shown. Default is None.
+    plot_func (function, optional): The plotting function to use (e.g., plt.plot, plt.semilogy). Default is plt.semilogy.
+    plot_camb (bool, optional): Whether to plot CAMB Cl values. Default is False.
+    camb_cls (array-like, optional): The CAMB Cl values to plot. Default is None.
+    plot_noise (bool, optional): Whether to plot noise Cl values. Default is False.
+    camb_noise (array-like, optional): The noise Cl values to plot. Default is None.
+    plot_full_camb (bool, optional): Whether to plot the full CAMB Cl values. Default is False.
+    camb_beam (array-like, optional): The beam for CAMB Cl values. Default is None.
 
     Returns:
-        None
+    None
     """
-    nell = lmax + 1
-    ells = np.arange(2, nell)
-    scale = ells * (ells + 1) / 2 / np.pi if scale else 1
-    plot_func(ells, scale * cl[2:nell], label="data", linestyle=":")
+    if isinstance(labels, str):
+        labels = [labels]
+
+    ells = np.arange(2, lmax + 1)
+    scale = (ells * (ells + 1) / 2 / np.pi) if scale else 1
+
+    # plot the cls, supports single cls, and arrays of cls
+    if len(np.shape(cls)) == 2:
+        if np.shape(cls)[0] == 1:
+            label = labels[0] if labels is not None else "data"
+            plot_func(ells, scale * cls[0][ells], label=label, linestyle=":")
+        else:
+            for i, cl in enumerate(cls):
+                label = labels[i] if labels is not None else f"data {i}"
+                plot_func(ells, scale * cl[ells], label=label, linestyle=":")
+    else:
+        label = labels if labels is not None else "data"
+        plot_func(ells, scale * cls[ells], label=label, linestyle=":")
 
     if plot_camb:
-        if c_ells is None:
-            raise ValueError("Need to provide c_ells if plt_camb is True.")
+        if camb_cls is None:
+            raise ValueError("Need to provide camb_cls if plt_camb is True.")
+        plot_func(ells, scale * camb_cls[ells], label="camb")
 
-        camb_cl = c_ells[2:nell]
-        plot_func(ells, scale * camb_cl, label="camb")
+        if plot_noise:
+            if camb_noise is None:
+                raise ValueError("Need to provide noise if plotting noise.")
+            plot_func(
+                ells,
+                scale * camb_noise[ells],
+                label=r"noise",
+                linestyle="--",
+            )
 
-        if camb_noise:
-            if noise is None or beam_width is None:
+        if plot_full_camb:
+            if camb_noise is None or camb_beam is None:
                 raise ValueError(
-                    "Need to provide noise and beam_width if plotting camb with noise."
+                    "Need to provide camb_noise and camb_beam if plotting full camb."
                 )
 
-            beam = np.exp(-(ells * (ells + 1) * beam_width**2) / (16 * np.log(2)))
-
-            camb_cl_noise = camb_cl * beam**2 + noise[2:nell]
+            camb_cl_noise = camb_cls[ells] * camb_beam[ells] ** 2 + camb_noise[ells]
             plot_func(
                 ells,
                 scale * camb_cl_noise,
@@ -109,11 +142,13 @@ def plot_cl(
                 linestyle="--",
             )
 
-    plt.xlabel(r"$\ell$")
-    plt.ylabel(r"$\ell(\ell+1)/2\pi\;C_{\ell}$")
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
     plt.title(title)
-    plt.legend()
-    plt.grid()
+    if legend:
+        plt.legend()
+    if grid:
+        plt.grid()
 
     if save_file is not None:
         plt.savefig(save_file)
@@ -135,9 +170,14 @@ def plot_cl_alm(alm, lmax=None, title="Angular power spectrum from alm", **kwarg
     Returns:
     None
     """
-    cl = curvedsky.alm2cl(alm)
-    lmax = lmax if lmax else hp.Alm.getlmax(len(alm))
-    plot_cl(cl, lmax, title, **kwargs)
+    lmax = lmax if lmax else hp.Alm.getlmax(np.shape(alm)[-1])
+    if len(np.shape(alm)) > 1:
+        cls = []
+        for single_alm in alm:
+            cls.append(curvedsky.alm2cl(single_alm))
+    else:
+        cls = [curvedsky.alm2cl(alm)]
+    plot_cl(cls, lmax=lmax, title=title, **kwargs)
 
 
 def plot_cl_map(map, wcs, lmax, title="Angular power spectrum from map", **kwargs):
@@ -154,10 +194,17 @@ def plot_cl_map(map, wcs, lmax, title="Angular power spectrum from map", **kwarg
     Returns:
     None
     """
-    tmap = enmap.ndmap(map, wcs)
-    alm = curvedsky.map2alm(tmap, lmax=lmax)
-    cl = curvedsky.alm2cl(alm)
-    plot_cl(cl, lmax, title, **kwargs)
+    if len(np.shape(map)) > 1:
+        cls = []
+        for single_map in map:
+            tmap = enmap.ndmap(single_map, wcs)
+            alm = curvedsky.map2alm(tmap, lmax=lmax, copy=True)
+            cls.append(curvedsky.alm2cl(alm))
+    else:
+        tmap = enmap.ndmap(map, wcs)
+        alm = curvedsky.map2alm(tmap, lmax=lmax, copy=True)
+        cls = [curvedsky.alm2cl(alm)]
+    plot_cl(cls, lmax=lmax, title=title, **kwargs)
 
 
 def plot_predictions(
@@ -165,7 +212,6 @@ def plot_predictions(
     preds,
     title="Predictions",
     fisher=None,
-    scaled_variance=None,
     save_file=None,
 ):
     """
@@ -177,7 +223,6 @@ def plot_predictions(
         preds (array-like): The predicted labels.
         title (str, optional): The title of the plot. Defaults to "Predictions".
         fisher (float, optional): The Fisher value. Defaults to None.
-        scaled_variance (float, optional): The scaled variance value. Defaults to None.
         save_file (str, optional): The file path to save the plot. Defaults to None.
     """
     df = pd.DataFrame(
@@ -201,19 +246,6 @@ def plot_predictions(
         plt.plot(line, line + std_dev, color="blue", linestyle="--", label="Fisher")
         plt.plot(line, line - std_dev, color="blue", linestyle="--")
 
-    if scaled_variance is not None:
-        plt.plot(
-            line,
-            line + scaled_variance,
-            color="green",
-            linestyle="--",
-            label=r"Scaled Variance (1/$\sqrt{f_{sky} f}$)",
-        )
-        plt.plot(line, line - scaled_variance, color="green", linestyle="--")
-
-    # Line for perfect fit
-    r2 = r2_score(df["True Fnl"], df["Predicted Fnl"])
-    plt.text(min(truth), max(truth), f"$R^2$ = {r2:.2f}", verticalalignment="top")
     plt.title(title)
     # plt.legend()
 

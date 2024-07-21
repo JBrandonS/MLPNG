@@ -13,7 +13,7 @@ from .generator import generate_alm
 from .utils import save_data, setup_logging
 from .utils.plots import plot_histogram, plot_predictions
 
-from ksw import Data, KSW, Cosmology, Shape
+from ksw import KSW, Cosmology, Shape
 
 mpi_comm = MPI.COMM_WORLD
 mpi_rank = mpi_comm.Get_rank()
@@ -54,11 +54,9 @@ def icov_func(beam, noise, c_ells):
     npol = factor.shape[0]
 
     def _func(alm):
-        ret = np.empty_like(alm)
+        ret = np.zeros_like(alm)
         for pol in range(npol):
             ret[pol] = hp.almxfl(alm[pol], factor[pol])
-
-        ret[:, :2] = 0  # remove mono and dipole terms, just to be safe
         return ret
 
     return _func
@@ -78,9 +76,9 @@ def conv_beam_func(core, npol):  # change name
 
     def __beam(alm):
         # Convolve the beam with the alm values
-        ret = np.empty_like(alm)
+        ret = np.zeros_like(alm)
         for pol in range(npol):
-            ret[pol] = hp.almxfl(alm[pol], core.beam_ell[pol], inplace=False)
+            ret[pol] = hp.almxfl(alm[pol], core.beam_ell[pol])
         return ret
 
     return __beam
@@ -94,14 +92,19 @@ def compute_iso_icov(core, N, b):
         ["total"],
         "muK",
         True,
-    )["total"]
+    )[
+        "total"
+    ]  # TODO: fix this
     S_ell = np.transpose(S_ell, (1, 0))[: core.npol]
     b_inv = 1 / b
     return 1 / (S_ell + b_inv * N * b_inv)
 
 
 def run_ksw_step(ksw, core, theta_batch, num_steps=100):
+    logger.debug("Generating the ksw alms")
     alm_steps = generate_alm(core, num_steps)
+
+    logger.debug("Done")
 
     def step_loader(idx):
         """
@@ -110,11 +113,11 @@ def run_ksw_step(ksw, core, theta_batch, num_steps=100):
         logger.debug("Sending alm step %s", idx)
         return alm_steps[idx]
 
-    logger.info("Running KSW step")
-
+    logger.info("Running KSW step, num steps: %s", num_steps)
     ksw.step_batch(
         step_loader, np.arange(num_steps), comm=mpi_comm, theta_batch=theta_batch
     )
+    logger.info("Finished KSW step")
 
     # compute the new fisher and the distance
     fisher = ksw.compute_fisher()
@@ -144,24 +147,21 @@ def main():
     cosmo.compute_transfer(core.max_l)
     cosmo.compute_c_ell()
 
-    pols = tuple([pol for pol in core.pols if pol != "B"])  # remove the b-modes
-    npols = len(pols)
-    nnoise = 1 if npols == 1 else 3
-
-    noise = core.noise_ell[:nnoise]  # TODO check this
-    beam = core.beam_ell[:npols]
+    noise = core.noise_ell[: core.npol]
+    beam = core.beam_ell[: core.npol]
+    c_ells = core.c_ells[: core.npol]
 
     loc_shape = Shape.prim_local(cosmo_params["ns"], cosmo_params["pivot_scalar"])
     cosmo.add_prim_reduced_bispectrum(loc_shape, core.radii)
 
-    icov = icov_func(beam, noise[:npols], core.c_ells[:npols])
+    icov = icov_func(beam, noise, c_ells)
 
     ksw = KSW(
         cosmo.red_bispectra,
         icov,
-        conv_beam_func(core, npols),
+        conv_beam_func(core, core.npol),
         core.lmax,
-        pols,
+        core.pols,
         core.precision,
     )
 
@@ -171,36 +171,27 @@ def main():
     theta_batch = min(256, theta_batch)
     logger.debug("Using theta_batch %s", theta_batch)
 
-    # check for existing ksw state, if it exists, load it
-    # otherwise, run the MC, can take a few hours
-    mc_path = os.path.join(core.base_dir, "kswmc")
-    os.makedirs(mc_path, exist_ok=True)
-    mc_file = os.path.join(mc_path, f"{core.base_name}.hdf5")
-
     # remove the file to force its recreation
-    if core.force_ksw and os.path.exists(mc_file):
+    if core.force_ksw and os.path.exists(core.mc_file):
         logger.info("Removing existing KSW state")
-        os.remove(mc_file)
+        os.remove(core.mc_file)
 
-    if os.path.exists(mc_file):
-        logger.info("Loading KSW state from %s", mc_file)
-        ksw.start_from_read_state(mc_file, mpi_comm)
+    if os.path.exists(core.mc_file):
+        logger.info("Loading KSW state from %s", core.mc_file)
+        ksw.start_from_read_state(core.mc_file, mpi_comm)
     else:
         run_ksw_step(ksw, core, theta_batch)
 
         # save the mc state if we are using the mc file
         if mpi_root:
-            logger.info("Saving KSW state to %s", mc_file)
-            ksw.write_state(mc_file, mpi_comm)
+            logger.info("Saving KSW state to %s", core.mc_file)
+            ksw.write_state(core.mc_file, mpi_comm)
 
     fisher = float(ksw.compute_fisher())
     logger.info("Fisher: %s, standard deviation: %s", fisher, np.sqrt(1 / fisher))
 
     # note that these are not fully loaded into memory
-    if core.lensing:
-        alms = data["alm_lensed"]
-    else:
-        alms = data["alm"]
+    alms = data["alm_lensed"] if core.lensing else data["alm"]
     fnls = data["fnl"]
 
     idxs = np.arange(core.num_estimates)
@@ -209,6 +200,11 @@ def main():
         core.num_estimates,
         core.num_estimates / mpi_size,
     )
+    if core.num_estimates % mpi_size != 0:
+        logger.debug(
+            "WARNING: num_estimates is not divisible by mpi_size, "
+            "this will lead to uneven workloads."
+        )
 
     def estimator_loader(idx):
         """Loads in a single alm given an idx."""
@@ -221,7 +217,6 @@ def main():
         comm=mpi_comm,
         fisher=fisher,
         theta_batch=theta_batch,
-        verbose=True,
     )
 
     if mpi_root:
@@ -252,10 +247,19 @@ def main():
 
         diff = estimates - fnls
         std_dev = np.sqrt(1 / fisher)
+        sem = std_dev / np.sqrt(len(diff))
+        logger.info("Standard deviation: %s, SEM: %s", std_dev, sem)
         for i in range(5):
             within = np.sum(np.abs(diff) < ((i + 1) * std_dev))
             percentage = within / len(diff) * 100
-            logger.info("%s%% are within %s standard deviations", percentage, i + 1)
+            within_error = np.sum(np.abs(diff) < ((i + 1) * (std_dev + sem)))
+            percentage_error = within_error / len(diff) * 100
+            logger.info(
+                "%s%% are within %s standard deviations, and %s%% are within standard deviations with error.",
+                percentage,
+                i + 1,
+                percentage_error,
+            )
 
     logger.info("Finished %s!", mpi_rank)
 

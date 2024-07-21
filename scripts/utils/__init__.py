@@ -3,7 +3,7 @@ from .utils import (
     save_data,
     load_data,
     remove_mono_dipole,
-    get_fisher,
+    get_fisher
 )
 from .plots import (
     plot_cl,

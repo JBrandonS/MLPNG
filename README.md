@@ -34,7 +34,7 @@ The training is controlled by the `scripts/models/` files, which specify the arc
    - `module load conda nvidia/nvhpc`
 2. Create and setup a Python environment with the required packages
    - I have provided `conda-envs/mlpng-gpu.yml` which is the conda env I use on Superpod.
-       - If you have issues installing mpi4py with the nvhpc module, try `CFLAGS=-noswitcherror pip install mpi4py`
+       - If you have issues installing mpi4py with the nvhpc module, try `CFLAGS=-noswitcherrors pip install mpi4py`
 3. Ensure your data is available in the path expected by the settings file, you can override this with `base_dir` in the settings file or via the command line.
 4. You can now run the code, using `trainer.sh`, or by running the `scripts/trainer.py` with a `--model` argument. Read below for more information.
 

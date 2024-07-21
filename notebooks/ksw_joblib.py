@@ -126,14 +126,15 @@ class KSW_joblib(OriginalKSW):
         grad_t = utils.a_ell_m2alm(grad_t).astype(self.cdtype)
         return grad_t
 
-    def _process_file_step(self, alm_loader, alm_file, **kwargs):
-        logger.info("Processing %s", alm_file)
+    def _process_file_step(self, alm_loader, alm_file, verbose=False, **kwargs):
+        if verbose:
+            logger.info("Processing %s", alm_file)
         alm = alm_loader(alm_file)
         grad_t = self._step(alm, **kwargs)
         mc_gt_sq = utils.contract_almxblm(grad_t, self.icov(self.beam(np.conj(grad_t))))
         return grad_t, mc_gt_sq
 
-    def step_batch(self, alm_loader, alm_files, **kwargs):
+    def step_batch(self, alm_loader, alm_files, verbose=False, **kwargs):
         # Monte carlo quantities local to rank.
         mc_idx_loc = 0
         mc_gt_sq_loc = 0
@@ -141,7 +142,9 @@ class KSW_joblib(OriginalKSW):
 
         # Combine the results
         for alm_file in alm_files:
-            grad_t, mc_gt_sq = self._process_file_step(alm_loader, alm_file, **kwargs)
+            grad_t, mc_gt_sq = self._process_file_step(
+                alm_loader, alm_file, verbose, **kwargs
+            )
             mc_gt_loc += grad_t
             mc_gt_sq_loc += mc_gt_sq
             mc_idx_loc += 1
@@ -150,7 +153,7 @@ class KSW_joblib(OriginalKSW):
         self.mc_gt_sq = mc_gt_sq_loc
         self.mc_idx = mc_idx_loc
 
-    def compute_estimate_batch(self, alm_loader, alm_files, **kwargs):
+    def compute_estimate_batch(self, alm_loader, alm_files, verbose=False, **kwargs):
         estimates = np.zeros(len(alm_files))
         fisher = kwargs.pop("fisher", self.compute_fisher())
 
@@ -159,14 +162,19 @@ class KSW_joblib(OriginalKSW):
             alm_file = alm_files[aidx]
             alm = alm_loader(alm_file)
 
-            estimate = self.compute_estimate(alm, fisher=fisher, **kwargs)
-            logger.info("Estimate: {}".format(estimate))
+            estimate = self.compute_estimate(
+                alm, fisher=fisher, verbose=verbose, **kwargs
+            )
+            if verbose:
+                logger.info("Estimate: %s", estimate)
 
             estimates[aidx] = estimate
 
         return estimates
 
-    def compute_estimate(self, alm, theta_batch=25, fisher=None, lin_term=None):
+    def compute_estimate(
+        self, alm, theta_batch=25, fisher=None, lin_term=None, verbose=False
+    ):
         # Similar to step, but only do backward transform, multiply alm with linear term
         # and apply normalization.
 
@@ -203,5 +211,8 @@ class KSW_joblib(OriginalKSW):
         )
 
         t_cubic = sum(estimates)
-        logger.debug("t_cubic: %s, lin_term: %s, fisher: %s", t_cubic, lin_term, fisher)
+        if verbose:
+            logger.debug(
+                "t_cubic: %s, lin_term: %s, fisher: %s", t_cubic, lin_term, fisher
+            )
         return (t_cubic - lin_term) / fisher

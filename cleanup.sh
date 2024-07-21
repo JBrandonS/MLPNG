@@ -77,6 +77,10 @@ if [[ ! $(squeue --me -h -n jupyter) && -f .jupyter.out ]]; then
     rm .jupyter.out
 fi
 
+if [[ ! $(squeue --me -h -n jupyter-dev) && -f .jupyter-dev.out ]]; then
+    rm .jupyter-dev.out
+fi
+
 # logs
 rm -rvf logs/*
 
