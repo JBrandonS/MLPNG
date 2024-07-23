@@ -5,17 +5,13 @@
         "ns": 0.9649,
         "ombh2": 0.0224,
         "omch2": 0.120,
-        "tau": 0.054,
-        "lmax": 256
+        "tau": 0.054
     },
     "nsims" : 1000,
     "narray": 100,                   
     "npatches" : 10,
     "fnl_range":[-1000, 1000],        
-    "nside": 64,
-    "noise": true,
+    "nside": 128,
     "noise_scale_tt" : 500, 
-    "noise_scale_ee" : 50,
-    "noise_scale_te" : 5,
-    "beam_width" : 10
+    "beam_width" : 0
 }
