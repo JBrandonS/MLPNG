@@ -4,6 +4,7 @@ remove_data=false
 remove_plots=false
 remove_tf=false
 remove_models=false
+remove_ksw=false
 
 print_help () {
     echo "Usage: $0 [options]"
@@ -13,6 +14,7 @@ print_help () {
     echo "Options:"
     echo "  -m, --models    Remove the model data"
     echo "  -d, --data      Remove the data files"
+    echo "  -k, --ksw       Remove the ksw mc files"
     echo "  -p, --plots     Remove all plots"
     echo "  -t, --tf        Remove all misc tensorflow logs, such as tuning, tensorboard, and wandb logs"
     echo "  --all           Remove everything"
@@ -23,8 +25,8 @@ print_help () {
 
 # Parse the CLI arguments
 if ! valid_args=$(getopt \
-    -o mdpth \
-    --long models,data,plots,tf,all,help \
+    -o mdptkh \
+    --long models,data,plots,ksw,tf,all,help \
     -- "$@"
 ); then
     # invalid arguments found, print usage and exit
@@ -50,6 +52,10 @@ while [ $# -gt 0 ]; do
         remove_data=true
         shift
         ;;
+    -k | --ksw)
+        remove_ksw=true
+        shift
+        ;;
     -p | --plots)
         remove_plots=true
         shift
@@ -60,6 +66,7 @@ while [ $# -gt 0 ]; do
         ;;
     --all)
         remove_data=true
+        remove_ksw=true
         remove_models=true
         remove_plots=true
         remove_tf=true
@@ -88,9 +95,11 @@ if [[ "$remove_plots" == true ]]; then
     rm -rvf data/plots/*
 fi
 
-# some data
 if [[ "$remove_data" == true ]]; then
     rm -rvf data/data/*
+fi
+
+if [[ "$remove_ksw" == true ]]; then
     rm -rvf data/kswmc/*
 fi
 
