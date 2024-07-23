@@ -134,7 +134,7 @@ class KSW_joblib(OriginalKSW):
         mc_gt_sq = utils.contract_almxblm(grad_t, self.icov(self.beam(np.conj(grad_t))))
         return grad_t, mc_gt_sq
 
-    def step_batch(self, alm_loader, alm_files, verbose=False, **kwargs):
+    def step_batch(self, alm_loader, alm_files, comm=None, verbose=False, **kwargs):
         # Monte carlo quantities local to rank.
         mc_idx_loc = 0
         mc_gt_sq_loc = 0
