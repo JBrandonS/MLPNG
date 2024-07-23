@@ -7,29 +7,28 @@
 
 #### Uncomment to run the heidelberg estimator test
 # see the heidelberg.txt file for information and code to get the files
-# JOBH_ID=$(sbatch "sbatch/heidelberg.sbatch" | awk '{print $4}')
-# echo "Submitted Heidelberg Estimator with ID $JOBH_ID"
+JOBH_ID=$(sbatch "sbatch/heidelberg.sbatch" | awk '{print $4}')
+echo "Submitted Heidelberg Estimator with ID $JOBH_ID"
 
 
 # list of the settings file to be used, will be ran in order
 # these must be in settings/ and have the .json extension
 SETTINGS=(
-  "l256_n64"
-  # "l500_n128"
-  # "heidelberg"
-  # "planck"
-  # "l2000_n2048"
+  "n64"
+  "n128"
+  "heidelberg"
+  "planck"
+  "n2048"
 )
 
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
 ARGS=(
   "--nsims" "100"
-  # "--lensing"
-  # "--noise" 
-  # "--base_name" "planck_fnl50"
-  # "--fnl_range" "-50" "50"
+  "--lensing"
+  # "--no-noise" 
+  "--pols"
   # "--force_generation"
-  # "--pols"
+  "--force_ksw"
   "--narray" "1"
 )
 

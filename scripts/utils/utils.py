@@ -99,7 +99,7 @@ def save_data(file_path, data_dict, mode="x", remove_if_exists=False):
                     )
             else:
                 # For other data types, create a dataset
-                logger.warning("Creating dataset for key %s of unknown type", key)
+                logger.debug("Creating dataset for key %s of type %s", key, type(value))
                 hf.create_dataset(key, data=value)
             logger.debug("%s: Done", key)
     logger.debug("Finished saving %s", file_path)

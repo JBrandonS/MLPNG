@@ -1,19 +1,16 @@
 import logging
 
 import healpy as hp
-from ksw import shape
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from pixell import curvedsky, enmap
 
-# from sklearn.metrics import r2_score
-
 logger = logging.getLogger(__name__)
 
 
-def plot_patches(patches, n_plots=12, title="Patches", save_file=None):
+def plot_patches(patches, n_plots=8, title="Patches", save_file=None):
     """
     Plot a grid of image patches.
 
@@ -94,39 +91,16 @@ def plot_cl(
     Returns:
     None
     """
-    if isinstance(labels, str):
-        labels = [labels]
-
-    ells = np.arange(2, lmax + 1)
-    scale = (ells * (ells + 1) / 2 / np.pi) if scale else 1
-
-    # plot the cls, supports single cls, and arrays of cls
-    if len(np.shape(cls)) == 2:
-        if np.shape(cls)[0] == 1:
-            label = labels[0] if labels is not None else "data"
-            plot_func(ells, scale * cls[0][ells], label=label, linestyle=":")
-        else:
-            for i, cl in enumerate(cls):
-                label = labels[i] if labels is not None else f"data {i}"
-                plot_func(ells, scale * cl[ells], label=label, linestyle=":")
-    else:
-        label = labels if labels is not None else "data"
-        plot_func(ells, scale * cls[ells], label=label, linestyle=":")
-
+    # check args and ensure shape is correct
     if plot_camb:
         if camb_cls is None:
             raise ValueError("Need to provide camb_cls if plt_camb is True.")
-        plot_func(ells, scale * camb_cls[ells], label="camb")
+        camb_cls = np.atleast_2d(camb_cls)
 
         if plot_noise:
             if camb_noise is None:
                 raise ValueError("Need to provide noise if plotting noise.")
-            plot_func(
-                ells,
-                scale * camb_noise[ells],
-                label=r"noise",
-                linestyle="--",
-            )
+            camb_noise = np.atleast_2d(camb_noise)
 
         if plot_full_camb:
             if camb_noise is None or camb_beam is None:
@@ -134,13 +108,50 @@ def plot_cl(
                     "Need to provide camb_noise and camb_beam if plotting full camb."
                 )
 
-            camb_cl_noise = camb_cls[ells] * camb_beam[ells] ** 2 + camb_noise[ells]
+            camb_noise = np.atleast_2d(camb_noise)
+            camb_beam = np.atleast_2d(camb_beam)
+            camb_cl_full = camb_cls * camb_beam**2 + camb_noise
+
+    ells = np.arange(2, lmax + 1)
+    scale = (ells * (ells + 1) / 2 / np.pi) if scale else 1
+    cls = np.atleast_2d(cls)
+    npols = cls.shape[0]
+
+    if labels is not None:
+        if isinstance(labels, str):
+            labels = [labels]
+
+        if len(labels) != npols:
+            raise ValueError("Number of labels must match number of Cl arrays.")
+    else:
+        labels = ["data"] if npols == 1 else [f"data {i}" for i in range(npols)]
+
+    for pol in range(npols):
+        plot_func(ells, scale * cls[pol, ells], label=labels[pol], linestyle=":")
+
+        if plot_camb:
+            pol_str = "" if npols == 1 else f", {pol}"
             plot_func(
                 ells,
-                scale * camb_cl_noise,
-                label=r"camb * beam$^2$ + noise",
-                linestyle="--",
+                scale * camb_cls[pol, ells],
+                label="camb" + pol_str,
             )
+
+            if plot_noise:
+                plot_func(
+                    ells,
+                    scale * camb_noise[pol, ells],
+                    label=r"noise" + pol_str,
+                    linestyle="--",
+                )
+
+            if plot_full_camb:
+                plot_func(
+                    ells,
+                    scale * camb_cl_full[pol, ells],
+                    label=r"camb * beam$^2$ + noise" + pol_str,
+                    linestyle="--",
+                )
 
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)

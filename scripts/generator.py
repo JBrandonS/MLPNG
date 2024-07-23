@@ -8,7 +8,6 @@ from joblib import Parallel, delayed
 from scipy.interpolate import CubicSpline, interp1d
 from scipy.integrate import simpson
 from tqdm.auto import tqdm
-from itertools import product
 
 import lenspyx
 from pixell import curvedsky, enmap, reproject
@@ -17,7 +16,7 @@ from ksw.radial_functional import radial_func
 
 from . import Core
 from .utils import remove_mono_dipole, save_data, setup_logging
-from .utils.plots import plot_cl_alm
+from .utils.plots import plot_cl_alm, plot_patches
 
 logger = setup_logging(__name__, level=logging.DEBUG)
 
@@ -48,12 +47,11 @@ def integrand(alm, bl_div_cl, alpha_l, nside, lmax, radii):
 
     Parameters:
     alm (ndarray): The input spherical harmonic coefficients.
-    bl_div_cl (ndarray): The division of beam transfer function and C_l.
+    bl_div_cl (ndarray): The division of beta_ell function and C_l.
     alpha_l (ndarray): The alpha_l coefficients.
-    r (float): The radial distance.
-    dr (float): The differential radial distance.
     nside (int): The HEALPix nside parameter.
     lmax (int): The maximum multipole moment.
+    radii (float): the radii at which we are evaluating
 
     Returns:
     ndarray: The calculated integrand.
@@ -71,13 +69,24 @@ def integrand(alm, bl_div_cl, alpha_l, nside, lmax, radii):
     B = hp.alm2map(Balm, nside, lmax)
     inner = hp.map2alm(B**2, lmax, use_pixel_weights=True)
     if npols == 1:
-        inner = np.ascontiguousarray([inner])
+        inner = [inner]
+    inner = np.ascontiguousarray(inner)
 
     results = np.array([hp.almxfl(inner[pol], alpha_l[:, pol]) for pol in range(npols)])
     return radii**2 * results
 
 
 def generate_alm(core, nsims=None):
+    """
+    generates the gaussian alms using the given core.
+
+    Parameters:
+    - core: The core object containing necessary parameters and data.
+    - nsims: The number of simulations to generate. Default is None.
+
+    Returns:
+    - sims: The generated alms.
+    """
     if nsims is None:
         nsims = core.nsims
 
@@ -92,7 +101,7 @@ def generate_alm(core, nsims=None):
 
     # ensure totcov is contiguous (all in the same block of memory) to make computations faster
     totcov = np.ascontiguousarray(totcov)
-    sims = [hp.synalm(totcov, new=True) for _ in range(nsims)]
+    sims = [hp.synalm(totcov, new=True)[: core.npol] for _ in range(nsims)]
     return np.array(sims)
 
 
@@ -121,6 +130,7 @@ def generate_alm_ng(core, alms):
     # first will be for alpha_ell, second will be beta_ell
     f_k = np.ones((len(tr_k), 2), dtype=core.r_dtype)
     pk = core.cosmo.camb_params.primordial_power(tr_k, 0)
+    # f_k[:, 0] = 1
     f_k[:, 1] = 2 * np.pi**2 / (tr_k ** (4 - core.cosmo_params["ns"])) * pk
 
     # the radian_func does the f_ell^X(r) = (2/pi) int k^2 dk f(k) transfer^X_ell(k) j_ell(k r),
@@ -139,8 +149,8 @@ def generate_alm_ng(core, alms):
     bl_div_cl[:, lmin:, : core.npol] = beta_l[:, lmin:, : core.npol] / c_ells
 
     # set the monopole and dipole to 0
-    alpha_l[:, :lmin] = 0
-    bl_div_cl[:, :lmin] = 0
+    # alpha_l[:, :lmin] = 0
+    # bl_div_cl[:, :lmin] = 0
 
     # ensure all arrays are contiguous
     alpha_l = np.ascontiguousarray(alpha_l)
@@ -189,6 +199,23 @@ def main():
     """
     core = Core()
 
+    # check for existing data files, if we are forcing generation, remove them
+    # otherwise we exit with 0 so the script can keep going
+    if os.path.exists(core.file_partial):
+        if core.force_gen:
+            logger.info("Removing existing partial file")
+            os.remove(core.file_partial)
+        else:
+            logger.info("Partial data file exists, exiting")
+            sys.exit(0)
+    if os.path.exists(core.file_complete):
+        if core.force_gen:
+            logger.info("Removing existing partial file")
+            os.remove(core.file_complete)
+        else:
+            logger.info("Data file exists, exiting")
+            sys.exit(0)
+
     # Get our gaussian alms, very fast so no need to parallelize
     logger.info("Starting Alm generation")
     alm_l = generate_alm(core)
@@ -202,7 +229,7 @@ def main():
     # generate the fnls
     fnls = core.rng.uniform(core.fnl_min, core.fnl_max, core.fnl_shape)
 
-    # finally combine into the full alms and remove the monopole and dipole terms by setting them to 0
+    # finally combine into the full alms and remove the monopole and dipole terms
     alms = alm_l + fnls[:, np.newaxis, :] * alm_ng
     alms = remove_mono_dipole(alms)
 
@@ -214,7 +241,9 @@ def main():
     res = ps_rad / core.nside
 
     fs_shape, fs_wcs = enmap.fullsky_geometry(res, proj="car")
-    fs_shape = (3,) + fs_shape if core.use_pols else (1,) + fs_shape
+    # need to add a B mode dim if we are using E modes, this is used for some lensing
+    full_pol = 3 if core.use_pols else core.npol
+    fs_shape = (full_pol,) + fs_shape
     fs_map = enmap.zeros(fs_shape, fs_wcs)
 
     patch_shapes = []
@@ -235,12 +264,12 @@ def main():
     if core.lensing:
         logger.debug("Getting lensing cl_phi and data")
         cl_phi = core.cosmo._camb_data.get_lens_potential_cls(  # type: ignore
-            core.max_l, CMB_unit="muK", raw_cl=True
+            core.lmax, CMB_unit="muK", raw_cl=True
         )
-        plm = lenspyx.utils_hp.synalm(cl_phi[:, 0], lmax=core.max_l, mmax=None)
+        plm = lenspyx.utils_hp.synalm(cl_phi[:, 0], core.lmax, mmax=None)
 
         # transform the lensing potential into spin-1 deflection field
-        fl = np.sqrt(np.arange(core.max_l + 1) * np.arange(1, core.max_l + 2))
+        fl = np.sqrt(np.arange(core.lmax + 1) * np.arange(1, core.lmax + 2))
         dlm = lenspyx.utils_hp.almxfl(plm, fl, mmax=None, inplace=False)
 
         geom_info = ("healpix", {"nside": core.nside})
@@ -250,9 +279,10 @@ def main():
         logger.debug("Lensing alms and getting patches")
         # create our data arrays, using empty here for speed and notice forcing npols to 3 for B mode
         patches = np.empty(
-            (core.nsims, core.npatches, 3, core.nside, core.nside), dtype=core.r_dtype
+            (core.nsims, core.npatches, full_pol, core.nside, core.nside),
+            dtype=core.r_dtype,
         )
-        alm_lensed = np.empty((core.nsims, 3, core.nelem), dtype=core.c_dtype)
+        alm_lensed = np.empty((core.nsims, full_pol, core.nelem), dtype=core.c_dtype)
 
         # actually lens the alms and cut the patches
         for sim in tqdm(
@@ -264,14 +294,39 @@ def main():
             alm_lensed[sim, 0] = geom.map2alm(
                 lens_map[0], core.lmax, core.lmax, nthreads=core.n_cpus
             )
-            alm_lensed[sim, 1:] = geom.map2alm_spin(
-                lens_map[1:], 2, core.lmax, core.lmax, nthreads=core.n_cpus
-            )
+            if core.use_pols:
+                alm_lensed[sim, 1:] = geom.map2alm_spin(
+                    lens_map[1:], 2, core.lmax, core.lmax, nthreads=core.n_cpus
+                )
 
             # cut the patches
             pixell_map = reproject.healpix2map(lens_map, fs_shape, fs_wcs, core.lmax)
             for i in range(core.npatches):
-                patches[i] = pixell_map.project(patch_shapes[i], patch_wcss[i])
+                patches[sim, i] = pixell_map.project(patch_shapes[i], patch_wcss[i])
+
+        # lets make a plot
+        if core.is_main_job:
+            import matplotlib.pyplot as plt
+
+            sim = core.rng.integers(core.nsims)
+            # Create a figure with subplots
+            _, axes = plt.subplots(
+                1, core.npol, figsize=(15, 5), subplot_kw={"projection": "mollweide"}
+            )
+            axes = np.atleast_1d(axes)
+            for pol in range(core.npol):
+                # Create the mollview plot in the corresponding subplot
+                plt.axes(axes[pol])
+                hp.mollview(
+                    lens_map[pol],
+                    title=f"Simulation {sim}, Polarization {pol}",
+                    hold=True,
+                )
+
+            plot_path = os.path.join(
+                core.plot_dir, f"{core.sjob}_{core.base_name}_lensed.png"
+            )
+            plt.savefig(plot_path)
     else:
         logger.debug("Getting patches")
         patches = np.empty(
@@ -280,11 +335,8 @@ def main():
         )
 
         if core.use_pols:
-            # add a zero B to we can apply spins, might change this
-            alms = np.concatenate(
-                (alms, np.zeros((core.nsims, 1, core.nelem), dtype=core.c_dtype)),
-                axis=1,
-            )
+            # need to add a zero for the spin-2 component
+            alms = np.concatenate((alms, np.zeros((core.nsims, 1, core.nelem))), axis=1)
 
         for sim in tqdm(range(core.nsims), desc="Patching", total=core.nsims):
             car_map = curvedsky.alm2map(
@@ -292,9 +344,18 @@ def main():
             )
 
             for i in range(core.npatches):
-                patch = car_map.project(patch_shapes[i], patch_wcss[i])  # type: ignore
-                patches[sim, i] = patch
+                patches[sim, i] = car_map.project(patch_shapes[i], patch_wcss[i])[: core.npol]  # type: ignore
+        logger.debug("Done")
     logger.info("Done!")
+
+    # lets plot the patches
+    if core.is_main_job:
+        sim = core.rng.integers(core.nsims)
+        for pol in range(core.npol):
+            patch_file = os.path.join(
+                core.plot_dir, f"{core.sjob}_{core.base_name}_patch[{sim},{pol}].png"
+            )
+            plot_patches(patches[sim, :, pol], save_file=patch_file)
 
     logger.info("Saving data")
 
@@ -307,26 +368,23 @@ def main():
     save_data(core.file_partial, sdata, remove_if_exists=True)
 
     if core.is_main_job:
-        plot_dir = os.path.join(core.plot_dir, "generator")
-        os.makedirs(plot_dir, exist_ok=True)
+        sim = core.rng.integers(core.nsims)
+        for pol in range(core.npol):
+            filebase = os.path.join(
+                core.plot_dir, f"{core.sjob}_{core.base_name}_alm[{sim},{pol}].png"
+            )
 
-        i, j = core.rng.integers(core.nsims), core.rng.integers(core.npol)
-        logger.debug("Making plots for alm[%d,%d]", i, j)
-        filebase = os.path.join(
-            plot_dir, f"{core.sjob}_{core.base_name}_alm[{i},{j}].png"
-        )
-
-        # plot the complete alms with noise
-        plot_cl_alm(
-            alms[i, j],
-            save_file=filebase,
-            plot_camb=True,
-            camb_cls=core.c_ells[j],
-            plot_noise=True,
-            plot_full_camb=True,
-            camb_noise=core.noise_ell[j],
-            camb_beam=core.beam_ell[j],
-        )
+            # plot the complete alms with noise
+            plot_cl_alm(
+                alms[sim, pol],
+                save_file=filebase,
+                plot_camb=True,
+                camb_cls=core.c_ells[pol],
+                plot_noise=True,
+                plot_full_camb=True,
+                camb_noise=core.noise_ell[pol],
+                camb_beam=core.beam_ell[pol],
+            )
 
     logger.info("Finished %s!", core.sjob)
 

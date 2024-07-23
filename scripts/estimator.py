@@ -54,7 +54,7 @@ def icov_func(beam, noise, c_ells):
     npol = factor.shape[0]
 
     def _func(alm):
-        ret = np.zeros_like(alm)
+        ret = np.empty_like(alm)
         for pol in range(npol):
             ret[pol] = hp.almxfl(alm[pol], factor[pol])
         return ret
@@ -62,7 +62,7 @@ def icov_func(beam, noise, c_ells):
     return _func
 
 
-def conv_beam_func(core, npol):  # change name
+def conv_beam_func(core):  # change name
     """
     Returns a function which KSW can use to convolve the alms with the beam.
     If beam_width is 0, returns the identity function.
@@ -76,8 +76,8 @@ def conv_beam_func(core, npol):  # change name
 
     def __beam(alm):
         # Convolve the beam with the alm values
-        ret = np.zeros_like(alm)
-        for pol in range(npol):
+        ret = np.empty_like(alm)
+        for pol in range(core.npol):
             ret[pol] = hp.almxfl(alm[pol], core.beam_ell[pol])
         return ret
 
@@ -92,41 +92,35 @@ def compute_iso_icov(core, N, b):
         ["total"],
         "muK",
         True,
-    )[
-        "total"
-    ]  # TODO: fix this
+    )["total"]
     S_ell = np.transpose(S_ell, (1, 0))[: core.npol]
     b_inv = 1 / b
     return 1 / (S_ell + b_inv * N * b_inv)
 
 
 def run_ksw_step(ksw, core, theta_batch, num_steps=100):
-    logger.debug("Generating the ksw alms")
+    logger.debug("Generating %s ksw step alms", num_steps)
     alm_steps = generate_alm(core, num_steps)
-
     logger.debug("Done")
 
     def step_loader(idx):
-        """
-        for stepping the KSW estimator, we just generate new unique sims
-        """
+        """for stepping the KSW estimator, we just generate new unique sims"""
         logger.debug("Sending alm step %s", idx)
-        return alm_steps[idx]
+        return alm_steps[idx, : core.npol]
 
     logger.info("Running KSW step, num steps: %s", num_steps)
-    ksw.step_batch(
-        step_loader, np.arange(num_steps), comm=mpi_comm, theta_batch=theta_batch
-    )
+    ksw.step_batch(step_loader, range(num_steps), mpi_comm, theta_batch=theta_batch)
     logger.info("Finished KSW step")
 
     # compute the new fisher and the distance
-    fisher = ksw.compute_fisher()
-    icov_ell = compute_iso_icov(
-        core, core.noise_ell[: core.npol], core.beam_ell[: core.npol]
-    )
-    fisher_iso = ksw.compute_fisher_isotropic(icov_ell)
-    distance = np.abs(fisher - fisher_iso)
-    logger.debug("Fisher distance: %s", distance)
+    if logger.isEnabledFor(logging.DEBUG):
+        fisher = ksw.compute_fisher()
+        icov_ell = compute_iso_icov(
+            core, core.noise_ell[: core.npol], core.beam_ell[: core.npol]
+        )
+        fisher_iso = ksw.compute_fisher_isotropic(icov_ell)
+        distance = np.abs(fisher - fisher_iso)
+        logger.debug("Fisher distance: %s, iso Fisher: %s", distance, fisher_iso)
 
 
 def main():
@@ -139,7 +133,7 @@ def main():
     ), "total_sims < mpi_size, lower ntasks or increase sims"
 
     # early loading to fail fast if the file does not exist
-    data = h5py.File(core.file_complete, "r", swmr=True, locking=False)
+    data_file = h5py.File(core.file_complete, "r", swmr=True, locking=False)
 
     # we need to setup the KSW here
     cosmo_params = core.cosmo_params
@@ -159,7 +153,7 @@ def main():
     ksw = KSW(
         cosmo.red_bispectra,
         icov,
-        conv_beam_func(core, core.npol),
+        conv_beam_func(core),
         core.lmax,
         core.pols,
         core.precision,
@@ -191,10 +185,10 @@ def main():
     logger.info("Fisher: %s, standard deviation: %s", fisher, np.sqrt(1 / fisher))
 
     # note that these are not fully loaded into memory
-    alms = data["alm_lensed"] if core.lensing else data["alm"]
-    fnls = data["fnl"]
+    alms = data_file["alm_lensed"] if core.lensing else data_file["alm"]
+    fnls = data_file["fnl"]
 
-    idxs = np.arange(core.num_estimates)
+    idxs = range(core.num_estimates)
     logger.info(
         "Computing %s estimates in %.2f batches",
         core.num_estimates,
@@ -202,14 +196,14 @@ def main():
     )
     if core.num_estimates % mpi_size != 0:
         logger.debug(
-            "WARNING: num_estimates is not divisible by mpi_size, "
+            "num_estimates is not divisible by mpi_size, "
             "this will lead to uneven workloads."
         )
 
     def estimator_loader(idx):
         """Loads in a single alm given an idx."""
         logger.debug("Sending %s with fnl %s", idx, fnls[idx])
-        return np.array(alms[idx, : core.npol])
+        return alms[idx, : core.npol]
 
     estimates = ksw.compute_estimate_batch(
         estimator_loader,
@@ -226,23 +220,23 @@ def main():
 
         # alm_file is read only and we need to append to it
         # close it, so we can open in append mode
-        data.close()
+        data_file.close()
 
         # save the data, this will append to the alm_file
         sdata = {}
-        sdata["fisher"] = [fisher]
+        sdata["fisher"] = np.atleast_1d(fisher)
         sdata["estimate"] = estimates
         sdata["error"] = (estimates - fnls) * np.sqrt(fisher)
         save_data(core.file_complete, sdata, mode="a")
 
-        # make and save some plots
-        plot_dir = os.path.join(core.plot_dir, "estimator")
-        os.makedirs(plot_dir, exist_ok=True)
-
-        pred_file = os.path.join(plot_dir, f"{core.sjob}_{core.base_name}_preds.png")
+        pred_file = os.path.join(
+            core.plot_dir, f"{core.sjob}_{core.base_name}_preds.png"
+        )
         plot_predictions(fnls, estimates, fisher=fisher, save_file=pred_file)
 
-        hist_file = os.path.join(plot_dir, f"{core.sjob}_{core.base_name}_hist.png")
+        hist_file = os.path.join(
+            core.plot_dir, f"{core.sjob}_{core.base_name}_hist.png"
+        )
         plot_histogram(fnls, estimates, save_file=hist_file)
 
         diff = estimates - fnls
@@ -251,14 +245,14 @@ def main():
         logger.info("Standard deviation: %s, SEM: %s", std_dev, sem)
         for i in range(5):
             within = np.sum(np.abs(diff) < ((i + 1) * std_dev))
-            percentage = within / len(diff) * 100
-            within_error = np.sum(np.abs(diff) < ((i + 1) * (std_dev + sem)))
-            percentage_error = within_error / len(diff) * 100
+            m_error = np.sum(np.abs(diff) < ((i + 1) * (std_dev - sem)))
+            p_error = np.sum(np.abs(diff) < ((i + 1) * (std_dev + sem)))
             logger.info(
-                "%s%% are within %s standard deviations, and %s%% are within standard deviations with error.",
-                percentage,
+                "%s%% (%s, %s) are within %s standard deviations",
+                within / len(diff) * 100,
+                m_error / len(diff) * 100,
+                p_error / len(diff) * 100,
                 i + 1,
-                percentage_error,
             )
 
     logger.info("Finished %s!", mpi_rank)

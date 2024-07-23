@@ -16,12 +16,7 @@ logger = logging.getLogger(__name__)
 
 def cosmo_defaults():
     """Some default settings that are required by KSW / camb."""
-    return {
-        "As": 2.13e-09,
-        "ns": 0.9624,
-        "pivot_scalar": 0.05,
-        "lmax": 500,
-    }
+    return {"As": 2.13e-09, "ns": 0.9624, "pivot_scalar": 0.05}
 
 
 class Core:
@@ -133,20 +128,23 @@ class Core:
         np.random.seed(self.seed)
 
         # main parameters
-        self.lmax = self.cosmo_params["lmax"]
         self.nside = self._get("nside", 1024)
         self.lensing = self._get("lensing", False)
-        self.use_pols = self._get("pols", False)
         self.nsims = self._get("nsims", 100)
         self.narray = self._get("narray", 1)
         self.force_gen = self._get("force_generation", False)
         self.force_ksw = self._get("force_ksw", False)
         self.num_estimates = self._get("num_estimates", self.nsims)
-        self.max_l = self.lmax + self._get("lmax_buffer", 512)
 
-        self.fnl_min, self.fnl_max = self._get("fnl_range", (-1000, 1000))
+        self.lmax = 3 * self.nside - 1
+        self.max_l = self.lmax + self._get("lmax_buffer", 512)
+        cosmo_params["lmax"] = self.lmax
+        logger.debug("Using lmax %s, max_l %s", self.lmax, self.max_l)
+
+        self.fnl_min, self.fnl_max = self._get("fnl_range", (-10, 10))
         self.fnl_shape = (self.nsims, 1)
 
+        self.use_pols = self._get("pols", False)
         if self.use_pols:
             self.pols = ("T", "E")
             self.npol = 2
@@ -177,7 +175,7 @@ class Core:
         self.alm_shape = (self.nsims, self.npol, self.nelem)
 
         self.patch_side_deg = self._get("patch_side_deg", 10)
-        self.npatches = self._get("npatches", 2)
+        self.npatches = self._get("npatches", 10)
         self.total_patches = self.npatches * self.total_sims
         self.patch_shape = (
             self.nsims,
@@ -234,12 +232,8 @@ class Core:
         parser.add_argument("--base_dir", type=str)
         parser.add_argument("--seed", type=int)
         parser.add_argument("--base_name", type=str)
-        parser.add_argument("--noise_scale_tt", type=float)
-        parser.add_argument("--beam_width", type=float)
         parser.add_argument("--lmax_buffer", type=int)
-
         parser.add_argument("--fnl_range", type=float, nargs=2)
-
         parser.add_argument("--num_estimates", type=int)
 
         # for BooleanOptionalAction: --flag will set the value `flag` to True, --no-flag will set `flag` to False
@@ -463,7 +457,7 @@ class Core:
         j = "" if self.job_array_index is None else f"_{self.job_array_index}"
         pol_str = "T" if not self.use_pols else "TE"
 
-        def_name = f"l{self.lmax}_n{self.nside}_{lens}{nn}_{pol_str}x{self.total_sims}"
+        def_name = f"n{self.nside}_{lens}{nn}_{pol_str}x{self.total_sims}"
         self.base_name = self._get("base_name", def_name)
 
         self.base_dir = self._get("base_dir", "data")
