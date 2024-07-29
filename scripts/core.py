@@ -134,7 +134,7 @@ class Core:
         self.narray = self._get("narray", 100)
         self.force_gen = self._get("force_generation", False)
         self.force_ksw = self._get("force_ksw", False)
-        self.num_estimates = self._get("num_estimates", self.nsims)
+        self.num_estimates = self._get("num_estimates", self.nsims * self.narray)
 
         self.lmax = 3 * self.nside - 1
         self.max_l = self.lmax + self._get("lmax_buffer", 512)
