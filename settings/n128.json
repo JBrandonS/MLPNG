@@ -7,11 +7,8 @@
         "omch2": 0.120,
         "tau": 0.054
     },
-    "nsims" : 1000,
-    "narray": 100,                   
-    "npatches" : 10,
-    "fnl_range":[-1000, 1000],        
+    "nsims" : 100,
+    "narray": 100,                         
     "nside": 128,
-    "noise_scale_tt" : 500, 
-    "beam_width" : 0
+    "noise": false
 }

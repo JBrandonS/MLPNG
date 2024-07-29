@@ -2,7 +2,7 @@
 #SBATCH --job-name=estimator
 #SBATCH --partition=standard-s
 #SBATCH --ntasks=64
-#SBATCH --mem-per-cpu=2G
+#SBATCH --mem-per-cpu=4G
 #SBATCH --cpus-per-task=1
 #SBATCH --output=logs/estimator/%j.log
 #SBATCH --time=1-00:00:00

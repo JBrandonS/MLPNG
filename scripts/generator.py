@@ -131,7 +131,7 @@ def generate_alm_ng(core, alms):
     f_k = np.ones((len(tr_k), 2), dtype=core.r_dtype)
     pk = core.cosmo.camb_params.primordial_power(tr_k, 0)
     # f_k[:, 0] = 1
-    f_k[:, 1] = 2 * np.pi**2 / (tr_k ** (4 - core.cosmo_params["ns"])) * pk
+    f_k[:, 1] = 2 * np.pi**2 / (tr_k ** (4 - core.cosmo_params["ns"])) * pk * 3 / 5
 
     # the radian_func does the f_ell^X(r) = (2/pi) int k^2 dk f(k) transfer^X_ell(k) j_ell(k r),
     rad = radial_func(f_k, tr_ell_k, tr_k, core.radii, tr_ells)
@@ -148,10 +148,6 @@ def generate_alm_ng(core, alms):
     c_ells = core.c_ells[: core.npol, lmin:].transpose()
     bl_div_cl[:, lmin:, : core.npol] = beta_l[:, lmin:, : core.npol] / c_ells
 
-    # set the monopole and dipole to 0
-    # alpha_l[:, :lmin] = 0
-    # bl_div_cl[:, :lmin] = 0
-
     # ensure all arrays are contiguous
     alpha_l = np.ascontiguousarray(alpha_l)
     bl_div_cl = np.ascontiguousarray(bl_div_cl)
@@ -164,7 +160,9 @@ def generate_alm_ng(core, alms):
     temp_folder = os.environ.get("SCRATCH", None)
     logger.debug(f"Using temp folder for Alm_ng generation: {temp_folder}")
     parallel = Parallel(core.n_cpus, return_as="generator", temp_folder=temp_folder)
-    alm_ng = np.zeros_like(alms)
+    alm_ng = np.empty_like(alms)
+
+    logger.debug("Starting...")
     for sim in tqdm(range(alm_ng.shape[0]), total=alm_ng.shape[0], desc="Alm_ng"):
         generator = parallel(
             delayed(integrand)(
@@ -179,7 +177,8 @@ def generate_alm_ng(core, alms):
         )
 
         # TODO: Figure out how to do this inline without needing the full generator as required by list
-        alm_ng[sim, : core.npol] = simpson(list(generator), x=core.radii, axis=0)
+        alm_ng[sim] = simpson(list(generator), x=core.radii, axis=0)
+
     return alm_ng
 
 
@@ -380,7 +379,7 @@ def main():
                 save_file=filebase,
                 plot_camb=True,
                 camb_cls=core.c_ells[pol],
-                plot_noise=True,
+                plot_noise=False,
                 plot_full_camb=True,
                 camb_noise=core.noise_ell[pol],
                 camb_beam=core.beam_ell[pol],

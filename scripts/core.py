@@ -46,7 +46,7 @@ class Core:
         r_dtype (numpy.dtype): The data type for real numbers. Default: float32
         c_dtype (numpy.dtype): The data type for complex numbers. Default: complex64
         precision (str): The precision level ("single" or "double"). Default: 'single'
-        sjob (str): The SLURM job ID, -1 if not found.
+        sjob (str): The slurm job ID, -1 if not found.
         job_array_index (int): The index of the job array.
         is_main_job (bool): Whether the current job is the main job.
         base_dir (str): The base directory for output files. Default: data
@@ -131,7 +131,7 @@ class Core:
         self.nside = self._get("nside", 1024)
         self.lensing = self._get("lensing", False)
         self.nsims = self._get("nsims", 100)
-        self.narray = self._get("narray", 1)
+        self.narray = self._get("narray", 100)
         self.force_gen = self._get("force_generation", False)
         self.force_ksw = self._get("force_ksw", False)
         self.num_estimates = self._get("num_estimates", self.nsims)
@@ -378,24 +378,25 @@ class Core:
 
     def _init_slurm(self):
         """
-        Initializes the SLURM environment variables and sets the job array index and main job flag.
+        Initializes the slurm environment variables and sets the job array index and main job flag.
 
-        This method retrieves the SLURM environment variables, such as the job ID and array task count,
+        This method retrieves the slurm environment variables, such as the job ID and array task count,
         and performs necessary checks. It sets the job array index and determines whether the current
         job is the main job.
 
         Attributes:
-            sjob (str): The SLURM job ID.
+            sjob (str): The slurm job ID.
             n_cpus (int): The number of CPUs available for the job.
-            job_array_id (str): The id of the SLURM array job.
-            job_array_index (int): The index of the current job in the SLURM array.
+            job_array_id (str): The id of the slurm array job.
+            job_array_index (int): The index of the current job in the slurm array.
             is_main_job (bool): Indicates whether the current job is the main job.
 
         Raises:
             ValueError: If the SLURM_ARRAY_TASK_COUNT does not match the narray value.
         """
         self.sjob = os.getenv("SLURM_JOB_ID", "-1")
-        logger.debug("SLURM job id: %s", self.sjob)
+        logger.debug("Slurm job id: %s", self.sjob)
+        logger.debug("Slurm job name: %s", os.getenv("SLURM_JOB_NAME", "unknown"))
 
         # os.sched_getaffinity(0) gets the number of usable CPUs available, this is different from
         # os.cpu_count() which gets the number of CPUs on the system
@@ -415,7 +416,7 @@ class Core:
             self.job_array_id = os.getenv("SLURM_ARRAY_JOB_ID", "-1")
             self.job_array_index = int(os.getenv("SLURM_ARRAY_TASK_ID", "-1"))
             logger.debug(
-                "SLURM array id: %s, index: %s of %s jobs",
+                "Slurm array id: %s, index: %s of %s jobs",
                 self.job_array_id,
                 self.job_array_index,
                 job_tasks,

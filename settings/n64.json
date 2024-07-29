@@ -8,13 +8,7 @@
         "tau": 0.054
     },
     "nsims" : 100,
-    "narray": 100,                   
-    "npatches" : 10,
-    "fnl_range":[-1000, 1000],        
+    "narray": 100,                        
     "nside": 64,
-    "noise": true,
-    "noise_scale_tt" : 10, 
-    "noise_scale_ee" : 10,
-    "noise_scale_te" : 100,
-    "beam_width" : 10
+    "noise": false
 }

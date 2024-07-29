@@ -1,6 +1,6 @@
 # Machine Learning for Primordial Non-Gaussianity
 
-An $A_{lm}^{NG}$ generator and training pipeline for machine learning models to estimate the local non-gaussianity from the data. The $A_{lm}\text{s}$ are generated using the modified [Hanson 2009](https://arxiv.org/abs/0905.4732) method. The pipeline is designed to be run on a HPC system with a SLURM scheduler.
+An $A_{lm}^{NG}$ generator and training pipeline for machine learning models to estimate the local non-gaussianity from the data. The $A_{lm}\text{s}$ are generated using the modified [Hanson 2009](https://arxiv.org/abs/0905.4732) method. The pipeline is designed to be run on a HPC system with a slurm scheduler.
 
 ## Overview
 
@@ -57,12 +57,12 @@ For convenience, a `generator.sh` script is provided. To use it:
 1. Make any necessary changes to your settings files in `settings/`.
 2. Check the sbatch files in `sbatch/`. You may need to correct the array number to match the settings you will be using.
    - Change the conda env used in all the `sbatch` files in `sbatch/`.
-   - You may also want to configure the SLURM options here such as `partition`, `mem`, `cpus-per-task`, and `time` to help your jobs queue faster depending on your needs.
+   - You may also want to configure the slurm options here such as `partition`, `mem`, `cpus-per-task`, and `time` to help your jobs queue faster depending on your needs.
 3. Point the `generator.sh` script to the correct settings files by changing `SETTINGS`, and update any CLI overrides you want in the `ARGS`.
 
 You can then run the script.
 
-> This script will use SLURMs run chaining to queue up runs but only start them once a previous run has been completed.
+> This script will use slurm's run chaining to queue up runs but only start them once a previous run has been completed.
 
 #### Manual Data Generation
 

@@ -21,7 +21,7 @@ These settings file control the simulation and provide a large number of customi
 - `double_precision`, False : Boolean to use double precision. This will increase the memory usage and has not been tested much.
 
 - `nsims`, 100 : Number of simulations to generate per run.
-- `narray`, 1 : Number of runs that will be used. This allows using SLURM to run multiple simulations in parallel while limiting the resources used. This does not actually run the simulations so you will need to match this with SLURM settings.
+- `narray`, 100 : Number of runs that will be used. This allows using slurm to run multiple simulations in parallel while limiting the resources used. This does not actually run the simulations so you will need to match this with slurm settings.
 - `nside`, 1024 : Healpix resolution parameter. This is the resolution of the Healpix map used in the simulation.
 
   - > Note: The code used healpy's pixel weights to improve accuracy, and thus only supports a limited number of nsides found [here](https://github.com/healpy/healpy-data/tree/master/full_weights). Currently these are [32, 64, 128, 256, 512, 1024, 2048, 4096]. To change this behavior set `use_pixel_weights=False` in the map2alm function calls, currently only used in the `integrand` function in `scripts/generator.py`.
@@ -42,6 +42,7 @@ These settings file control the simulation and provide a large number of customi
 
 - `r_min`, 1 : The minimum value of r to use in the simulation.
 - `r_max`, 50000 : The maximum value of r to use in the simulation.
+  - > See [Smith and Zaldarriaga 2011](https://arxiv.org/abs/astro-ph/0612571) table 2 for information on the r values used in the simulation.
 
 - `base_name` : Base name for the output files. This will be used to generate the output file names and is automatically generated based on settings if not provided.
 - `base_dir`, "data" : Base directory for the output files. It is recommend to put this on a performative file system.

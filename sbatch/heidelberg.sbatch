@@ -2,7 +2,7 @@
 #SBATCH --job-name=heidelberg
 #SBATCH --partition=standard-s
 #SBATCH --ntasks=64
-#SBATCH --mem-per-cpu=10G
+#SBATCH --mem-per-cpu=4G
 #SBATCH --cpus-per-task=1
 #SBATCH --output=logs/heidelberg/%j.log
 #SBATCH --time=24:00:00

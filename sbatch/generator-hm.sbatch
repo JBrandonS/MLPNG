@@ -1,12 +1,12 @@
 #! /bin/bash
-#SBATCH --job-name=generator
-#SBATCH --partition=standard-s
+#SBATCH --job-name=hm-generator
+#SBATCH --partition=highmem
 #SBATCH --ntasks=1
-#SBATCH --mem=256G
-#SBATCH --cpus-per-task=64
+#SBATCH --mem=1500G
+#SBATCH --cpus-per-task=100
 #SBATCH --output=logs/generator/%A/%j.log
 #SBATCH --array=1-100
-#SBATCH --time=1-00:00:00
+#SBATCH --time=24:00:00
 
 # create our logging dir, if needed
 mkdir -p logs/generator/"$SLURM_ARRAY_JOB_ID"/

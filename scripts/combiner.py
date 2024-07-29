@@ -10,7 +10,7 @@ from tqdm.auto import tqdm
 from . import Core
 from .utils import setup_logging
 
-logger = setup_logging(__name__, level=logging.DEBUG)
+logger = setup_logging(__name__)  # , level=logging.DEBUG)
 
 
 def extract_number(filename):
@@ -84,7 +84,7 @@ def combine_data(directory, base_name, ext=".hdf5", remove_files=True, expected=
     Raises:
         None
     """
-    # Get a list of all h5py files that match the pattern, i.e., end with a SLURM job array index
+    # Get a list of all h5py files that match the pattern, i.e., end with a slurm job array index
     file_pattern = os.path.join(directory, f"{base_name}_[0-9]*{ext}")
     files_to_combine = glob.glob(file_pattern)
 
