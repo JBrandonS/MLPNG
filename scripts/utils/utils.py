@@ -182,3 +182,20 @@ def remove_mono_dipole(alm, inplace=True):
     data[..., hp.Alm.getidx(lmax, 1, 0)] = 0.0
     data[..., hp.Alm.getidx(lmax, 1, 1)] = 0.0
     return data
+
+def print_errors(truth, preds, fisher, n_sigma=5):
+    diff = preds - truth
+    std_dev = np.sqrt(1 / fisher)
+    sem = std_dev / np.sqrt(len(diff))
+    logger.info("Standard deviation: %s, SEM: %s", std_dev, sem)
+    for i in range(n_sigma):
+        within = np.sum(np.abs(diff) < ((i + 1) * std_dev))
+        m_error = np.sum(np.abs(diff) < ((i + 1) * (std_dev - sem)))
+        p_error = np.sum(np.abs(diff) < ((i + 1) * (std_dev + sem)))
+        logger.info(
+            "%s%% (%s, %s) are within %s standard deviations",
+            within / len(diff) * 100,
+            m_error / len(diff) * 100,
+            p_error / len(diff) * 100,
+            i + 1,
+        )
