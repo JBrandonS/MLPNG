@@ -314,17 +314,12 @@ class PatchLoader(DataLoaderBase):
         else:
             self.shape = (self._npol, self._nside, self._nside)
 
-        if len(self.fnls.shape) == 3:
-            # fnls have been generated with a pol dimension. This has been changed but the datasets take a while to generate
-            # just check and drop the pol dim,
-            # note: the previous code which generated this has a design flaw where the pols had unique FNLs, so they will not work thus we drop them
-            logger.error(
-                "Dropping fnl pol dimension, please regenerate data with new setup so all pols have the same FNL and can be used in the mode"
-            )
-            self.fnls = self.fnls[:, 0]
-
         logger.info(
-            f"Loading {self.file_path} with {self.length} samples, and data shape {self.shape}"
+            "Loading %s with %s samples, data shape %s, with std div %s",
+            self.file_path,
+            self.length,
+            self.shape,
+            np.sqrt(1 / file["fisher"][0]),
         )
 
         self._ds = Dataset.from_generator(

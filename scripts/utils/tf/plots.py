@@ -1,6 +1,7 @@
 import os
 import matplotlib.pyplot as plt
 
+
 def plot_metrics(history, save_file=None, metrics=["loss"]):
     num_metrics = len(metrics)
     fig, axs = plt.subplots(num_metrics, figsize=(15, 6 * num_metrics))
@@ -11,13 +12,15 @@ def plot_metrics(history, save_file=None, metrics=["loss"]):
     for i, metric in enumerate(metrics):
         axs[i].plot(history.history[metric])
         axs[i].plot(history.history[f"val_{metric}"])
-        axs[i].set_title(f"Model {metric}")
+        axs[i].set_title(f"{metric}")
         axs[i].set_ylabel(metric)
         axs[i].set_xlabel("Epoch")
         axs[i].legend(["Train", "Validation"], loc="upper right")
 
+    plt.tight_layout()
     if save_file is not None:
         plt.savefig(save_file)
+
 
 def plot_activations(model, ds, name, layers=None, plot_dir="data/plots/activations"):
     import keract  # pip install keract for this to work

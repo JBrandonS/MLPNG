@@ -38,8 +38,6 @@ The training is controlled by the `scripts/models/` files, which specify the arc
 
 ## Running
 
-> The best method to run large amounts of data is to use slurm job arrays.
-
 ### Notebooks
 
 Several jupyter notebooks have been created for testing and are located in the `notebooks/` folder. These will use a slightly modified KSW code to run with joblib parallel instead of openMPI as jupyter does not like openMPI. This is not recommended for large scale runs but is useful for testing and debugging.

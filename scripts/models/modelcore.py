@@ -1,3 +1,4 @@
+import sys
 import argparse
 import logging
 
@@ -7,6 +8,34 @@ from scripts import Core
 from scripts.utils.tf.dataloaders import PatchLoader
 
 logger = logging.getLogger(__name__)
+
+
+def _get(settings, name, default=None):
+    """
+    Get the value of a setting, providing the default if the setting is not found in settings.
+    Logs information about the setting value if it is found and differs from the default, at DEBUG level.
+
+    Args:
+        name (str): The name of the setting.
+        default (Any, optional): The default value to return if the setting is not found. Defaults to None.
+
+    Returns:
+        Any: The value of the setting if found, otherwise the default value.
+    """
+    val = settings.get(name, None)
+    if val is None:
+        logger.debug("Setting '%s' not found, using default: %s", name, repr(default))
+        return default
+    else:
+        if val != default:
+            logger.debug(
+                "Found non-default value for '%s': %s (default: %s)",
+                name,
+                repr(val),
+                repr(default),
+            )
+        return val
+
 
 _MODEL_REG = {}
 
@@ -46,9 +75,31 @@ def AutoModel(args=None, default="isensee"):
         model (object): An instance of the specified model class
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default=default, help="Model to use")
-    pargs, _ = parser.parse_known_args(args)
-    model = get_model_class(pargs.model)(args)
+    parser.add_argument("--model", type=str, help="Model to use")
+    parser.add_argument(
+        "--summary",
+        action=argparse.BooleanOptionalAction,
+        help="Print the model summary",
+    )
+    parser.add_argument(
+        "--tb", action=argparse.BooleanOptionalAction, help="Enable tensorboard logging"
+    )
+    parser.add_argument(
+        "--wandb", action=argparse.BooleanOptionalAction, help="Enable wandb logging"
+    )
+
+    if args is None:
+        args = sys.argv[1:]
+
+    logger.debug(f"Parsing training CLI args: %s", args)
+    pargs, args = parser.parse_known_args(args)
+
+    # get the model and add settings
+    model_cls = _get(vars(pargs), "model", default)
+    model = get_model_class(model_cls)(args)
+    model.print_summary = _get(vars(pargs), "summary", True)
+    model.use_tensorboard = _get(vars(pargs), "tb", False)
+    model.use_wandb = _get(vars(pargs), "wandb", False)
     return model
 
 
@@ -93,7 +144,7 @@ class ModelCore(Core):
         Returns:
         The initialized dataset.
         """
-        self._dataset = PatchLoader(self.patch_file, *args, **kwargs)
+        self._dataset = PatchLoader(self.file_complete, *args, **kwargs)
         return self._dataset
 
     def make_model(self, name=None, **kwargs):
@@ -104,14 +155,9 @@ class ModelCore(Core):
         - name: The name of the model.
         - **kwargs: Additional keyword arguments to pass to the model.
 
-        Raises:
-        - ValueError: If the model is already created.
-
         Returns:
         None
         """
-        if self._keras_model is not None:
-            raise ValueError("Model already created.")
 
         if self._dataset is None:
             logger.debug(

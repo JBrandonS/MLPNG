@@ -10,7 +10,7 @@ from mpi4py import MPI
 
 from . import Core
 from .generator import generate_alm
-from .utils import save_data, setup_logging
+from .utils import save_data, setup_logging, print_errors
 from .utils.plots import plot_histogram, plot_predictions
 
 from ksw import KSW, Cosmology, Shape
@@ -23,9 +23,9 @@ mpi_root = mpi_rank == 0
 # estimator will run multiple jobs per id which get sent to the same log file,
 # so we only want to log the root to keep from spamming the log
 if mpi_root:
-    logger = setup_logging(name=f"{__name__}_{mpi_rank}", level=logging.DEBUG)
+    logger = setup_logging(name=f"{__name__}-{mpi_rank}", level=logging.DEBUG)
 else:
-    logger = setup_logging(name=f"{__name__}_{mpi_rank}", level=logging.ERROR)
+    logger = setup_logging(name=f"{__name__}-{mpi_rank}", level=logging.ERROR)
 
 
 def icov_func(beam, noise, c_ells):
@@ -236,22 +236,7 @@ def main():
             core.plot_dir, f"{core.sjob}_{core.base_name}_hist.png"
         )
         plot_histogram(fnls, estimates, save_file=hist_file)
-
-        diff = estimates - fnls
-        std_dev = np.sqrt(1 / fisher)
-        sem = std_dev / np.sqrt(len(diff))
-        logger.info("Standard deviation: %s, SEM: %s", std_dev, sem)
-        for i in range(5):
-            within = np.sum(np.abs(diff) < ((i + 1) * std_dev))
-            m_error = np.sum(np.abs(diff) < ((i + 1) * (std_dev - sem)))
-            p_error = np.sum(np.abs(diff) < ((i + 1) * (std_dev + sem)))
-            logger.info(
-                "%s%% (%s, %s) are within %s standard deviations",
-                within / len(diff) * 100,
-                m_error / len(diff) * 100,
-                p_error / len(diff) * 100,
-                i + 1,
-            )
+        print_errors(fnls, estimates, fisher)
 
     logger.info("Finished %s!", mpi_rank)
 

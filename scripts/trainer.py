@@ -38,6 +38,7 @@ from .utils import (
     get_fisher,
     plot_histogram,
     plot_predictions,
+    print_errors,
 )
 from .utils.tf import (
     TimedLoggingCallback,
@@ -59,8 +60,11 @@ def main():
     model = AutoModel()
     model_cls = model.__class__.__name__
 
+    fisher = get_fisher(model.file_complete)
+    std_div = np.sqrt(1 / fisher)
+
     # These settings, esp the batch size, should be set by the model so we do
-    MAX_EPOCHS = 30
+    MAX_EPOCHS = 300
     BATCH_SIZE = model.BATCH_SIZE
 
     run_start_time = int(time.time())
@@ -76,7 +80,7 @@ def main():
 
     # settings that get passed into the model
     model_settings = {
-        "name": f"{extra_info['slurm_job_id']}_{model_cls}_{model.base_name}_{run_start_time}",
+        "name": f"{extra_info['slurm_job_id']}_{model_cls}_{model.base_name}_{run_start_time}"
     }
     logger.debug(f"Model settings:\n{json.dumps(model_settings, indent=2)}")
 
@@ -88,21 +92,15 @@ def main():
         "cache": True,
         "shuffle_buffer": 1000,
         "normalize": True,
+        "channels_last": True,
     }
     logger.debug(f"Data loader settings:\n{json.dumps(data_settings, indent=2)}")
-
-    # additional metrics we are interested in
-    metrics = ["mean_absolute_error"]
-    logger.debug(f"Looking at additional metrics: {metrics}")
 
     # callbacks to use during training
     callbacks = [
         # We use earlystoping to prevent overfitting
         EarlyStopping(
-            monitor="val_loss",
-            patience=10,
-            verbose=1,
-            restore_best_weights=True,
+            monitor="val_loss", patience=30, verbose=1, restore_best_weights=True
         ),
         # model checkpointing to save the best model
         ModelCheckpoint(
@@ -110,25 +108,28 @@ def main():
             monitor="val_loss",
             save_best_only=True,
             mode="auto",
-            initial_value_threshold=40000,  # mse, only want to bother saving decent models
+            initial_value_threshold=1000,  # mse, only want to bother saving decent models
         ),
         # TimedLoggingCallback(print_frequency=15),  # custom logger to work a little better with text logs
-        # TensorBoard(log_dir=f"{model.tb_dir}/{model_settings['name']}"),
         TerminateOnNaN(),
     ]
 
+    if model.use_tensorboard:
+        callbacks.append(
+            TensorBoard(log_dir=f"{model.tb_dir}/{model_settings['name']}")
+        )
+
     # enable wandb, if using, to log the model and data settings
-    if False:
+    if model.use_wandb:
         try_init_wandb(
             notes=extra_info["comment"],
             tags=[model_cls],
             config={**model_settings, **data_settings},
+            dir=model.wandb_dir,
             append_to=callbacks,
+            patch_tb=model.use_tensorboard,
+            patch_logdir=model.tb_dir,
         )
-
-    # lr_schedule = AttentionSchedule(model.lmax)
-    # lr_schedule = WarmupLearningRate(warmup_steps=1000)
-    lr_schedule = ExponentialDecay(1e-3, 10000, 0.96)
 
     # get the dataset from the model, also sets the internal dataset for the model
     dataset = model.init_dataset(**data_settings)
@@ -136,20 +137,25 @@ def main():
     # split the dataset used for the model into train, test, and validation
     train_ds, test_ds, val_ds = dataset.get_split(0.8, 0.1, 0.1)
 
+    ## setup the learning rate schedule
+    decay_steps = len(train_ds)  # // BATCH_SIZE
+    # lr_schedule = AttentionSchedule(model.lmax)
+    # lr_schedule = WarmupLearningRate(warmup_steps=1000)
+    lr_schedule = ExponentialDecay(1e-5, decay_steps, 0.96, staircase=True)
+
     # create and compile the model, needs to be in scope of the strategy
     strategy = tf.distribute.MirroredStrategy()
     with strategy.scope():
+        metrics = ["mse", "mean_absolute_error"]
         # RMSE needs to be made in scope and at current version you cannot use the name
         metrics.append(tf.keras.metrics.RootMeanSquaredError())
+        huber = tf.keras.losses.Huber(delta=std_div)
 
         opt = Adam(learning_rate=lr_schedule)
         model.make_model(**model_settings)
-        model.compile(
-            optimizer=opt,
-            loss="mse",
-            metrics=metrics,
-        )
-        model.summary()
+        model.compile(optimizer=opt, loss=huber, metrics=metrics)
+        if model.print_summary:
+            model.summary()
 
     # Finally, lets fit our model
     history = model.fit(
@@ -161,18 +167,25 @@ def main():
     )
 
     # Lets plot the predictions from the unseen test set
+    logger.debug("Predicting on test set")
     preds = model.predict(test_ds, verbose=2).flatten()
     truth = np.concatenate([y.numpy() for _, y in test_ds])
+    logger.debug("Done")
 
     # Plot the loss curves and metrics
     plot_dir = os.path.join(model.plot_dir, "trainer")
     file_base = os.path.join(plot_dir, model_settings["name"])
     os.makedirs(plot_dir, exist_ok=True)
 
-    fisher = get_fisher(model.alm_file)
-    plot_metrics(history, save_file=f"{file_base}.png", metrics=["loss"] + metrics)
+    logger.debug("Plotting metrics and predictions")
+    plot_metrics(
+        history,
+        save_file=f"{file_base}.png",
+        metrics=["loss", "mean_absolute_error", "root_mean_squared_error"],
+    )
     plot_predictions(truth, preds, fisher=fisher, save_file=f"{file_base}-preds.png")
     plot_histogram(truth, preds, save_file=f"{file_base}-hist.png")
+    print_errors(truth, preds, fisher, 1)
 
 
 if __name__ == "__main__":

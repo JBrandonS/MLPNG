@@ -32,7 +32,7 @@ class ALM(ModelCore):
             self.BATCH_SIZE = 32
 
     def init_dataset(self, *args, **kwargs):
-        self._dataset = AlmLoader(self.alm_file, *args, **kwargs)
+        self._dataset = AlmLoader(self.file_complete, *args, **kwargs)
         return self._dataset
 
     def _model(
@@ -76,7 +76,7 @@ class ALM(ModelCore):
 
         # Now we do a final FF to get the output as a scalar
         layer = Flatten()(layer)
-        # layer = Dense(512)(layer)
-        # layer = Dense(128)(layer)
+        layer = Dense(512)(layer)
+        layer = Dense(128)(layer)
         layer = Dense(64, activation="relu")(layer)
         return Dense(1)(layer)

@@ -1,3 +1,4 @@
+import sys
 import argparse
 import json
 import logging
@@ -249,10 +250,13 @@ class Core:
         parser.add_argument("--save_settings", action="store_true")
 
         # sets the model name to be used by the trainer
-        parser.add_argument("--model", type=str)
+        # parser.add_argument("--model", type=str)
 
+        if args is None:
+            args = sys.argv[1:]
         logger.debug(f"Parsing CLI args: {args}")
-        return parser.parse_args(args)
+        pargs, _ = parser.parse_known_args(args)
+        return pargs
 
     def _get(self, name, default: Any = None):
         """
@@ -443,7 +447,7 @@ class Core:
             data_dir (str): The directory for saving data files.
             file_partial (str): The file path for the partial data file.
             file_complete (str): The file path for the complete data file.
-            mc_path (str): The directory for saving KSW Monte Carlo files.
+            mc_dir (str): The directory for saving KSW Monte Carlo files.
             mc_file (str): The file path for the KSW Monte Carlo file.
 
         Returns:
@@ -469,14 +473,19 @@ class Core:
         self.file_partial = os.path.join(self.data_dir, f"{self.base_name}{j}.hdf5")
         self.file_complete = os.path.join(self.data_dir, f"{self.base_name}.hdf5")
 
-        self.mc_path = join_paths(self._get("mc_dir", "kswmc"))
-        self.mc_file = os.path.join(self.mc_path, f"{self.base_name}.hdf5")
+        self.mc_dir = join_paths(self._get("mc_dir", "kswmc"))
+        self.mc_file = os.path.join(self.mc_dir, f"{self.base_name}.hdf5")
+
+        self.tb_dir = join_paths(self._get("tb_dir", "tensorboard"))
+        self.wandb_dir = join_paths(self._get("wandb_dir", "wandb"))
 
         # lets just make sure the main directories exist, saving the need to do this later
         os.makedirs(self.base_dir, exist_ok=True)
         os.makedirs(self.data_dir, exist_ok=True)
         os.makedirs(self.plot_dir, exist_ok=True)
-        os.makedirs(self.mc_path, exist_ok=True)
+        os.makedirs(self.mc_dir, exist_ok=True)
+        os.makedirs(self.tb_dir, exist_ok=True)
+        os.makedirs(self.wandb_dir, exist_ok=True)
 
         logger.debug("Using base name: %s", self.base_name)
         logger.debug("Using base directory: %s", self.base_dir)
@@ -486,6 +495,8 @@ class Core:
         logger.debug("Using data file: %s", self.file_partial)
         logger.debug("Using complete data file: %s", self.file_complete)
         logger.debug("Using KSW MC file: %s", self.mc_file)
+        logger.debug("Using TensorBoard directory: %s", self.tb_dir)
+        logger.debug("Using Weights & Biases directory: %s", self.wandb_dir)
 
     def _init_cosmo(self):
         """

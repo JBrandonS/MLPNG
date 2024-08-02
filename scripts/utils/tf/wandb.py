@@ -44,23 +44,18 @@ def try_init_wandb(
             "See: https://docs.wandb.ai/quickstart"
         )
         return
-    
+
     if patch_tb:
         if patch_logdir is None:
             raise ValueError("If patch_tb is True, patch_logdir must be set.")
         wandb.tensorboard.patch(root_logdir=patch_logdir)
 
     wandb.init(
-        project=project,
-        notes=notes,
-        tags=tags,
-        config=config,
-        dir=dir,
-        **kwargs
+        project=project, notes=notes, tags=tags, config=config, dir=dir, **kwargs
     )
 
     # Add the wandb logger to the callbacks, so it is used
+    wandb_logger = WandbMetricsLogger()
     if append_to:
-        append_to.append(WandbMetricsLogger())
-
-    return WandbMetricsLogger()
+        append_to.append(wandb_logger)
+    return wandb_logger

@@ -14,12 +14,12 @@ from tensorflow.keras.layers import (
     Concatenate,
     Flatten,
     Dense,
+    Dropout,
     GroupNormalization,
 )
 
 from scripts.models import ModelCore, register_model
 from scripts.utils.tf.dataloaders import PatchLoader
-from scripts.utils.tf.dataloaders_v2 import DataLoaderBase_v2
 
 
 class PeriodicPadding2D(Layer):
@@ -41,7 +41,7 @@ class ISENSEE_V2(ModelCore):
     """This is a clone of model taken from Thomas' UNET_fnl notebook, with modifications"""
 
     def init_dataset(self, *args, **kwargs):
-        self._dataset = PatchLoader(self.patch_file, *args, **kwargs)
+        self._dataset = PatchLoader(self.file_complete, *args, **kwargs)
         return self._dataset
 
     def create_localization_module(self, input_layer, current_grid, n_filters):
@@ -107,13 +107,18 @@ class ISENSEE_V2(ModelCore):
             return activation()(layer)
 
     def _model(
-        self, inputs, depth=9, n_base_filters=8, dropout_rate=0.3, n_base_labels=32
+        self, 
+        inputs, 
+        depth=9, 
+        n_base_filters=8, 
+        dropout_rate=0.3, 
+        n_base_labels=32,
     ):
         x = inputs
         level_output_layers = list()
         level_filters = list()
         current_grid = x.shape[1]
-        print(f"Current grid: {current_grid}, {x.shape}")
+        # print(f"Current grid: {current_grid}, {x.shape}")
 
         for level_number in range(depth):
             n_level_filters = (2**level_number) * n_base_filters
@@ -154,5 +159,6 @@ class ISENSEE_V2(ModelCore):
         x = Conv2D(n_base_labels, (3, 3), strides=(2, 2))(x)
 
         x = Flatten()(x)
-        # x = Dense(32)(x)
+        x = Dropout(dropout_rate)(x)
+        x = Dense(32)(x)
         return Dense(1)(x)

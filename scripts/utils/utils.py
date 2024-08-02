@@ -184,6 +184,9 @@ def remove_mono_dipole(alm, inplace=True):
     return data
 
 def print_errors(truth, preds, fisher, n_sigma=5):
+    truth = truth.flatten()
+    preds = preds.flatten()
+    
     diff = preds - truth
     std_dev = np.sqrt(1 / fisher)
     sem = std_dev / np.sqrt(len(diff))

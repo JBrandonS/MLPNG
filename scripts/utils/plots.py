@@ -161,6 +161,7 @@ def plot_cl(
     if grid:
         plt.grid()
 
+    plt.tight_layout()
     if save_file is not None:
         plt.savefig(save_file)
         plt.close()
@@ -260,6 +261,7 @@ def plot_predictions(
     plt.title(title)
     # plt.legend()
 
+    plt.tight_layout()
     if save_file is not None:
         plt.savefig(save_file)
         plt.close()
@@ -293,6 +295,7 @@ def plot_histogram(truth, preds, save_file=None):
         f"Differences - Mean: {mean_diff:.2f}, Standard Deviation: {std_diff:.2f}"
     )
 
+    plt.tight_layout()
     # Save the plot
     if save_file is not None:
         plt.savefig(save_file)
