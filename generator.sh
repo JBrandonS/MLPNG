@@ -14,13 +14,18 @@
 # list of the settings file to be used, will be ran in order
 # these must be in settings/ and have the .json extension
 SETTINGS=(
-  # "n64"
-  # "n128"
+  "n32"
+  "n64"
+  "n128"
+  "n512"
+  "n1024"
+
+  # # these will probably crash with memory errors right now
+  # "n2048"
+  # "n4096"
   # "heidelberg"
 
-  ## these need to be run on a high memory node, or lower nsims
   # "planck"
-  "n2048"
 )
 
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
