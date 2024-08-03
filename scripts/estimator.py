@@ -165,8 +165,10 @@ def main():
 
     # remove the file to force its recreation
     if core.force_ksw and os.path.exists(core.mc_file):
-        logger.info("Removing existing KSW state")
-        os.remove(core.mc_file)
+        if mpi_root:
+            logger.info("Removing existing KSW state")
+            os.remove(core.mc_file)
+        mpi_comm.Barrier()
 
     if os.path.exists(core.mc_file):
         logger.info("Loading KSW state from %s", core.mc_file)

@@ -14,24 +14,24 @@
 # list of the settings file to be used, will be ran in order
 # these must be in settings/ and have the .json extension
 SETTINGS=(
-  "n64"
-  "n128"
+  # "n64"
+  # "n128"
   # "heidelberg"
 
   ## these need to be run on a high memory node, or lower nsims
   # "planck"
-  # "n2048"
+  "n2048"
 )
 
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
 ARGS=(
   # "--nsims" "100"
-  "--lensing"
+  # "--lensing"
   # "--no-noise" 
   "--pols"
-  # "--force_generation"
-  # "--force_ksw"
-  "--narray" "1000"
+  "--force_generation"
+  # "--no-force_ksw"
+  "--narray" "1"
 )
 
 # override some slurm settings, only used for narray

@@ -88,7 +88,9 @@ def save_data(file_path, data_dict, mode="x", remove_if_exists=False):
                 if key in hf:
                     logger.debug("%s: Appending to existing", key)
                     # Resize the dataset to accommodate the new data
-                    hf[key].resize((hf[key].shape[0] + value.shape[0],) + value.shape[1:])  # type: ignore
+                    hf[key].resize(
+                        (hf[key].shape[0] + value.shape[0],) + value.shape[1:]
+                    )  # type: ignore
                     # Append the new data
                     hf[key][-value.shape[0] :] = value  # type: ignore
                 else:
@@ -183,10 +185,11 @@ def remove_mono_dipole(alm, inplace=True):
     data[..., hp.Alm.getidx(lmax, 1, 1)] = 0.0
     return data
 
+
 def print_errors(truth, preds, fisher, n_sigma=5):
     truth = truth.flatten()
     preds = preds.flatten()
-    
+
     diff = preds - truth
     std_dev = np.sqrt(1 / fisher)
     sem = std_dev / np.sqrt(len(diff))
@@ -202,3 +205,37 @@ def print_errors(truth, preds, fisher, n_sigma=5):
             p_error / len(diff) * 100,
             i + 1,
         )
+
+
+def trim_alms(alm, lmax, dtype=None):
+    """
+    Trim the alm array to the specified lmax.
+
+    Parameters:
+        alm (np.array): The input alm array, can but of any shape as long as the data is the last dimension and pols are the second to last.
+        lmax (int): The maximum l value to keep.
+        dtype (np.dtype, optional): The data type to use for the trimmed alms. If None, the same data type as the input alms will be used.
+
+    Returns:
+        array-like: The trimmed alm array.
+    """
+    alm = np.atleast_2d(alm)
+    old_lmax = hp.Alm.getlmax(alm.shape[-1])
+    dtype = alm.dtype if dtype is None else dtype
+
+    if old_lmax < lmax:
+        raise ValueError(
+            f"Cannot trim alms to lmax {lmax} when original lmax is {old_lmax}"
+        )
+
+    # make the new alms
+    new_shape = list(alm.shape)
+    new_shape[-1] = hp.Alm.getsize(lmax)  # replace the last dim
+    temp = np.zeros(new_shape, dtype)
+
+    # this is probably slow, but dont think it worth fixing yet
+    for l in range(lmax + 1):
+        for m in range(l + 1):
+            temp[:, hp.Alm.getidx(lmax, l, m)] = alm[..., hp.Alm.getidx(old_lmax, l, m)]
+
+    return temp

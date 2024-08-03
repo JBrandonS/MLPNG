@@ -7,7 +7,7 @@ import numpy as np
 from joblib import Parallel, delayed
 from scipy.interpolate import CubicSpline, interp1d
 from scipy.integrate import simpson
-from tqdm.auto import tqdm
+from tqdm.auto import tqdm, trange
 
 import lenspyx
 from pixell import curvedsky, enmap, reproject
@@ -16,7 +16,13 @@ from ksw.radial_functional import radial_func
 
 from . import Core
 from .utils import remove_mono_dipole, save_data, setup_logging
-from .utils.plots import plot_cl_alm, plot_patches
+from .utils.plots import (
+    plot_cl_alm,
+    plot_patches,
+    plot_mollview,
+    plot_heidel_comp,
+    pol_str,
+)
 
 logger = setup_logging(__name__, level=logging.DEBUG)
 
@@ -67,7 +73,7 @@ def integrand(alm, bl_div_cl, alpha_l, nside, lmax, radii):
     Balm = np.ascontiguousarray(Balm)
 
     B = hp.alm2map(Balm, nside, lmax)
-    inner = hp.map2alm(B**2, lmax, use_pixel_weights=True)
+    inner = hp.map2alm(B**2, lmax, iter=1, use_pixel_weights=True)
     if npols == 1:
         inner = [inner]
     inner = np.ascontiguousarray(inner)
@@ -159,8 +165,10 @@ def generate_alm_ng(core, alms):
     # so we give it a temp folder to use, which wont have that problem
     temp_folder = os.environ.get("SCRATCH", None)
     logger.debug(f"Using temp folder for Alm_ng generation: {temp_folder}")
-    parallel = Parallel(core.n_cpus, return_as="generator", temp_folder=temp_folder)
-    alm_ng = np.empty_like(alms)
+    parallel = Parallel(
+        core.n_cpus // 4, return_as="generator", temp_folder=temp_folder
+    )
+    alm_ng = np.zeros_like(alms)
 
     logger.debug("Starting...")
     for sim in tqdm(range(alm_ng.shape[0]), total=alm_ng.shape[0], desc="Alm_ng"):
@@ -277,16 +285,14 @@ def main():
 
         logger.debug("Lensing alms and getting patches")
         # create our data arrays, using empty here for speed and notice forcing npols to 3 for B mode
-        patches = np.empty(
+        patches = np.zeros(
             (core.nsims, core.npatches, full_pol, core.nside, core.nside),
             dtype=core.r_dtype,
         )
-        alm_lensed = np.empty((core.nsims, full_pol, core.nelem), dtype=core.c_dtype)
+        alm_lensed = np.zeros((core.nsims, full_pol, core.nelem), dtype=core.c_dtype)
 
         # actually lens the alms and cut the patches
-        for sim in tqdm(
-            range(core.nsims), desc="Lensing and Patching", total=core.nsims
-        ):
+        for sim in trange(core.nsims, desc="Lensing and Patching", total=core.nsims):
             lens_map = lenspyx.alm2lenmap(
                 alms[sim], dlm, geometry=geom_info, nthreads=core.n_cpus
             )
@@ -302,30 +308,6 @@ def main():
             pixell_map = reproject.healpix2map(lens_map, fs_shape, fs_wcs, core.lmax)
             for i in range(core.npatches):
                 patches[sim, i] = pixell_map.project(patch_shapes[i], patch_wcss[i])
-
-        # lets make a plot
-        if core.is_main_job:
-            import matplotlib.pyplot as plt
-
-            sim = core.rng.integers(core.nsims)
-            # Create a figure with subplots
-            _, axes = plt.subplots(
-                1, core.npol, figsize=(15, 5), subplot_kw={"projection": "mollweide"}
-            )
-            axes = np.atleast_1d(axes)
-            for pol in range(core.npol):
-                # Create the mollview plot in the corresponding subplot
-                plt.axes(axes[pol])
-                hp.mollview(
-                    lens_map[pol],
-                    title=f"Simulation {sim}, Polarization {pol}",
-                    hold=True,
-                )
-
-            plot_path = os.path.join(
-                core.plot_dir, f"{core.sjob}_{core.base_name}_lensed.png"
-            )
-            plt.savefig(plot_path)
     else:
         logger.debug("Getting patches")
         patches = np.empty(
@@ -337,24 +319,74 @@ def main():
             # need to add a zero for the spin-2 component
             alms = np.concatenate((alms, np.zeros((core.nsims, 1, core.nelem))), axis=1)
 
-        for sim in tqdm(range(core.nsims), desc="Patching", total=core.nsims):
+        for sim in trange(core.nsims, desc="Patching", total=core.nsims):
             car_map = curvedsky.alm2map(
                 alms[sim], fs_map, copy=True, nthread=core.n_cpus
             )
 
             for i in range(core.npatches):
-                patches[sim, i] = car_map.project(patch_shapes[i], patch_wcss[i])[: core.npol]  # type: ignore
+                patches[sim, i] = car_map.project(patch_shapes[i], patch_wcss[i])[
+                    : core.npol
+                ]  # type: ignore
         logger.debug("Done")
-    logger.info("Done!")
 
-    # lets plot the patches
+    # lets make a few plots
     if core.is_main_job:
         sim = core.rng.integers(core.nsims)
-        for pol in range(core.npol):
-            patch_file = os.path.join(
-                core.plot_dir, f"{core.sjob}_{core.base_name}_patch[{sim},{pol}].png"
+
+        # make the full sky mollview plots
+        plt_file = os.path.join(
+            core.plot_dir, f"{core.sjob}_{core.base_name}_mollview[{sim}].png"
+        )
+        if core.lensing:
+            map = lenspyx.alm2lenmap(alms[sim], dlm, geom_info, nthreads=core.n_cpus)
+            plot_mollview(map, f"Lensed view for {sim}", save_file=plt_file)
+        else:
+            map = curvedsky.alm2map_healpix(
+                alms[sim, 0], nside=core.nside, copy=True, nthread=core.n_cpus
             )
-            plot_patches(patches[sim, :, pol], save_file=patch_file)
+            plot_mollview(map, f"Unlensed view for {sim}", save_file=plt_file)
+
+        # here we compaire to the exact elsner sims from heidelberg
+        hei_file = os.path.join(core.plot_dir, f"{core.sjob}_{core.base_name}_hei.png")
+        plot_heidel_comp(
+            alm_l[sim],
+            alm_ng[sim],
+            hei_idx=core.rng.integers(1, 1001),
+            save_file=hei_file,
+        )
+
+        for pol in range(core.npol):
+            pstr = pol_str(pol)
+            ylabel = r"$\ell(\ell+1)/2\pi\;C_{\ell}" + f"^{pstr}$"
+
+            # make some platch plots for the sky cuts
+            patch_file = os.path.join(
+                core.plot_dir, f"{core.sjob}_{core.base_name}_patch[{sim},{pstr}].png"
+            )
+            plot_patches(
+                patches[sim, :, pol],
+                title=f"Patches for sim: {sim}, pol: {pstr}",
+                save_file=patch_file,
+            )
+
+            # lets plot the alms with camb for testing that side of things
+            filebase = os.path.join(
+                core.plot_dir, f"{core.sjob}_{core.base_name}_alm[{sim},{pstr}].png"
+            )
+            plot_cl_alm(
+                alms[sim, pol],
+                save_file=filebase,
+                plot_camb=True,
+                camb_cls=core.c_ells[pol],
+                plot_noise=False,
+                plot_full_camb=True,
+                camb_noise=core.noise_ell[pol],
+                camb_beam=core.beam_ell[pol],
+                ylabel=ylabel,
+            )
+
+    logger.info("Done!")
 
     logger.info("Saving data")
 
@@ -365,26 +397,6 @@ def main():
     if core.lensing:
         sdata["alm_lensed"] = alm_lensed
     save_data(core.file_partial, sdata, remove_if_exists=True)
-
-    if core.is_main_job:
-        sim = core.rng.integers(core.nsims)
-        for pol in range(core.npol):
-            filebase = os.path.join(
-                core.plot_dir, f"{core.sjob}_{core.base_name}_alm[{sim},{pol}].png"
-            )
-
-            # plot the complete alms with noise
-            plot_cl_alm(
-                alms[sim, pol],
-                save_file=filebase,
-                plot_camb=True,
-                camb_cls=core.c_ells[pol],
-                plot_noise=False,
-                plot_full_camb=True,
-                camb_noise=core.noise_ell[pol],
-                camb_beam=core.beam_ell[pol],
-            )
-
     logger.info("Finished %s!", core.sjob)
 
 

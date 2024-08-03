@@ -7,10 +7,18 @@ import pandas as pd
 import seaborn as sns
 from pixell import curvedsky, enmap
 
+from .utils import trim_alms
+
 logger = logging.getLogger(__name__)
 
 
-def plot_patches(patches, n_plots=8, title="Patches", save_file=None):
+def pol_str(pol, double=False):
+    if double:
+        return ["TT", "EE", "TE"][pol]
+    return ["T", "E", "B"][pol]
+
+
+def plot_patches(patches, n_plots=8, title="Patches", save_file=None, show=False):
     """
     Plot a grid of image patches.
 
@@ -25,7 +33,7 @@ def plot_patches(patches, n_plots=8, title="Patches", save_file=None):
     nrows = int(np.ceil(n_plots / 4))
     ncols = min(n_plots, 4)
     idxs = range(min(patches.shape[0], n_plots, nrows * ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(20, 20))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(16, 12))
     axes = axes.flatten()  # Flatten the axes array for easier indexing
 
     for idx, patch in enumerate(patches[idxs]):
@@ -42,9 +50,11 @@ def plot_patches(patches, n_plots=8, title="Patches", save_file=None):
 
     if save_file is not None:
         plt.savefig(save_file)
-        plt.close()
-    else:
+
+    if show:
         plt.show()
+    else:
+        plt.close()
 
 
 def plot_cl(
@@ -65,6 +75,8 @@ def plot_cl(
     camb_noise=None,
     camb_beam=None,
     plot_full_camb=False,
+    show=False,
+    close=True,
 ):
     r"""
     Plots the angular power spectrum from given Cl values.
@@ -130,18 +142,18 @@ def plot_cl(
         plot_func(ells, scale * cls[pol, ells], label=labels[pol], linestyle=":")
 
         if plot_camb:
-            pol_str = "" if npols == 1 else f", {pol}"
+            pstr = "" if npols == 1 else f", {pol_str(pol)}"
             plot_func(
                 ells,
                 scale * camb_cls[pol, ells],
-                label="camb" + pol_str,
+                label="camb" + pstr,
             )
 
             if plot_noise:
                 plot_func(
                     ells,
                     scale * camb_noise[pol, ells],
-                    label=r"noise" + pol_str,
+                    label=r"noise" + pstr,
                     linestyle="--",
                 )
 
@@ -149,7 +161,7 @@ def plot_cl(
                 plot_func(
                     ells,
                     scale * camb_cl_full[pol, ells],
-                    label=r"camb * beam$^2$ + noise" + pol_str,
+                    label=r"camb * beam$^2$ + noise" + pstr,
                     linestyle="--",
                 )
 
@@ -164,9 +176,11 @@ def plot_cl(
     plt.tight_layout()
     if save_file is not None:
         plt.savefig(save_file)
-        plt.close()
-    else:
+
+    if show:
         plt.show()
+    if close:
+        plt.close()
 
 
 def plot_cl_alm(alm, lmax=None, title="Angular power spectrum from alm", **kwargs):
@@ -225,6 +239,8 @@ def plot_predictions(
     title="Predictions",
     fisher=None,
     save_file=None,
+    show=False,
+    close=True,
 ):
     """
     Plots the true labels against the predicted labels. If provided will plot the expected deviations from the provided fisher
@@ -245,7 +261,7 @@ def plot_predictions(
     )
 
     # Create a scatter plot with seaborn
-    plt.figure(figsize=(12, 6))
+    plt.figure(figsize=(16, 12))
     sns.scatterplot(data=df, x="True Fnl", y="Predicted Fnl")
 
     # Truth line
@@ -260,23 +276,24 @@ def plot_predictions(
 
     plt.title(title)
     # plt.legend()
-
     plt.tight_layout()
+
     if save_file is not None:
         plt.savefig(save_file)
-        plt.close()
-    else:
+    if show:
         plt.show()
+    if close:
+        plt.close()
 
 
-def plot_histogram(truth, preds, save_file=None):
+def plot_histogram(truth, preds, save_file=None, show=False, close=True):
     """Plot and save a histogram of predictions with mean and std dev as title"""
     # Calculate mean and standard deviation
     truth = truth.flatten()
     preds = preds.flatten()
 
     # Create a figure with two subplots
-    fig, axs = plt.subplots(2, figsize=(12, 12))
+    fig, axs = plt.subplots(2, figsize=(16, 12))
 
     # Plot the predictions on the first subplot
     mean_pred = np.mean(preds)
@@ -299,6 +316,141 @@ def plot_histogram(truth, preds, save_file=None):
     # Save the plot
     if save_file is not None:
         plt.savefig(save_file)
-        plt.close()
-    else:
+    if show:
         plt.show()
+    if close:
+        plt.close()
+
+
+def plot_mollview(maps, title, save_file=None, show=False, close=True):
+    """
+    Plot a Mollweide projection of the given maps.
+
+    Args:
+        maps (ndarray): Array of maps to plot.
+        title (str): Title of the plot.
+        save_file (str, optional): File path to save the plot. If None, the plot will be displayed. Defaults to None.
+    """
+    maps = np.atleast_2d(maps)
+    pols = maps.shape[0]
+
+    _, axes = plt.subplots(
+        1, pols, figsize=(16, 12), subplot_kw={"projection": "mollweide"}
+    )
+
+    for pol in range(pols):
+        # Create the mollview plot in the corresponding subplot
+        plt.axes(axes)
+        hp.mollview(
+            maps[pol],
+            title=f"Polarization {pol}",
+            hold=True,
+        )
+
+    plt.title(title)
+
+    if save_file is not None:
+        plt.savefig(save_file)
+    if show:
+        plt.show()
+    if close:
+        plt.close()
+
+
+def plot_heidel_comp(
+    alm_l,
+    alm_nl,
+    hei_idx=1,
+    TCMB=2.7255,
+    title="Heidelberg comparison",
+    save_file=None,
+    show=False,
+    close=True,
+    **kwargs,
+):
+    idx = str(hei_idx).zfill(4)
+    alm_heidelberg_l = np.array(
+        hp.read_alm(f"data/heidelberg/alm_l_{idx}_v3.fits", hdu=(1, 2, 3))
+    )
+    alm_heidelberg_nl = np.array(
+        hp.read_alm(f"data/heidelberg/alm_nl_{idx}_v3.fits", hdu=(1, 2, 3))
+    )
+
+    t_scale = TCMB * 1e6
+    alm_heidelberg_l *= t_scale
+    alm_heidelberg_nl *= t_scale
+
+    # we need to reshape either the alms or the heidelberg to match the same lmax to plot
+    if alm_l.shape[-1] > alm_heidelberg_l.shape[-1]:
+        lmax = hp.Alm.getlmax(alm_heidelberg_l.shape[-1])
+        alm_l = trim_alms(alm_l, lmax)
+        alm_nl = trim_alms(alm_nl, lmax)
+    else:
+        lmax = hp.Alm.getlmax(alm_l.shape[-1])
+        alm_heidelberg_l = trim_alms(alm_heidelberg_l, lmax)
+        alm_heidelberg_nl = trim_alms(alm_heidelberg_nl, lmax)
+
+    npols = alm_l.shape[0]
+    _, axes = plt.subplots(3, npols, figsize=(16, 12))
+    for pol in range(npols):
+        ylabel = r"$\ell(\ell+1)/2\pi\;C_{\ell}" + f"^{pol_str(pol)}$"
+        plt.sca(axes[0, pol])
+        plot_cl_alm(
+            alm_heidelberg_l[pol],
+            lmax,
+            labels="heidelberg.",
+            title=f"linear, pol: {pol_str(pol)}",
+            ylabel=ylabel,
+            close=False,
+            **kwargs,
+        )
+        plot_cl_alm(
+            alm_l[pol],
+            lmax,
+            labels="sim",
+            title=f"linear, pol: {pol_str(pol)}",
+            ylabel=ylabel,
+            close=False,
+            **kwargs,
+        )
+
+        plt.sca(axes[1, pol])
+        plot_cl_alm(
+            [alm_heidelberg_nl[pol]],
+            lmax,
+            labels=["heidelberg"],
+            title=f"non-linear alms, pol: {pol_str(pol)}",
+            ylabel=ylabel,
+            close=False,
+            **kwargs,
+        )
+        plot_cl_alm(
+            [alm_nl[pol]],
+            lmax,
+            labels=["sim"],
+            title=f"non-linear alms, pol: {pol_str(pol)}",
+            ylabel=ylabel,
+            close=False,
+            **kwargs,
+        )
+
+        plt.sca(axes[2, pol])
+        plot_cl_alm(
+            [alm_heidelberg_l[pol] + alm_heidelberg_nl[pol], alm_l[pol] + alm_nl[pol]],
+            lmax,
+            labels=["heidelberg", "sim"],
+            title=f"full alms, fnl: 1, pol: {pol_str(pol)}",
+            ylabel=ylabel,
+            close=False,
+            **kwargs,
+        )
+
+    plt.suptitle(title)
+    plt.tight_layout()
+
+    if save_file is not None:
+        plt.savefig(save_file)
+    if show:
+        plt.show()
+    if close:
+        plt.close()
