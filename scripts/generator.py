@@ -111,6 +111,29 @@ def generate_alm(core, nsims=None):
     return np.array(sims)
 
 
+def trap_generator(generator, x, axis=0):
+    """
+    Perform trapezoidal integration using a generator. This will consume the memory as possible to help
+    with memory management, this becomes needed for nside >= 512.
+
+    Parameters:
+    - generator: A generator yielding the function values to integrate.
+    - x: The x values corresponding to the function values.
+    - axis: The axis along which to integrate.
+
+    Returns:
+    - The integral computed using Simpson's rule.
+    """
+    integral = 0.0
+    y_prev = next(generator)
+    for i in range(1, len(x)):
+        y_curr = next(generator)
+        integral += (x[i] - x[i - 1]) * (y_prev + y_curr) / 2
+        y_prev = y_curr
+
+    return integral
+
+
 def generate_alm_ng(core, alms):
     """
     This function calculates the non-gaussian alms using the given core and the gaussian alms.
@@ -136,7 +159,7 @@ def generate_alm_ng(core, alms):
     # first will be for alpha_ell, second will be beta_ell
     f_k = np.ones((len(tr_k), 2), dtype=core.r_dtype)
     pk = core.cosmo.camb_params.primordial_power(tr_k, 0)
-    # f_k[:, 0] = 1
+    # f_k[:, 0] = 5 / 3
     f_k[:, 1] = 2 * np.pi**2 / (tr_k ** (4 - core.cosmo_params["ns"])) * pk * 3 / 5
 
     # the radian_func does the f_ell^X(r) = (2/pi) int k^2 dk f(k) transfer^X_ell(k) j_ell(k r),
@@ -165,9 +188,7 @@ def generate_alm_ng(core, alms):
     # so we give it a temp folder to use, which wont have that problem
     temp_folder = os.environ.get("SCRATCH", None)
     logger.debug(f"Using temp folder for Alm_ng generation: {temp_folder}")
-    parallel = Parallel(
-        core.n_cpus // 4, return_as="generator", temp_folder=temp_folder
-    )
+    parallel = Parallel(core.n_cpus, return_as="generator", temp_folder=temp_folder)
     alm_ng = np.zeros_like(alms)
 
     logger.debug("Starting...")
@@ -184,8 +205,8 @@ def generate_alm_ng(core, alms):
             for r in range(len(core.radii))
         )
 
-        # TODO: Figure out how to do this inline without needing the full generator as required by list
-        alm_ng[sim] = simpson(list(generator), x=core.radii, axis=0)
+        # here was use our functiont to calculate the integral
+        alm_ng[sim] = trap_generator(generator, x=core.radii, axis=0)
 
     return alm_ng
 
@@ -353,6 +374,19 @@ def main():
             alm_l[sim],
             alm_ng[sim],
             hei_idx=core.rng.integers(1, 1001),
+            save_file=hei_file,
+        )
+
+        hei_file = os.path.join(
+            core.plot_dir, f"{core.sjob}_{core.base_name}_hei-avg.png"
+        )
+        alm_l_avg = np.mean(alm_l, axis=0)
+        alm_ng_avg = np.mean(alm_ng, axis=0)
+        plot_heidel_comp(
+            alm_l_avg,
+            alm_ng_avg,
+            hei_idx=core.rng.integers(1, 1001),
+            title="Heidelberg comparison with averaged alms",
             save_file=hei_file,
         )
 

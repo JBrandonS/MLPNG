@@ -13,22 +13,40 @@ logger = logging.getLogger(__name__)
 
 
 def pol_str(pol, double=False):
+    """
+    Converts the polarization number, {0, 1, 2} to a string {T, E, B} or {TT, EE, TE} if double is True
+    """
     if double:
         return ["TT", "EE", "TE"][pol]
     return ["T", "E", "B"][pol]
 
 
-def plot_patches(patches, n_plots=8, title="Patches", save_file=None, show=False):
+def finalize_plot(
+    tight_layout=True,
+    legend=True,
+    grid=True,
+    save_file=None,
+    show=False,
+    close=True,
+):
     """
-    Plot a grid of image patches.
-
-    Args:
-        patches (ndarray): Array of image patches.
-        n_plots (int): Number of patches to plot.
-        title (str, optional): Title of the plot. Defaults to "Patches".
-        save_file (str, optional): File path to save the plot. If None, the plot will be displayed. Defaults to None.
+    Finalize the plot by adding a legend, grid, tight layout, saving the file, showing the plot and closing it.
     """
+    if legend:
+        plt.legend()
+    if grid:
+        plt.grid()
+    if tight_layout:
+        plt.tight_layout()
+    if save_file is not None:
+        plt.savefig(save_file)
+    if show:
+        plt.show()
+    if close:
+        plt.close()
 
+
+def plot_patches(patches, n_plots=8, title="Patches", **kwargs):
     n_plots = min(n_plots, patches.shape[0])
     nrows = int(np.ceil(n_plots / 4))
     ncols = min(n_plots, 4)
@@ -44,17 +62,9 @@ def plot_patches(patches, n_plots=8, title="Patches", save_file=None, show=False
     for idx in range(n_plots, nrows * ncols):
         fig.delaxes(axes[idx])
 
-    plt.suptitle(title)
     plt.subplots_adjust(wspace=0, hspace=0)
-    plt.tight_layout()
-
-    if save_file is not None:
-        plt.savefig(save_file)
-
-    if show:
-        plt.show()
-    else:
-        plt.close()
+    plt.suptitle(title)
+    finalize_plot(**kwargs)
 
 
 def plot_cl(
@@ -64,10 +74,7 @@ def plot_cl(
     labels=None,
     xlabel=r"$\ell$",
     ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}$",
-    legend=True,
     scale=True,
-    grid=True,
-    save_file=None,
     plot_func=plt.semilogy,
     plot_camb=False,
     camb_cls=None,
@@ -75,34 +82,8 @@ def plot_cl(
     camb_noise=None,
     camb_beam=None,
     plot_full_camb=False,
-    show=False,
-    close=True,
+    **kwargs,
 ):
-    r"""
-    Plots the angular power spectrum from given Cl values.
-
-    Parameters:
-    cls (array-like): The Cl values to plot. Can be a single array or a list of arrays.
-    lmax (int): The maximum multipole moment to plot.
-    title (str, optional): The title of the plot. Default is "Angular power spectrum from cl".
-    labels (list of str, optional): The labels for each Cl array. Default is None.
-    xlabel (str, optional): The label for the x-axis. Default is r"$\ell$".
-    ylabel (str, optional): The label for the y-axis. Default is r"$\ell(\ell+1)/2\pi\;C_{\ell}$".
-    legend (bool, optional): Whether to display the legend. Default is True.
-    scale (bool, optional): Whether to scale the Cl values by $\ell(\ell+1)/2\pi$. Default is True.
-    grid (bool, optional): Whether to display the grid. Default is True.
-    save_file (str, optional): The file path to save the plot. If None, the plot is shown. Default is None.
-    plot_func (function, optional): The plotting function to use (e.g., plt.plot, plt.semilogy). Default is plt.semilogy.
-    plot_camb (bool, optional): Whether to plot CAMB Cl values. Default is False.
-    camb_cls (array-like, optional): The CAMB Cl values to plot. Default is None.
-    plot_noise (bool, optional): Whether to plot noise Cl values. Default is False.
-    camb_noise (array-like, optional): The noise Cl values to plot. Default is None.
-    plot_full_camb (bool, optional): Whether to plot the full CAMB Cl values. Default is False.
-    camb_beam (array-like, optional): The beam for CAMB Cl values. Default is None.
-
-    Returns:
-    None
-    """
     # check args and ensure shape is correct
     if plot_camb:
         if camb_cls is None:
@@ -168,19 +149,7 @@ def plot_cl(
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
     plt.title(title)
-    if legend:
-        plt.legend()
-    if grid:
-        plt.grid()
-
-    plt.tight_layout()
-    if save_file is not None:
-        plt.savefig(save_file)
-
-    if show:
-        plt.show()
-    if close:
-        plt.close()
+    finalize_plot(**kwargs)
 
 
 def plot_cl_alm(alm, lmax=None, title="Angular power spectrum from alm", **kwargs):
@@ -233,15 +202,7 @@ def plot_cl_map(map, wcs, lmax, title="Angular power spectrum from map", **kwarg
     plot_cl(cls, lmax=lmax, title=title, **kwargs)
 
 
-def plot_predictions(
-    truth,
-    preds,
-    title="Predictions",
-    fisher=None,
-    save_file=None,
-    show=False,
-    close=True,
-):
+def plot_predictions(truth, preds, title="Predictions", fisher=None, **kwargs):
     """
     Plots the true labels against the predicted labels. If provided will plot the expected deviations from the provided fisher
     and scaled_variance.
@@ -275,18 +236,10 @@ def plot_predictions(
         plt.plot(line, line - std_dev, color="blue", linestyle="--")
 
     plt.title(title)
-    # plt.legend()
-    plt.tight_layout()
-
-    if save_file is not None:
-        plt.savefig(save_file)
-    if show:
-        plt.show()
-    if close:
-        plt.close()
+    finalize_plot(**kwargs)
 
 
-def plot_histogram(truth, preds, save_file=None, show=False, close=True):
+def plot_histogram(truth, preds, **kwargs):
     """Plot and save a histogram of predictions with mean and std dev as title"""
     # Calculate mean and standard deviation
     truth = truth.flatten()
@@ -311,18 +264,10 @@ def plot_histogram(truth, preds, save_file=None, show=False, close=True):
     axs[1].set_title(
         f"Differences - Mean: {mean_diff:.2f}, Standard Deviation: {std_diff:.2f}"
     )
-
-    plt.tight_layout()
-    # Save the plot
-    if save_file is not None:
-        plt.savefig(save_file)
-    if show:
-        plt.show()
-    if close:
-        plt.close()
+    finalize_plot(**kwargs)
 
 
-def plot_mollview(maps, title, save_file=None, show=False, close=True):
+def plot_mollview(maps, title, **kwargs):
     """
     Plot a Mollweide projection of the given maps.
 
@@ -348,13 +293,7 @@ def plot_mollview(maps, title, save_file=None, show=False, close=True):
         )
 
     plt.title(title)
-
-    if save_file is not None:
-        plt.savefig(save_file)
-    if show:
-        plt.show()
-    if close:
-        plt.close()
+    finalize_plot(**kwargs)
 
 
 def plot_heidel_comp(
@@ -363,9 +302,6 @@ def plot_heidel_comp(
     hei_idx=1,
     TCMB=2.7255,
     title="Heidelberg comparison",
-    save_file=None,
-    show=False,
-    close=True,
     **kwargs,
 ):
     idx = str(hei_idx).zfill(4)
@@ -390,6 +326,11 @@ def plot_heidel_comp(
         alm_heidelberg_l = trim_alms(alm_heidelberg_l, lmax)
         alm_heidelberg_nl = trim_alms(alm_heidelberg_nl, lmax)
 
+    # need to set up some intter args, but dont want to remove all options
+    inner_kwargs = kwargs.copy()
+    inner_kwargs["close"] = False
+    inner_kwargs["show"] = False
+
     npols = alm_l.shape[0]
     _, axes = plt.subplots(3, npols, figsize=(16, 12))
     for pol in range(npols):
@@ -398,11 +339,10 @@ def plot_heidel_comp(
         plot_cl_alm(
             alm_heidelberg_l[pol],
             lmax,
-            labels="heidelberg.",
+            labels="heidelberg",
             title=f"linear, pol: {pol_str(pol)}",
             ylabel=ylabel,
-            close=False,
-            **kwargs,
+            **inner_kwargs,
         )
         plot_cl_alm(
             alm_l[pol],
@@ -410,8 +350,7 @@ def plot_heidel_comp(
             labels="sim",
             title=f"linear, pol: {pol_str(pol)}",
             ylabel=ylabel,
-            close=False,
-            **kwargs,
+            **inner_kwargs,
         )
 
         plt.sca(axes[1, pol])
@@ -421,8 +360,7 @@ def plot_heidel_comp(
             labels=["heidelberg"],
             title=f"non-linear alms, pol: {pol_str(pol)}",
             ylabel=ylabel,
-            close=False,
-            **kwargs,
+            **inner_kwargs,
         )
         plot_cl_alm(
             [alm_nl[pol]],
@@ -430,8 +368,7 @@ def plot_heidel_comp(
             labels=["sim"],
             title=f"non-linear alms, pol: {pol_str(pol)}",
             ylabel=ylabel,
-            close=False,
-            **kwargs,
+            **inner_kwargs,
         )
 
         plt.sca(axes[2, pol])
@@ -441,16 +378,9 @@ def plot_heidel_comp(
             labels=["heidelberg", "sim"],
             title=f"full alms, fnl: 1, pol: {pol_str(pol)}",
             ylabel=ylabel,
-            close=False,
-            **kwargs,
+            **inner_kwargs,
         )
 
     plt.suptitle(title)
-    plt.tight_layout()
-
-    if save_file is not None:
-        plt.savefig(save_file)
-    if show:
-        plt.show()
-    if close:
-        plt.close()
+    kwargs.pop("plot_func", None)
+    finalize_plot(**kwargs)
