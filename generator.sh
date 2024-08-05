@@ -17,14 +17,15 @@ SETTINGS=(
   "n32"
   "n64"
   "n128"
+  "n256"
   "n512"
-  "n1024"
 
   # # these will probably crash with memory errors right now
-  # "n2048"
-  # "n4096"
+  "n1024"
+  "n2048"
+  "n4096"
+  
   # "heidelberg"
-
   # "planck"
 )
 
