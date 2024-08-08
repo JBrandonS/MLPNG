@@ -104,7 +104,7 @@ To manually train a model, you can run the `scripts/trainer.py` module with the 
 python -m scripts.trainer --model isensee --lensing settings/planck.json
 ```
 
-> [Weights and Biases](https://wandb.ai/) can be used for logging and tracking the training, similar to an online tensorboard with a few extra features. You will need to set up an account and install the `wandb` package to use this feature. You can enable this in the `training.py` file.
+> [Weights and Biases](https://wandb.ai/) can be used for logging and tracking the training, similar to an online tensorboard with a few extra features. You will need to set up an account and install the `wandb` package to use this feature and then enable it in the run settings.
 
 ## Some Notes
 
@@ -130,15 +130,15 @@ Simultaneous runs are supported as long as the filenames do not collide. If file
 
 Filenames are generated from select settings for easy reading once you understand the format. It is possible to provide a `base_name` in the settings file to override the default naming scheme. The default naming scheme is as follows:
 
-For alms: `n[nside]_[lensing][?-noise]_[polarizations]x[total sim]`
+For alms: `l[lmax]_n[nside]_[lensing]-[noise]_[polarizations]x[total sim]`
 
-- example: `n128_l-nn_Tx100000.hdf5`
+- example: `l383_n128_l-nn_Tx100000.hdf5`
   - If you provide a `base_name` the output will be `base_name.hdf5`
 
 with
 
 - `[lensing] = l | ul` for lensed or unlensed sims
-- `[?_noise] = -nn` is only included if `noise` is False
+- `[_noise] = nn | n` for no noise or for noise
 - `[polarizations]`, will be one of `T`, or `TE`
 - other values are just integers or floats
 

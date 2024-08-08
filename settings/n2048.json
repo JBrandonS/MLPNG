@@ -7,8 +7,9 @@
         "omch2": 0.120,
         "tau": 0.054
     },
-    "nsims" : 10,
+    "nsims" : 100,
     "narray" : 100,                   
     "npatches" : 10,     
-    "nside": 2048
+    "nside": 2048,
+    "lmax": 2048
 }

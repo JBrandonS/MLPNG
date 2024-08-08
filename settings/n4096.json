@@ -10,5 +10,6 @@
     "nsims" : 100,
     "narray": 100,                        
     "nside": 4096,
-    "noise": false
+    "noise": false,
+    "lmax": 2048
 }

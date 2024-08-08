@@ -28,7 +28,7 @@ else:
     logger = setup_logging(name=f"{__name__}-{mpi_rank}", level=logging.ERROR)
 
 
-def icov_func(beam, noise, c_ells):
+def icov_func(beam, noise, c_ells, npol):
     """
     Returned the inverse covariance of the data, used in the KSW estimator.
 
@@ -43,18 +43,15 @@ def icov_func(beam, noise, c_ells):
 
     Returns:
     - ndarray: Inverse-variance-weighted version of the input array.
-
     """
 
     # get needed values and remove the mono and dipole terms
     B_inv = 1 / beam
-    S = c_ells
-
+    S = c_ells[:npol]
     factor = (B_inv * noise * B_inv + S) ** (-1) * B_inv
-    npol = factor.shape[0]
 
     def _func(alm):
-        ret = np.empty_like(alm)
+        ret = np.zeros_like(alm)
         for pol in range(npol):
             ret[pol] = hp.almxfl(alm[pol], factor[pol])
         return ret
@@ -76,7 +73,7 @@ def conv_beam_func(core):  # change name
 
     def __beam(alm):
         # Convolve the beam with the alm values
-        ret = np.empty_like(alm)
+        ret = np.zeros_like(alm)
         for pol in range(core.npol):
             ret[pol] = hp.almxfl(alm[pol], core.beam_ell[pol])
         return ret
@@ -106,11 +103,11 @@ def run_ksw_step(ksw, core, theta_batch, num_steps=100):
     def step_loader(idx):
         """for stepping the KSW estimator, we just generate new unique sims"""
         logger.debug("Sending alm step %s", idx)
-        return alm_steps[idx, : core.npol]
+        return alm_steps[idx]
 
-    logger.info("Running KSW step, num steps: %s", num_steps)
+    logger.debug("Running KSW step, num steps: %s", num_steps)
     ksw.step_batch(step_loader, range(num_steps), mpi_comm, theta_batch=theta_batch)
-    logger.info("Finished KSW step")
+    logger.debug("Finished KSW step")
 
     # compute the new fisher and the distance
     if logger.isEnabledFor(logging.DEBUG):
@@ -150,7 +147,7 @@ def main():
 
     ksw = KSW(
         cosmo.red_bispectra,
-        icov_func(beam, noise, c_ells),
+        icov_func(beam, noise, c_ells, core.npol),
         conv_beam_func(core),
         core.lmax,
         core.pols,
@@ -168,7 +165,10 @@ def main():
         if mpi_root:
             logger.info("Removing existing KSW state")
             os.remove(core.mc_file)
-        mpi_comm.Barrier()
+            logger.debug("Done")
+    logger.debug("Waiting for all processes to reach this point")
+    mpi_comm.Barrier()  # wait for all processes to finish
+    logger.debug("Done")
 
     if os.path.exists(core.mc_file):
         logger.info("Loading KSW state from %s", core.mc_file)
@@ -229,14 +229,13 @@ def main():
         sdata["error"] = (estimates - fnls) * np.sqrt(fisher)
         save_data(core.file_complete, sdata, mode="a")
 
-        pred_file = os.path.join(
-            core.plot_dir, f"{core.sjob}_{core.base_name}_preds.png"
-        )
+        plot_dir = os.path.join(core.plot_dir, "estimator")
+        os.makedirs(plot_dir, exist_ok=True)
+
+        pred_file = os.path.join(plot_dir, f"{core.base_name}_{core.sjob}_preds.png")
         plot_predictions(fnls, estimates, fisher=fisher, save_file=pred_file)
 
-        hist_file = os.path.join(
-            core.plot_dir, f"{core.sjob}_{core.base_name}_hist.png"
-        )
+        hist_file = os.path.join(plot_dir, f"{core.base_name}_{core.sjob}_hist.png")
         plot_histogram(fnls, estimates, save_file=hist_file)
         print_errors(fnls, estimates, fisher)
 

@@ -1,14 +1,14 @@
 #! /bin/bash
-#SBATCH --job-name=heidelberg
+#SBATCH --job-name=elsner
 #SBATCH --partition=standard-s
 #SBATCH --ntasks=64
 #SBATCH --mem-per-cpu=4G
 #SBATCH --cpus-per-task=1
-#SBATCH --output=logs/heidelberg/%j.log
+#SBATCH --output=logs/elsner/%j.log
 #SBATCH --time=24:00:00
 
 # create the logging dir
-mkdir -p logs/heidelberg
+mkdir -p logs/elsner
 
 module purge
 module load spack conda 
@@ -17,4 +17,4 @@ module load gcc/11.2.0 intel-oneapi-mkl/2022.2.1-c4efjsy fftw/3.3.10-gz7qiki ope
 eval "$(conda shell.bash hook)"
 conda activate mlpng
 
-time srun python -m scripts.heidelberg
+time srun python -m scripts.elsner

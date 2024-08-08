@@ -4,7 +4,7 @@
 
 SETTINGS=(
     "l500_n128"
-    "heidelberg"
+    "elsner"
     "planck"
 )
 ARGS=("--nsims" "100")

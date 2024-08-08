@@ -11,7 +11,10 @@
     "nsims" : 100,
     "narray": 100,        
     "nside":512,
+    "lmax": 64,
     "lensing": false,
-    "base_name": "heidelberg",
-    "noise": false
+    "base_name": "elsner",
+    "noise": false,
+    "pols": true,
+    "fnl_range": [-100, 100]
 }

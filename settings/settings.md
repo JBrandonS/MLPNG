@@ -10,8 +10,7 @@ These settings file control the simulation and provide a large number of customi
   - `As`, 2.13e-09: Amplitude of the primordial power spectrum.
   - `pivot_scalar`, 0.05 : Pivot scale for the primordial power spectrum.
   - `ns`, 0.9624 : Spectral index of the primordial power spectrum.
-
-  - > Note: The value of `cosmo_params.lmax` used will be set by the `nside` parameter to be `lmax=3*nside-1`, this allows the function to be fully spectrally resolved with anafast. See the [Anafast documentation](https://healpix.sourceforge.io/html/fac_anafast.htm) for more information.
+  - `lmax`: Will be set by the `lmax` value below, do not set it here as it will be overridden.
 
 - `seed` : Seed for the random number generator. This is used to generate the random noise and the random field. The code has not been fully tested for reproducibility but this should help. There is no default as the default is to use a random seed.
 - `force_generation`, False : Boolean to force the generation of the CMB maps. If this is set to true the code will generate the CMB maps even if they already exist, otherwise it will check for existing data files and stop running. The code has been designed so that if a run partially fails you can restart it and it will only generate the missing data, this will override that behavior.
@@ -30,7 +29,8 @@ These settings file control the simulation and provide a large number of customi
 - `patch_side_deg`, 10 : Size of the patches in degrees.
 
 - `num_estimates`, nsims : Number of estimates to use in the KSW estimator. This is useful if you are using a large number of simulations and want to use a subset of them for time.
-- `lmax_buffer`, 512 : Buffer for the lmax parameter used in some camb calculations to ensure that the code can calculate the required power spectra to sufficient lmax.
+- `lmax`, 3*nside - 1 : The lmax parameter used in calculations. Defaults to optimal value for the nside parameter based on the [anafast documentation](https://healpix.sourceforge.io/html/fac_anafast.htm).
+- `lmax_buffer`, 512 : Buffer for the lmax parameter used in some camb calculations to ensure that the code can calculate the required power spectra and lensing to sufficient lmax.
 - `fnl_range`, [-10, 10] : Range of fNL values to use in the KSW estimator.
 
 - `noise`, True : Boolean to include noise and beaming in the simulation.
@@ -63,6 +63,7 @@ The scripts can be run with a number of command line arguments which will overri
 - `--base_dir`, str : Base directory for the output files.
 - `--seed`, int : Seed for the random number generator.
 - `--base_name`, str : Base name for the output files.
+- `--lmax`, int : The lmax parameter used.
 - `--lmax_buffer`, int : Buffer for the lmax parameter used in some camb calculations to ensure that the code can calculate the required power spectra to sufficient lmax.
 - `--fnl_range`, [int, int] : Range of fNL values to use in the KSW estimator.
 - `--num_estimates`, int : Number of estimates to use in the KSW estimator.

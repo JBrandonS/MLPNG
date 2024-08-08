@@ -38,8 +38,8 @@ class Core:
         nsims (int): The number of simulations to run. Default: 100
         narray (int): The number of arrays to process. Default: 1
         total_sims (int): The total number of simulations to process.
-        fnl_min (float): The minimum value of the local non-Gaussianity parameter (fnl). Default: -1
-        fnl_max (float): The maximum value of the local non-Gaussianity parameter (fnl). Default: 1
+        fnl_min (float): The minimum value of the local non-Gaussianity parameter (fnl). Default: -10
+        fnl_max (float): The maximum value of the local non-Gaussianity parameter (fnl). Default: 10
         fnl_shape (tuple): The shape of the fnl array.
         nell (int): The number of ell values.
         nelem (int): The number of elements in the alm array.
@@ -137,9 +137,9 @@ class Core:
         self.force_ksw = self._get("force_ksw", True)
         self.num_estimates = self._get("num_estimates", self.nsims * self.narray)
 
-        self.lmax = 3 * self.nside - 1
+        self.lmax = self._get("lmax", 3 * self.nside - 1)
         self.max_l = self.lmax + self._get("lmax_buffer", 512)
-        cosmo_params["lmax"] = self.lmax
+        self.cosmo_params["lmax"] = self.lmax
         logger.debug("Using lmax %s, max_l %s", self.lmax, self.max_l)
 
         self.fnl_min, self.fnl_max = self._get("fnl_range", (-10, 10))
@@ -233,6 +233,7 @@ class Core:
         parser.add_argument("--base_dir", type=str)
         parser.add_argument("--seed", type=int)
         parser.add_argument("--base_name", type=str)
+        parser.add_argument("--lmax", type=int)
         parser.add_argument("--lmax_buffer", type=int)
         parser.add_argument("--fnl_range", type=float, nargs=2)
         parser.add_argument("--num_estimates", type=int)
@@ -254,7 +255,7 @@ class Core:
 
         if args is None:
             args = sys.argv[1:]
-        logger.debug(f"Parsing CLI args: {args}")
+        logger.debug(f"Parsing CLI args: {args}, {sys.argv}")
         pargs, _ = parser.parse_known_args(args)
         return pargs
 
@@ -458,11 +459,11 @@ class Core:
             return os.path.join(self.base_dir, *args)
 
         lens = "l" if self.lensing else "ul"
-        nn = "-nn" if not self.noise else ""
-        j = "" if self.job_array_index is None else f"_{self.job_array_index}"
+        nn = "nn" if not self.noise else "n"
+        j: str = "" if self.job_array_index is None else f"_{self.job_array_index}"
         pol_str = "T" if not self.use_pols else "TE"
 
-        def_name = f"n{self.nside}_{lens}{nn}_{pol_str}x{self.total_sims}"
+        def_name = f"l{self.lmax}_n{self.nside}_{lens}-{nn}_{pol_str}x{self.total_sims}"
         self.base_name = self._get("base_name", def_name)
 
         self.base_dir = self._get("base_dir", "data")
@@ -509,12 +510,14 @@ class Core:
         Returns:
             None
         """
-
+        logger.debug("Initializing cosmology")
         cosmo_params = self.cosmo_params
         camb_params_obj = camb.set_params(**cosmo_params)
         self.cosmo = cosmo = Cosmology(self, camb_params_obj)
 
+        logger.debug("Computing transfer functions")
         cosmo.compute_transfer()
+        logger.debug("Computing C_ell values")
         cosmo.compute_c_ell()
 
         self.c_ells = cosmo.c_ell["c_ell"][: self.nell]

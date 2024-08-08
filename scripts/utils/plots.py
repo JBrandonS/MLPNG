@@ -22,6 +22,7 @@ def pol_str(pol, double=False):
 
 
 def finalize_plot(
+    title=None,
     tight_layout=True,
     legend=True,
     grid=True,
@@ -32,6 +33,8 @@ def finalize_plot(
     """
     Finalize the plot by adding a legend, grid, tight layout, saving the file, showing the plot and closing it.
     """
+    if title:
+        plt.title(title)
     if legend:
         plt.legend()
     if grid:
@@ -64,6 +67,8 @@ def plot_patches(patches, n_plots=8, title="Patches", **kwargs):
 
     plt.subplots_adjust(wspace=0, hspace=0)
     plt.suptitle(title)
+
+    kwargs["legend"] = False
     finalize_plot(**kwargs)
 
 
@@ -148,8 +153,7 @@ def plot_cl(
 
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
-    plt.title(title)
-    finalize_plot(**kwargs)
+    finalize_plot(title, **kwargs)
 
 
 def plot_cl_alm(alm, lmax=None, title="Angular power spectrum from alm", **kwargs):
@@ -223,11 +227,11 @@ def plot_predictions(truth, preds, title="Predictions", fisher=None, **kwargs):
 
     # Create a scatter plot with seaborn
     plt.figure(figsize=(16, 12))
-    sns.scatterplot(data=df, x="True Fnl", y="Predicted Fnl")
+    sns.scatterplot(data=df, x="True Fnl", y="Predicted Fnl", label="Estimates")
 
     # Truth line
     line = [min(truth), max(truth)]
-    plt.plot(line, line, color="red", linestyle="--", label="truth")
+    plt.plot(line, line, color="red", linestyle="--", label="Truth")
 
     if fisher is not None:
         std_dev = np.sqrt(1 / fisher)
@@ -235,8 +239,22 @@ def plot_predictions(truth, preds, title="Predictions", fisher=None, **kwargs):
         plt.plot(line, line + std_dev, color="blue", linestyle="--", label="Fisher")
         plt.plot(line, line - std_dev, color="blue", linestyle="--")
 
-    plt.title(title)
-    finalize_plot(**kwargs)
+        # lets also print the number of points within 1 sigma
+        diff = np.array(preds).flatten() - np.array(truth).flatten()
+        std_dev = np.sqrt(1 / fisher)
+        within = np.sum(np.abs(diff) < std_dev) / len(diff) * 100
+        bbox = dict(boxstyle="round", fc="blanchedalmond", ec="orange", alpha=0.5)
+        plt.text(
+            0.95,
+            0.05,
+            f"{within:.2f}% within 1 sigma",
+            bbox=bbox,
+            ha="right",
+            va="bottom",
+            transform=plt.gca().transAxes,
+        )
+
+    finalize_plot(title, **kwargs)
 
 
 def plot_histogram(truth, preds, **kwargs):
@@ -264,7 +282,7 @@ def plot_histogram(truth, preds, **kwargs):
     axs[1].set_title(
         f"Differences - Mean: {mean_diff:.2f}, Standard Deviation: {std_diff:.2f}"
     )
-    finalize_plot(**kwargs)
+    finalize_plot(legend=False, **kwargs)
 
 
 def plot_mollview(maps, title, **kwargs):
@@ -280,51 +298,52 @@ def plot_mollview(maps, title, **kwargs):
     pols = maps.shape[0]
 
     _, axes = plt.subplots(
-        1, pols, figsize=(16, 12), subplot_kw={"projection": "mollweide"}
+        pols, 1, figsize=(16, 12), subplot_kw={"projection": "mollweide"}
     )
+    axes = np.atleast_1d(axes)
 
     for pol in range(pols):
         # Create the mollview plot in the corresponding subplot
-        plt.axes(axes)
+        plt.sca(axes[pol])
         hp.mollview(
             maps[pol],
             title=f"Polarization {pol}",
             hold=True,
         )
 
-    plt.title(title)
-    finalize_plot(**kwargs)
+    plt.suptitle(title)
+    finalize_plot(tight_layout=False, legend=False, **kwargs)
 
 
-def plot_heidel_comp(
+def plot_elsner_comp(
     alm_l,
     alm_nl,
-    hei_idx=1,
+    elsner_idx=1,
     TCMB=2.7255,
-    title="Heidelberg comparison",
+    title="Elsner comparison",
     **kwargs,
 ):
-    idx = str(hei_idx).zfill(4)
-    alm_heidelberg_l = np.array(
-        hp.read_alm(f"data/heidelberg/alm_l_{idx}_v3.fits", hdu=(1, 2, 3))
+    idx = str(elsner_idx).zfill(4)
+    alm_elsner_l = np.array(
+        hp.read_alm(f"data/elsner/alm_l_{idx}_v3.fits", hdu=(1, 2, 3))
     )
-    alm_heidelberg_nl = np.array(
-        hp.read_alm(f"data/heidelberg/alm_nl_{idx}_v3.fits", hdu=(1, 2, 3))
+    alm_elsner_nl = np.array(
+        hp.read_alm(f"data/elsner/alm_nl_{idx}_v3.fits", hdu=(1, 2, 3))
     )
 
     t_scale = TCMB * 1e6
-    alm_heidelberg_l *= t_scale
-    alm_heidelberg_nl *= t_scale
+    alm_elsner_l *= t_scale
+    alm_elsner_nl *= t_scale
 
-    # we need to reshape either the alms or the heidelberg to match the same lmax to plot
-    if alm_l.shape[-1] > alm_heidelberg_l.shape[-1]:
-        lmax = hp.Alm.getlmax(alm_heidelberg_l.shape[-1])
+    # we need to reshape either the alms or the elsner to match the same lmax to plot
+    if alm_l.shape[-1] > alm_elsner_l.shape[-1]:
+        lmax = hp.Alm.getlmax(alm_elsner_l.shape[-1])
         alm_l = trim_alms(alm_l, lmax)
         alm_nl = trim_alms(alm_nl, lmax)
     else:
         lmax = hp.Alm.getlmax(alm_l.shape[-1])
-        alm_heidelberg_l = trim_alms(alm_heidelberg_l, lmax)
-        alm_heidelberg_nl = trim_alms(alm_heidelberg_nl, lmax)
+        alm_elsner_l = trim_alms(alm_elsner_l, lmax)
+        alm_elsner_nl = trim_alms(alm_elsner_nl, lmax)
 
     # need to set up some intter args, but dont want to remove all options
     inner_kwargs = kwargs.copy()
@@ -333,13 +352,16 @@ def plot_heidel_comp(
 
     npols = alm_l.shape[0]
     _, axes = plt.subplots(3, npols, figsize=(16, 12))
+    if len(axes.shape) == 1:
+        # fix for single pol
+        axes = axes[:, np.newaxis]
     for pol in range(npols):
         ylabel = r"$\ell(\ell+1)/2\pi\;C_{\ell}" + f"^{pol_str(pol)}$"
         plt.sca(axes[0, pol])
         plot_cl_alm(
-            alm_heidelberg_l[pol],
+            alm_elsner_l[pol],
             lmax,
-            labels="heidelberg",
+            labels="elsner",
             title=f"linear, pol: {pol_str(pol)}",
             ylabel=ylabel,
             **inner_kwargs,
@@ -355,9 +377,9 @@ def plot_heidel_comp(
 
         plt.sca(axes[1, pol])
         plot_cl_alm(
-            [alm_heidelberg_nl[pol]],
+            [alm_elsner_nl[pol]],
             lmax,
-            labels=["heidelberg"],
+            labels=["elsner"],
             title=f"non-linear alms, pol: {pol_str(pol)}",
             ylabel=ylabel,
             **inner_kwargs,
@@ -373,9 +395,9 @@ def plot_heidel_comp(
 
         plt.sca(axes[2, pol])
         plot_cl_alm(
-            [alm_heidelberg_l[pol] + alm_heidelberg_nl[pol], alm_l[pol] + alm_nl[pol]],
+            [alm_elsner_l[pol] + alm_elsner_nl[pol], alm_l[pol] + alm_nl[pol]],
             lmax,
-            labels=["heidelberg", "sim"],
+            labels=["elsner", "sim"],
             title=f"full alms, fnl: 1, pol: {pol_str(pol)}",
             ylabel=ylabel,
             **inner_kwargs,

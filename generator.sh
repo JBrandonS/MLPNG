@@ -5,27 +5,22 @@
 # This can take days to run, but it will run in the background and you can check the status of the jobs with squeue
 #
 
-#### Uncomment to run the heidelberg estimator test
-# see the heidelberg.txt file for information and code to get the files
-# JOBH_ID=$(sbatch "sbatch/heidelberg.sbatch" | awk '{print $4}')
-# echo "Submitted Heidelberg Estimator with ID $JOBH_ID"
-
 
 # list of the settings file to be used, will be ran in order
 # these must be in settings/ and have the .json extension
 SETTINGS=(
-  "n32"
+  # "n32"
   "n64"
-  "n128"
-  "n256"
-  "n512"
+  # "n128"
+  # "n256"
+  # "n512"
+  # "n1024"
 
-  # # these will probably crash with memory errors right now
-  "n1024"
-  "n2048"
-  "n4096"
+  # these need to use high memory nodes, change sbatch/generator.sbatch to sbatch/generator-hm.sbatch in the main loop below 
+  # "n2048"
+  # "n4096"
   
-  # "heidelberg"
+  # "elsner"
   # "planck"
 )
 
@@ -35,6 +30,7 @@ ARGS=(
   # "--lensing"
   # "--no-noise" 
   "--pols"
+  "--fnl_range" "-100" "100"
   "--force_generation"
   # "--no-force_ksw"
   "--narray" "1"
@@ -44,6 +40,10 @@ ARGS=(
 SLURM_ARGS=(
   "--array" "1-${ARGS[@]: -1}"
 )
+
+#### Uncomment to run the elsner estimator test
+JOBH_ID=$(sbatch "sbatch/elsner.sbatch" "${ARGS[@]}" | awk '{print $4}')
+echo "Submitted Elsner estimator test with ID $JOBH_ID"
 
 # Just log the overrides to the console
 if [ "${#ARGS[@]}" -ne 0 ]; then

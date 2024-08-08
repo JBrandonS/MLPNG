@@ -15,6 +15,6 @@ from .plots import (
     plot_patches,
     plot_predictions,
     plot_mollview,
-    plot_heidel_comp,
+    plot_elsner_comp,
     pol_str,
 )

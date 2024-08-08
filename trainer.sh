@@ -6,7 +6,7 @@
 SETTINGS=(  
     # "n64"
     "n128"
-    # "heidelberg"
+    # "elsner"
     # "planck"
     # "n2048"
 )

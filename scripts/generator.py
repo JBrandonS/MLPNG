@@ -6,7 +6,6 @@ import healpy as hp
 import numpy as np
 from joblib import Parallel, delayed
 from scipy.interpolate import CubicSpline, interp1d
-from scipy.integrate import simpson
 from tqdm.auto import tqdm, trange
 
 import lenspyx
@@ -20,7 +19,7 @@ from .utils.plots import (
     plot_cl_alm,
     plot_patches,
     plot_mollview,
-    plot_heidel_comp,
+    plot_elsner_comp,
     pol_str,
 )
 
@@ -73,7 +72,7 @@ def integrand(alm, bl_div_cl, alpha_l, nside, lmax, radii):
     Balm = np.ascontiguousarray(Balm)
 
     B = hp.alm2map(Balm, nside, lmax)
-    inner = hp.map2alm(B**2, lmax, iter=1, use_pixel_weights=True)
+    inner = hp.map2alm(B**2, lmax, use_pixel_weights=True)
     if npols == 1:
         inner = [inner]
     inner = np.ascontiguousarray(inner)
@@ -111,7 +110,7 @@ def generate_alm(core, nsims=None):
     return np.array(sims)
 
 
-def trap_generator(generator, x, axis=0):
+def trap_generator(generator, x):
     """
     Perform trapezoidal integration using a generator. This will consume the memory as possible to help
     with memory management, this becomes needed for nside >= 512.
@@ -119,7 +118,6 @@ def trap_generator(generator, x, axis=0):
     Parameters:
     - generator: A generator yielding the function values to integrate.
     - x: The x values corresponding to the function values.
-    - axis: The axis along which to integrate.
 
     Returns:
     - The integral computed using Simpson's rule.
@@ -159,7 +157,7 @@ def generate_alm_ng(core, alms):
     # first will be for alpha_ell, second will be beta_ell
     f_k = np.ones((len(tr_k), 2), dtype=core.r_dtype)
     pk = core.cosmo.camb_params.primordial_power(tr_k, 0)
-    # f_k[:, 0] = 5 / 3
+    # f_k[:, 0] = 3 / 5
     f_k[:, 1] = 2 * np.pi**2 / (tr_k ** (4 - core.cosmo_params["ns"])) * pk * 3 / 5
 
     # the radian_func does the f_ell^X(r) = (2/pi) int k^2 dk f(k) transfer^X_ell(k) j_ell(k r),
@@ -206,7 +204,7 @@ def generate_alm_ng(core, alms):
         )
 
         # here was use our functiont to calculate the integral
-        alm_ng[sim] = trap_generator(generator, x=core.radii, axis=0)
+        alm_ng[sim] = trap_generator(generator, x=core.radii)
 
     return alm_ng
 
@@ -247,7 +245,6 @@ def main():
     # Get our gaussian alms, very fast so no need to parallelize
     logger.info("Starting Alm generation")
     alm_l = generate_alm(core)
-    logger.info("Done!")
 
     # get the non-gaussian alms, this will take a long time
     logger.info("Starting non-gaussian Alm generation")
@@ -255,15 +252,50 @@ def main():
     logger.info("Done!")
 
     # generate the fnls
-    fnls = core.rng.uniform(core.fnl_min, core.fnl_max, core.fnl_shape)
+    fnls = core.rng.uniform(core.fnl_min, core.fnl_max + 1, core.fnl_shape)
 
     # finally combine into the full alms and remove the monopole and dipole terms
     alms = alm_l + fnls[:, np.newaxis, :] * alm_ng
     alms = remove_mono_dipole(alms)
 
-    logger.info("Completed Alm generation!")
-    logger.info("Starting patch generation")
+    # lets make a few plots for the alms
+    if core.is_main_job:
+        sim = core.rng.integers(core.nsims)
+        plot_dir = os.path.join(core.plot_dir, "generator")
+        os.makedirs(plot_dir, exist_ok=True)
 
+        # here we compaire to the exact elsner sims from elsner
+        elsner_file = os.path.join(plot_dir, f"{core.base_name}_{core.sjob}_elsner.png")
+        plot_elsner_comp(
+            alm_l[sim],
+            alm_ng[sim],
+            elsner_idx=core.rng.integers(1, 1001),
+            save_file=elsner_file,
+        )
+
+        for pol in range(core.npol):
+            pstr = pol_str(pol)
+
+            # lets plot the alms with camb for testing that side of things
+            filebase = os.path.join(
+                plot_dir,
+                f"{core.base_name}_{core.sjob}_alm[{sim},{pstr}].png",
+            )
+            plot_cl_alm(
+                alms[sim, pol],
+                save_file=filebase,
+                plot_camb=True,
+                camb_cls=core.c_ells[pol],
+                plot_noise=False,
+                plot_full_camb=True,
+                camb_noise=core.noise_ell[pol],
+                camb_beam=core.beam_ell[pol],
+                ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}" + f"^{pstr}$",
+            )
+
+    logger.info("Completed Alm generation!")
+
+    logger.info("Starting lensing and patch generation")
     logger.debug("Generating patch geometry")
     ps_rad = np.deg2rad(core.patch_side_deg)
     res = ps_rad / core.nside
@@ -287,7 +319,6 @@ def main():
         gs, w = enmap.geometry(pos=bottom, res=res, proj="car")
         patch_shapes.append(gs)
         patch_wcss.append(w)
-    logger.debug("Done")
 
     if core.lensing:
         logger.debug("Getting lensing cl_phi and data")
@@ -348,55 +379,36 @@ def main():
             for i in range(core.npatches):
                 patches[sim, i] = car_map.project(patch_shapes[i], patch_wcss[i])[
                     : core.npol
-                ]  # type: ignore
+                ]
         logger.debug("Done")
 
-    # lets make a few plots
+    # lets make a few plots of patches and mollview
     if core.is_main_job:
         sim = core.rng.integers(core.nsims)
+        plot_dir = os.path.join(core.plot_dir, "generator")
+        os.makedirs(plot_dir, exist_ok=True)
 
         # make the full sky mollview plots
-        plt_file = os.path.join(
-            core.plot_dir, f"{core.sjob}_{core.base_name}_mollview[{sim}].png"
+        plot_file = os.path.join(
+            plot_dir,
+            f"{core.base_name}_{core.sjob}_mollview[{sim}].png",
         )
         if core.lensing:
             map = lenspyx.alm2lenmap(alms[sim], dlm, geom_info, nthreads=core.n_cpus)
-            plot_mollview(map, f"Lensed view for {sim}", save_file=plt_file)
+            plot_mollview(map, f"Lensed view for {sim}", save_file=plot_file)
         else:
             map = curvedsky.alm2map_healpix(
-                alms[sim, 0], nside=core.nside, copy=True, nthread=core.n_cpus
+                alms[sim], nside=core.nside, copy=True, nthread=core.n_cpus
             )
-            plot_mollview(map, f"Unlensed view for {sim}", save_file=plt_file)
-
-        # here we compaire to the exact elsner sims from heidelberg
-        hei_file = os.path.join(core.plot_dir, f"{core.sjob}_{core.base_name}_hei.png")
-        plot_heidel_comp(
-            alm_l[sim],
-            alm_ng[sim],
-            hei_idx=core.rng.integers(1, 1001),
-            save_file=hei_file,
-        )
-
-        hei_file = os.path.join(
-            core.plot_dir, f"{core.sjob}_{core.base_name}_hei-avg.png"
-        )
-        alm_l_avg = np.mean(alm_l, axis=0)
-        alm_ng_avg = np.mean(alm_ng, axis=0)
-        plot_heidel_comp(
-            alm_l_avg,
-            alm_ng_avg,
-            hei_idx=core.rng.integers(1, 1001),
-            title="Heidelberg comparison with averaged alms",
-            save_file=hei_file,
-        )
+            plot_mollview(map, f"Unlensed view for {sim}", save_file=plot_file)
 
         for pol in range(core.npol):
             pstr = pol_str(pol)
-            ylabel = r"$\ell(\ell+1)/2\pi\;C_{\ell}" + f"^{pstr}$"
 
             # make some platch plots for the sky cuts
             patch_file = os.path.join(
-                core.plot_dir, f"{core.sjob}_{core.base_name}_patch[{sim},{pstr}].png"
+                plot_dir,
+                f"{core.base_name}_{core.sjob}_patch[{sim},{pstr}].png",
             )
             plot_patches(
                 patches[sim, :, pol],
@@ -404,26 +416,9 @@ def main():
                 save_file=patch_file,
             )
 
-            # lets plot the alms with camb for testing that side of things
-            filebase = os.path.join(
-                core.plot_dir, f"{core.sjob}_{core.base_name}_alm[{sim},{pstr}].png"
-            )
-            plot_cl_alm(
-                alms[sim, pol],
-                save_file=filebase,
-                plot_camb=True,
-                camb_cls=core.c_ells[pol],
-                plot_noise=False,
-                plot_full_camb=True,
-                camb_noise=core.noise_ell[pol],
-                camb_beam=core.beam_ell[pol],
-                ylabel=ylabel,
-            )
-
     logger.info("Done!")
 
     logger.info("Saving data")
-
     sdata = {}
     sdata["alm"] = alms
     sdata["fnl"] = fnls
