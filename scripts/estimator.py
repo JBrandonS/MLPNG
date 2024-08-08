@@ -134,7 +134,7 @@ def main():
 
     # we need to setup the KSW here
     cosmo_params = core.cosmo_params
-    cosmo = Cosmology(camb.set_params(**cosmo_params))
+    cosmo = Cosmology(camb.set_params(None, False, **cosmo_params))
     cosmo.compute_transfer(core.max_l)
     cosmo.compute_c_ell()
 
@@ -142,7 +142,7 @@ def main():
     beam = core.beam_ell[: core.npol]
     c_ells = core.c_ells[: core.npol]
 
-    loc_shape = Shape.prim_local(cosmo_params["ns"], cosmo_params["pivot_scalar"])
+    loc_shape = Shape.prim_local(cosmo_params["ns"], cosmo_params["pivot_scalar"]) # type: ignore
     cosmo.add_prim_reduced_bispectrum(loc_shape, core.radii)
 
     ksw = KSW(
@@ -165,10 +165,7 @@ def main():
         if mpi_root:
             logger.info("Removing existing KSW state")
             os.remove(core.mc_file)
-            logger.debug("Done")
-    logger.debug("Waiting for all processes to reach this point")
     mpi_comm.Barrier()  # wait for all processes to finish
-    logger.debug("Done")
 
     if os.path.exists(core.mc_file):
         logger.info("Loading KSW state from %s", core.mc_file)
@@ -181,7 +178,7 @@ def main():
             logger.info("Saving KSW state to %s", core.mc_file)
             ksw.write_state(core.mc_file, mpi_comm)
 
-    fisher = float(ksw.compute_fisher())
+    fisher = float(ksw.compute_fisher())  # type: ignore
     logger.info("Fisher: %s, standard deviation: %s", fisher, np.sqrt(1 / fisher))
 
     # note that these are not fully loaded into memory

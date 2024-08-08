@@ -75,8 +75,6 @@ def main():
     loc_shape = Shape.prim_local(cosmo_params["ns"], cosmo_params["pivot_scalar"])
     cosmo.add_prim_reduced_bispectrum(loc_shape, core.radii)
 
-    # data = Data(core.lmax, noise, beam, core.pols, cosmo)
-
     ksw = KSW(
         cosmo.red_bispectra,
         icov_func(beam, noise, core.c_ells, core.npol),

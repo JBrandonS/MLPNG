@@ -2,7 +2,6 @@ import sys
 import glob
 import os
 import re
-import logging
 
 import h5py
 from tqdm.auto import tqdm

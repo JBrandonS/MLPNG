@@ -241,18 +241,20 @@ def plot_predictions(truth, preds, title="Predictions", fisher=None, **kwargs):
 
         # lets also print the number of points within 1 sigma
         diff = np.array(preds).flatten() - np.array(truth).flatten()
-        std_dev = np.sqrt(1 / fisher)
-        within = np.sum(np.abs(diff) < std_dev) / len(diff) * 100
+        diff = np.abs(diff)
         bbox = dict(boxstyle="round", fc="blanchedalmond", ec="orange", alpha=0.5)
-        plt.text(
-            0.95,
-            0.05,
-            f"{within:.2f}% within 1 sigma",
-            bbox=bbox,
-            ha="right",
-            va="bottom",
-            transform=plt.gca().transAxes,
-        )
+        std_dev = np.sqrt(1 / fisher)
+        for i in range(1, 4):
+            within = np.sum(diff < i * std_dev) / len(diff) * 100
+            plt.text(
+                0.95,
+                0.1 - (i - 1) * 0.025,
+                f"{within:.2f}% within {i} $\\sigma$",
+                bbox=bbox,
+                ha="right",
+                va="bottom",
+                transform=plt.gca().transAxes,
+            )
 
     finalize_plot(title, **kwargs)
 

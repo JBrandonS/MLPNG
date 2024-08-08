@@ -91,7 +91,7 @@ def AutoModel(args=None, default="isensee"):
     if args is None:
         args = sys.argv[1:]
 
-    logger.debug(f"Parsing training CLI args: %s", args)
+    logger.debug("Parsing training CLI args: %s", args)
     pargs, args = parser.parse_known_args(args)
 
     # get the model and add settings

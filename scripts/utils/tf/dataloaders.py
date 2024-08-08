@@ -319,7 +319,7 @@ class PatchLoader(DataLoaderBase):
             self.file_path,
             self.length,
             self.shape,
-            np.sqrt(1 / file["fisher"][0]),
+            np.sqrt(1 / file["fisher"][0]),  # type: ignore
         )
 
         self._ds = Dataset.from_generator(

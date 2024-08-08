@@ -9,18 +9,18 @@
 # list of the settings file to be used, will be ran in order
 # these must be in settings/ and have the .json extension
 SETTINGS=(
-  # "n32"
+  "n32"
   "n64"
-  # "n128"
-  # "n256"
-  # "n512"
-  # "n1024"
+  "n128"
+  "n256"
+  "n512"
+  "n1024"
 
   # these need to use high memory nodes, change sbatch/generator.sbatch to sbatch/generator-hm.sbatch in the main loop below 
   # "n2048"
   # "n4096"
   
-  # "elsner"
+  "elsner"
   # "planck"
 )
 
@@ -29,9 +29,9 @@ ARGS=(
   # "--nsims" "100"
   # "--lensing"
   # "--no-noise" 
-  "--pols"
-  "--fnl_range" "-100" "100"
-  "--force_generation"
+  # "--pols"
+  # "--fnl_range" "-100" "100"
+  # "--force_generation"
   # "--no-force_ksw"
   "--narray" "1"
 )

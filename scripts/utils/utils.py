@@ -154,7 +154,7 @@ def get_fisher(file):
     """
     try:
         with h5py.File(file, "r", swmr=True, locking=False) as hdf:
-            fisher = hdf.get("fisher", [None])[0]
+            fisher = float(hdf.get("fisher", [None])[0])  # type: ignore
             logger.info("Loaded fisher matrix: %s", fisher)
     except Exception as e:
         logger.error(f"Could not load fisher matrix: {e}")
@@ -234,7 +234,7 @@ def trim_alms(alm, lmax, dtype=None):
     temp = np.zeros(new_shape, dtype)
 
     # this is probably slow, but dont think it worth fixing yet
-    for l in range(lmax + 1):
+    for l in range(lmax + 1):  # noqa: E741
         for m in range(l + 1):
             temp[:, hp.Alm.getidx(lmax, l, m)] = alm[..., hp.Alm.getidx(old_lmax, l, m)]
 
