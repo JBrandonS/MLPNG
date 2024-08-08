@@ -8,8 +8,6 @@
         "tau": 0.054
     },
     "nsims" : 100,
-    "narray" : 100,                   
-    "npatches" : 10,     
-    "nside": 2048,
-    "lmax": 2048
+    "narray" : 100,                       
+    "nside": 2048
 }

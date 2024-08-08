@@ -145,7 +145,7 @@ def generate_alm_ng(core, alms):
     """
 
     logger.debug("Setting up the non-gaussian alms")
-    ells = core.ells  # drop the BB mode
+    ells = core.ells
     lmin = 2
 
     tr_ells = core.cosmo.transfer["ells"]
@@ -155,12 +155,15 @@ def generate_alm_ng(core, alms):
 
     # this will be the f(k) value to be placed in the radial function
     # first will be for alpha_ell, second will be beta_ell
+    # see komatsu 2003 eq 5 and 6
     f_k = np.ones((len(tr_k), 2), dtype=core.r_dtype)
-    pk = core.cosmo.camb_params.primordial_power(tr_k, 0)
-    # f_k[:, 0] = 3 / 5
-    f_k[:, 1] = 2 * np.pi**2 / (tr_k ** (4 - core.cosmo_params["ns"])) * pk * 3 / 5
 
-    # the radian_func does the f_ell^X(r) = (2/pi) int k^2 dk f(k) transfer^X_ell(k) j_ell(k r),
+    # for beta, get the Pk from camb and convert from the dimensionless Pk from camb to the dimensionful
+    Pk = core.cosmo.camb_params.primordial_power(tr_k, 0)
+    f_k[:, 1] = 2 * np.pi**2 * tr_k ** (-3) * Pk
+
+    # this computes \frac{2}{\pi} \int_0^\infty dk k^2 f_k tr_ell_k j_\ell(k r)
+    # across tr_k, radii, and tr_ells
     rad = radial_func(f_k, tr_ell_k, tr_k, core.radii, tr_ells)
 
     alpha_ell = rad[..., 0]
