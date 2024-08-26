@@ -140,7 +140,6 @@ class Core:
         self.lmax = self._get("lmax", 3 * self.nside - 1)
         self.max_l = self.lmax + self._get("lmax_buffer", 512)
         self.cosmo_params["lmax"] = self.lmax
-        logger.debug("Using lmax %s, max_l %s", self.lmax, self.max_l)
 
         self.fnl_min, self.fnl_max = self._get("fnl_range", (-10, 10))
         self.fnl_shape = (self.nsims, 1)
@@ -250,12 +249,9 @@ class Core:
         # only really useful for debugging, must be provided by the CLI and not in the settings file
         parser.add_argument("--save_settings", action="store_true")
 
-        # sets the model name to be used by the trainer
-        # parser.add_argument("--model", type=str)
-
         if args is None:
             args = sys.argv[1:]
-        logger.debug(f"Parsing CLI args: {args}, {sys.argv}")
+        logger.debug(f"Parsing CLI args: {args}")
         pargs, _ = parser.parse_known_args(args)
         return pargs
 
@@ -328,6 +324,7 @@ class Core:
         beam = hp.gauss_beam(self.beam_width, lmax=self.lmax, pol=True)  # (nell, npol)
         beam = np.swapaxes(beam, 0, 1)  # convert beam to (npol, nell)
         noise = np.ones((self.nell), dtype=self.r_dtype)
+        # noise[:2] = 1000  # set the mono and dipole values to 0
 
         # here we setup the noise_ell and beam_ell attributes, these are in TT, EE, BB, TE order
         beam_ell = [beam[0]]
@@ -463,7 +460,7 @@ class Core:
         j: str = "" if self.job_array_index is None else f"_{self.job_array_index}"
         pol_str = "T" if not self.use_pols else "TE"
 
-        def_name = f"l{self.lmax}_n{self.nside}_{lens}-{nn}_{pol_str}x{self.total_sims}"
+        def_name = f"l{self.lmax}_n{self.nside}_{lens}-{nn}_{pol_str}x{self.total_sims}_f{self.fnl_min}-{self.fnl_max}"
         self.base_name = self._get("base_name", def_name)
 
         self.base_dir = self._get("base_dir", "data")

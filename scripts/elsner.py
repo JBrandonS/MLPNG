@@ -9,9 +9,9 @@ import camb
 from ksw import KSW, Cosmology, Shape
 
 from . import Core
-from .estimator import icov_func, conv_beam_func, run_ksw_step
+from .estimator import conv_beam_func, run_ksw_step
 from .utils import remove_mono_dipole, setup_logging, trim_alms, print_errors
-from .utils.plots import plot_cl_alm, plot_predictions
+from .utils.plots import plot_cl_alm, plot_predictions, plot_cl
 
 mpi_comm = MPI.COMM_WORLD
 mpi_rank = mpi_comm.Get_rank()
@@ -27,7 +27,14 @@ logger = setup_logging(
 def get_files():
     import requests
 
-    logger.info("Checking for files and will download if needed")
+    logger.debug("Checking for files and will download if needed")
+
+    URL0 = "http://dc.zah.uni-heidelberg.de/elsnersim/q/s/static/cl_wmap5_bao_sn.txt"
+    file0 = "data/elsner/cl_wmap5_bao_sn.dat"
+    if not os.path.exists(file0):
+        with requests.Session() as s, open(file0, "wb") as f:
+            f.write(s.get(URL0).content)
+
     for num in range(mpi_rank + 1, 1001, mpi_size):
         URL1 = (
             "https://dc.zah.uni-heidelberg.de/elsnersim/q/s/static/alm_l_"
@@ -50,10 +57,54 @@ def get_files():
             with requests.Session() as s, open(file2, "wb") as f:
                 f.write(s.get(URL2).content)
 
+def icov_func(beam, noise, c_ells, npol, datafile="data/elsner/cl_wmap5_bao_sn.dat"):
+    """
+    Returned the inverse covariance of the data, used in the KSW estimator.
+
+    Function takes (npol, nelem) alm-like complex array "alm" and returns the
+    inverse-variance-weighted version of that array. Specifically:
+    (B^{-1} N B^{-1} + S)^{-1} B^{-1} a, where a = B s + n, B is the beam
+    and N^{-1} and S^{-1} are the inverse noise and signal covariance
+    matrices, respectively.
+
+    Parameters:
+    - alm (ndarray): (npol, nelem) alm-like complex array.
+
+    Returns:
+    - ndarray: Inverse-variance-weighted version of the input array.
+    """
+
+    B_inv = 1 / beam
+
+    # is in in shape (ell, cat) with cat=l, TT, EE, TE
+    data = np.loadtxt(datafile)
+    data = data.transpose()
+    lmax = int(data[0, -1])
+    S = np.zeros((npol, lmax + 1))
+    S[:, 2:] = data[1 : npol + 1]
+
+    # convert from dimensionless to muK^2
+    S *= (2.7255 * 1e6) ** 2
+
+    if mpi_root:
+        # lets make a plot to test the cl values
+        cl_file = os.path.join("data/plots/", "cl-test.png")
+        plot_cl(S, lmax, save_file=cl_file, plot_camb=True, camb_cls=c_ells)
+
+    factor = (B_inv * noise * B_inv + S) ** (-1) * B_inv
+
+    def _func(alm):
+        ret = np.zeros_like(alm)
+        for pol in range(npol):
+            ret[pol] = hp.almxfl(alm[pol], factor[pol])
+        return ret
+
+    return _func
+
 
 def main():
     """
-    A test script to run the KSW estimator just on the heildelberg sims.
+    A test script to run the KSW estimator just on the elsner sims.
     Probably not up to date with the latest changes in estimator.
     """
     get_files()
@@ -67,6 +118,7 @@ def main():
     cosmo = Cosmology(camb.set_params(**cosmo_params))
     cosmo.compute_transfer(core.max_l)
     cosmo.compute_c_ell()
+    core.cosmo = cosmo
 
     noise = core.noise_ell[: core.npol]
     beam = core.beam_ell[: core.npol]
@@ -87,14 +139,14 @@ def main():
     # The default theta_batch size is 25, which is really small, we want to increase it
     # going too high can cause memory issues, so we will cap it at 256
     theta_batch = int(np.floor(1.5 * core.lmax + 1)) // mpi_size
-    theta_batch = min(256, theta_batch)
+    theta_batch = min(8, theta_batch)
 
     logger.info("Running KSW step")
-    run_ksw_step(ksw, core, theta_batch)
-    logger.info("Done with step")
+    run_ksw_step(ksw, core, theta_batch, 100)
+    logger.info("Done")
 
     fisher = float(ksw.compute_fisher())
-    logger.info("Fisher: %s, standard deviation: %s", fisher, np.sqrt(1 / fisher))
+    logger.debug("Fisher: %s, standard deviation: %s", fisher, np.sqrt(1 / fisher))
 
     def alm_loader(str_idx):
         idx = str(str_idx).zfill(4)
@@ -106,23 +158,31 @@ def main():
         alm_elsner_nl = np.array(hp.read_alm(base2, hdu))
 
         fnl = fnls[int(str_idx) - 1]
-        t_scale = 2.7255 * 10 ** (6)
-        logger.debug("Sending fnl: %s", fnl)
+        t_scale = core.cosmo.camb_params.TCMB * 1e6
+        logger.debug("Sending fnl: %s for step %s", fnl, str_idx)
 
         alms = (alm_elsner_l + fnl[..., np.newaxis] * alm_elsner_nl) * t_scale
-        alms = remove_mono_dipole(alms[: core.npol])
+        alms = alms[: core.npol]
+
+        if mpi_root and str_idx == 1:
+            plot_dir = os.path.join(core.plot_dir, "elsner_test")
+            os.makedirs(plot_dir, exist_ok=True)
+
+            cl_file = os.path.join(plot_dir, f"{core.sjob}-{core.base_name}_cl.png")
+            c_ells = cosmo.c_ell["unlensed_scalar"]["c_ell"]
+            c_ells = np.transpose(c_ells)
+            plot_cl_alm(alms, save_file=cl_file, plot_camb=True, camb_cls=c_ells)
 
         # need sto trim the values if we are using a lower lmax, throw error if asking for higher lmax
         lmax = hp.Alm.getlmax(alms.shape[-1])
         if lmax < core.lmax:
-            # this could be done earlyer but this is just test code so not super important to optimize
+            # this could be done earlier but this is just test code so not super important to optimize
             raise ValueError(
                 "alm has lmax %s < %s which cannot be resolved", lmax, core.lmax
             )
         if lmax > core.lmax:
-            logger.debug("Trimming alm from lmax %s to %s", lmax, core.lmax)
             alms = trim_alms(alms, core.lmax)
-        return alms
+        return remove_mono_dipole(alms)
 
     logger.info("Computing estimates")
     alm_strs = range(1, 1001)
@@ -134,7 +194,7 @@ def main():
         plot_dir = os.path.join(core.plot_dir, "elsner_test")
         os.makedirs(plot_dir, exist_ok=True)
 
-        pred_file = os.path.join(plot_dir, f"{core.sjob}-{core.base_name}.png")
+        pred_file = os.path.join(plot_dir, f"{core.sjob}-{core.base_name}_preds.png")
         plot_predictions(fnls, estimates, fisher=fisher, save_file=pred_file)
 
         cl_file = os.path.join(plot_dir, f"{core.sjob}-{core.base_name}_cl.png")

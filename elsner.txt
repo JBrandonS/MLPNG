@@ -46,6 +46,10 @@ Cl file: http://dc.zah.uni-heidelberg.de/elsnersim/q/s/static/cl_wmap5_bao_sn.tx
 ```python
 import requests
 
+URL0 = "http://dc.zah.uni-heidelberg.de/elsnersim/q/s/static/cl_wmap5_bao_sn.txt"
+with requests.Session() as s, open("cl_wmap5_bao_sn.dat", "wb") as f:
+    f.write(s.get(URL0).content)
+
 for num in range(1, 1001):
     URL1 = "https://dc.zah.uni-heidelberg.de/elsnersim/q/s/static/alm_l_" + str(num).zfill(4) + "_v3.fits"
     URL2 = "https://dc.zah.uni-heidelberg.de/elsnersim/q/s/static/alm_nl_" + str(num).zfill(4) + "_v3.fits"

@@ -9,7 +9,9 @@
         "tau": 0.084
     },
     "nsims" : 100,
-    "narray": 100,        
+    "narray": 100,
+    "nside": 512,
+    "lmax": 1024,        
     "base_name": "elsner",
     "fnl_range": [-100, 100]
 }

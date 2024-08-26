@@ -10,7 +10,7 @@ from mpi4py import MPI
 
 from . import Core
 from .generator import generate_alm
-from .utils import save_data, setup_logging, print_errors
+from .utils import save_data, setup_logging, print_errors, remove_mono_dipole
 from .utils.plots import plot_histogram, plot_predictions
 
 from ksw import KSW, Cosmology, Shape
@@ -45,7 +45,6 @@ def icov_func(beam, noise, c_ells, npol):
     - ndarray: Inverse-variance-weighted version of the input array.
     """
 
-    # get needed values and remove the mono and dipole terms
     B_inv = 1 / beam
     S = c_ells[:npol]
     factor = (B_inv * noise * B_inv + S) ** (-1) * B_inv
@@ -96,28 +95,24 @@ def compute_iso_icov(core, N, b):
 
 
 def run_ksw_step(ksw, core, theta_batch, num_steps=100):
-    logger.debug("Generating %s ksw step alms", num_steps)
     alm_steps = generate_alm(core, num_steps)
-    logger.debug("Done")
 
     def step_loader(idx):
         """for stepping the KSW estimator, we just generate new unique sims"""
         logger.debug("Sending alm step %s", idx)
         return alm_steps[idx]
 
-    logger.debug("Running KSW step, num steps: %s", num_steps)
     ksw.step_batch(step_loader, range(num_steps), mpi_comm, theta_batch=theta_batch)
-    logger.debug("Finished KSW step")
 
     # compute the new fisher and the distance
-    if logger.isEnabledFor(logging.DEBUG):
-        fisher = ksw.compute_fisher()
-        icov_ell = compute_iso_icov(
-            core, core.noise_ell[: core.npol], core.beam_ell[: core.npol]
-        )
-        fisher_iso = ksw.compute_fisher_isotropic(icov_ell)
-        distance = np.abs(fisher - fisher_iso)
-        logger.debug("Fisher distance: %s, iso Fisher: %s", distance, fisher_iso)
+    # if logger.isEnabledFor(logging.DEBUG):
+    #     fisher = ksw.compute_fisher()
+    #     icov_ell = compute_iso_icov(
+    #         core, core.noise_ell[: core.npol], core.beam_ell[: core.npol]
+    #     )
+    #     fisher_iso = ksw.compute_fisher_isotropic(icov_ell)
+    #     distance = np.abs(fisher - fisher_iso)
+    #     logger.debug("Fisher distance: %s, iso Fisher: %s", distance, fisher_iso)
 
 
 def main():

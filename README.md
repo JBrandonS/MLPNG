@@ -154,7 +154,3 @@ Additional thanks to:
 - Daan Meerburg
 - Jorik Melsen
 - Thomas Flöss
-
-## License
-
-Will be GPL-3 thanks to the KSW import

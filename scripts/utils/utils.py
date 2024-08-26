@@ -163,7 +163,7 @@ def get_fisher(file):
     return fisher
 
 
-def remove_mono_dipole(alm, inplace=True):
+def remove_mono_dipole(alm, inplace=False):
     """
     Remove the monopole and dipole terms from the alms.
 
@@ -180,9 +180,14 @@ def remove_mono_dipole(alm, inplace=True):
     lmax = hp.Alm.getlmax(len(data))
 
     # Note: that we do not need -m's due to symmetry
-    data[..., hp.Alm.getidx(lmax, 0, 0)] = 0.0
-    data[..., hp.Alm.getidx(lmax, 1, 0)] = 0.0
-    data[..., hp.Alm.getidx(lmax, 1, 1)] = 0.0
+    if len(np.shape(data)) == 1:
+        data[hp.Alm.getidx(lmax, 0, 0)] = 0.0
+        data[hp.Alm.getidx(lmax, 1, 0)] = 0.0
+        data[hp.Alm.getidx(lmax, 1, 1)] = 0.0
+    else:
+        data[..., hp.Alm.getidx(lmax, 0, 0)] = 0.0
+        data[..., hp.Alm.getidx(lmax, 1, 0)] = 0.0
+        data[..., hp.Alm.getidx(lmax, 1, 1)] = 0.0
     return data
 
 
@@ -236,6 +241,8 @@ def trim_alms(alm, lmax, dtype=None):
     # this is probably slow, but dont think it worth fixing yet
     for l in range(lmax + 1):  # noqa: E741
         for m in range(l + 1):
-            temp[:, hp.Alm.getidx(lmax, l, m)] = alm[..., hp.Alm.getidx(old_lmax, l, m)]
+            new = hp.Alm.getidx(lmax, l, m)
+            old = hp.Alm.getidx(old_lmax, l, m)
+            temp[..., new] = alm[..., old]
 
     return temp

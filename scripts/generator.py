@@ -148,6 +148,7 @@ def generate_alm_ng(core, alms):
     ells = core.ells
     lmin = 2
 
+    # get the transfer functions with tr_ell_k being \Delta_\ell(k)
     tr_ells = core.cosmo.transfer["ells"]
     tr_k = core.cosmo.transfer["k"]
     # transfers are T, E, PHI and not TEB
@@ -206,7 +207,7 @@ def generate_alm_ng(core, alms):
             for r in range(len(core.radii))
         )
 
-        # here was use our functiont to calculate the integral
+        # here was use our function to calculate the integral
         alm_ng[sim] = trap_generator(generator, x=core.radii)
 
     return alm_ng
