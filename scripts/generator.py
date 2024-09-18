@@ -18,7 +18,7 @@ from .utils import remove_mono_dipole, save_data, setup_logging
 from .utils.plots import (
     plot_cl_alm,
     plot_patches,
-    plot_mollview,
+    # plot_mollview,
     plot_elsner_comp,
     pol_str,
 )
@@ -46,39 +46,43 @@ def interpolator(func, ells_sparse, axis=1, cubic=True):
         return interp1d(ells_sparse, func, kind="linear", axis=axis)
 
 
-def integrand(alm, bl_div_cl, alpha_l, nside, lmax, radii):
+def integrand(alm, bl_div_cl, alpha_l, nside, lmax, use_e, radii):
     """
-    Calculate the integrand for a given set of parameters.
+    Calculates the Outer integral of Hansen 2010 eq 27. That is:
+
+    int dr r^2 [ alpha_ell(r) ( int d^2 hat{n} Y^*_{ell m}(hat{n}) B(r, hat{n})^2 ) ]
 
     Parameters:
-    alm (ndarray): The input spherical harmonic coefficients.
-    bl_div_cl (ndarray): The division of beta_ell function and C_l.
-    alpha_l (ndarray): The alpha_l coefficients.
-    nside (int): The HEALPix nside parameter.
-    lmax (int): The maximum multipole moment.
-    radii (float): the radii at which we are evaluating
+        alm (ndarray): The input spherical harmonic coefficients.
+        bl_div_cl (ndarray): The division of beta_ell function and C_l.
+        alpha_l (ndarray): The alpha_l coefficients.
+        nside (int): The HEALPix nside parameter.
+        lmax (int): The maximum multipole moment.
+        radii (float): the radii at which we are evaluating
 
     Returns:
-    ndarray: The calculated integrand.
+        ndarray: The calculated integrand.
 
     """
-    npols = bl_div_cl.shape[-1]
+
+    npols = alm.shape[0]
     Balm = [hp.almxfl(alm[pol], bl_div_cl[..., pol]) for pol in range(npols)]
-    if npols == 2:
-        # add zeros for the b_modes
-        Balm.append(np.zeros_like(Balm[0]))
+
+    # We need to shape the Balms correctly
+    if use_e:
+        if npols == 1:  # will need the T modes
+            Balm.insert(0, np.zeros_like(Balm[0]))
+        Balm.append(np.zeros_like(Balm[0]))  # add zeros for the b_modes
     elif npols == 1:
         Balm = Balm[0]
     Balm = np.ascontiguousarray(Balm)
 
-    B = hp.alm2map(Balm, nside, lmax)
+    B = hp.alm2map(Balm, nside)
     inner = hp.map2alm(B**2, lmax, use_pixel_weights=True)
-    if npols == 1:
-        inner = [inner]
-    inner = np.ascontiguousarray(inner)
+    inner = np.ascontiguousarray(np.atleast_2d(inner))
 
-    results = np.array([hp.almxfl(inner[pol], alpha_l[:, pol]) for pol in range(npols)])
-    return radii**2 * results
+    results = [hp.almxfl(inner[pol], alpha_l[:, pol]) for pol in range(npols)]
+    return radii**2 * np.array(results)
 
 
 def generate_alm(core, nsims=None):
@@ -86,28 +90,17 @@ def generate_alm(core, nsims=None):
     generates the gaussian alms using the given core.
 
     Parameters:
-    - core: The core object containing necessary parameters and data.
-    - nsims: The number of simulations to generate. Default is None.
+        core: The core object containing necessary parameters and data.
+        nsims: The number of simulations to generate. If not provided will use the core's nsims.
 
     Returns:
-    - sims: The generated alms.
+        sims: The generated alms. in TT, EE, BB, TE order.
     """
     if nsims is None:
         nsims = core.nsims
 
-    totcov = core.c_ells.copy()
-    totcov *= core.beam_ell**2
-    totcov += core.noise_ell
-
-    # Turn into correct shape
-    if not core.use_pols:
-        totcov = totcov[0, :]
-        totcov = totcov[np.newaxis, :]
-
-    # ensure totcov is contiguous (all in the same block of memory) to make computations faster
-    totcov = np.ascontiguousarray(totcov)
-    sims = [hp.synalm(totcov, new=True)[: core.npol] for _ in range(nsims)]
-    return np.array(sims)
+    sims = [hp.synalm(core.cov_tot, new=True) for _ in range(nsims)]
+    return core.trim_pols(sims)
 
 
 def trap_generator(generator, x):
@@ -116,17 +109,17 @@ def trap_generator(generator, x):
     with memory management, this becomes needed for nside >= 512.
 
     Parameters:
-    - generator: A generator yielding the function values to integrate.
-    - x: The x values corresponding to the function values.
+        generator: A generator yielding the function values to integrate.
+        x: The x values corresponding to the function values.
 
     Returns:
-    - The integral computed using Simpson's rule.
+        The integral computed using Simpson's rule.
     """
     integral = 0.0
     y_prev = next(generator)
     for i in range(1, len(x)):
         y_curr = next(generator)
-        integral += (x[i] - x[i - 1]) * (y_prev + y_curr) / 2
+        integral += (x[i] - x[i - 1]) * (y_prev + y_curr) / 2.0
         y_prev = y_curr
 
     return integral
@@ -137,22 +130,21 @@ def generate_alm_ng(core, alms):
     This function calculates the non-gaussian alms using the given core and the gaussian alms.
 
     Parameters:
-    - core: The core object containing necessary parameters and data.
-    - alms: The input alm array.
+        core: The core object containing necessary parameters and data.
+        alms: The input alm array.
 
     Returns:
-    - alm_ng: The calculated almng array.
+        alm_ng: The calculated almng array.
     """
 
-    logger.debug("Setting up the non-gaussian alms")
     ells = core.ells
+    radii = core.radii
     lmin = 2
 
     # get the transfer functions with tr_ell_k being \Delta_\ell(k)
     tr_ells = core.cosmo.transfer["ells"]
     tr_k = core.cosmo.transfer["k"]
-    # transfers are T, E, PHI and not TEB
-    tr_ell_k = core.cosmo.transfer["tr_ell_k"][..., : core.npol]
+    tr_ell_k = core.cosmo.transfer["tr_ell_k"][..., :2]  # this is T, E, PHI
 
     # this will be the f(k) value to be placed in the radial function
     # first will be for alpha_ell, second will be beta_ell
@@ -164,8 +156,7 @@ def generate_alm_ng(core, alms):
     f_k[:, 1] = 2 * np.pi**2 * tr_k ** (-3) * Pk
 
     # this computes \frac{2}{\pi} \int_0^\infty dk k^2 f_k tr_ell_k j_\ell(k r)
-    # across tr_k, radii, and tr_ells
-    rad = radial_func(f_k, tr_ell_k, tr_k, core.radii, tr_ells)
+    rad = radial_func(f_k, tr_ell_k, tr_k, radii, tr_ells)
 
     alpha_ell = rad[..., 0]
     alpha_l = interpolator(alpha_ell, tr_ells)(ells)
@@ -173,16 +164,13 @@ def generate_alm_ng(core, alms):
     beta_ell = rad[..., 1]
     beta_l = interpolator(beta_ell, tr_ells)(ells)
 
-    # divide beta_l by the C_ells to save time later
-    # next 3 lines prevent a division by zero dues to the monopole and dipole
+    # next 3 lines prevent a division by zero due to the monopole and dipole terms being 0
     bl_div_cl = np.zeros_like(beta_l)
-    c_ells = core.c_ells[: core.npol, lmin:].transpose()
-    bl_div_cl[:, lmin:, : core.npol] = beta_l[:, lmin:, : core.npol] / c_ells
+    bl_div_cl[:, lmin:] = beta_l[:, lmin:] * core.icov_tot.T[None, lmin:, : core.npols]
 
     # ensure all arrays are contiguous
     alpha_l = np.ascontiguousarray(alpha_l)
     bl_div_cl = np.ascontiguousarray(bl_div_cl)
-    logger.debug("Done")
 
     # This uses joblib.parallel to generate the patches in parallel
     # by default (temp_folder=None) this will use a ram disk /dev/shm
@@ -191,6 +179,7 @@ def generate_alm_ng(core, alms):
     temp_folder = os.environ.get("SCRATCH", None)
     logger.debug(f"Using temp folder for Alm_ng generation: {temp_folder}")
     parallel = Parallel(core.n_cpus, return_as="generator", temp_folder=temp_folder)
+    # parallel = Parallel(1, return_as="generator", temp_folder=temp_folder)
     alm_ng = np.zeros_like(alms)
 
     logger.debug("Starting...")
@@ -202,13 +191,14 @@ def generate_alm_ng(core, alms):
                 alpha_l[r],
                 core.nside,
                 core.lmax,
-                core.radii[r],
+                core.use_e,
+                radii[r],
             )
-            for r in range(len(core.radii))
+            for r in range(len(radii))
         )
 
         # here was use our function to calculate the integral
-        alm_ng[sim] = trap_generator(generator, x=core.radii)
+        alm_ng[sim] = trap_generator(generator, x=radii)
 
     return alm_ng
 
@@ -216,15 +206,22 @@ def generate_alm_ng(core, alms):
 def main():
     r"""
     This code generates the alms
-    $$a_{\ell m} = a_{\ell m}^{{G}} + f_{NL}^X a_{\ell m}^{NG}$$
-    with
-    $a_{\ell m}^{NG,loc'} = \int dr r^2 \left[ \alpha_\ell(r)\left(\int d^2 \hat{n} Y_{\ell m}^\star (\hat{n}) B(r,\hat{n})^2 \right)\right]$
-    and
-    $\alpha_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^2 \Delta_\ell^T(k) j_\ell(k r)$
-    $\beta_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^{-1} \Delta_\phi \Delta_\ell^T(k) j_\ell(k r)$
-    $B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}$
-    where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions
 
+    $$a_{\ell m} = a_{\ell m}^{{G}} + f_{NL}^X a_{\ell m}^{NG}$$
+
+    with
+
+    $a_{\ell m}^{NG,loc'} = \int dr r^2 \left[ \alpha_\ell(r)\left(\int d^2 \hat{n} Y_{\ell m}^\star (\hat{n}) B(r,\hat{n})^2 \right)\right]$
+
+    and
+
+    $\alpha_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^2 \Delta_\ell^T(k) j_\ell(k r)$
+
+    $\beta_\ell(r)=\frac{2}{\pi} \int_0^\infty dk k^{-1} \Delta_\phi \Delta_\ell^T(k) j_\ell(k r)$
+
+    $B(r, \hat{n}) = \sum_{\ell,m} \frac{\beta_\ell (r)}{C_\ell} a_{\ell m} Y_{\ell m}$
+
+    where $\Delta_\phi$ is primordial normalization, $\Delta_\ell^T(k)$ is the transfer function, $j_\ell(k r)$ are the spherical bessel functions.
     It then will optionally lens the alms and finally it will cut them into patches
     """
     core = Core()
@@ -247,24 +244,23 @@ def main():
             sys.exit(0)
 
     # Get our gaussian alms, very fast so no need to parallelize
-    logger.info("Starting Alm generation")
+    logger.info("Starting data generation")
     alm_l = generate_alm(core)
 
     # get the non-gaussian alms, this will take a long time
-    logger.info("Starting non-gaussian Alm generation")
+    logger.debug("Starting non-gaussian Alm generation")
     alm_ng = generate_alm_ng(core, alm_l)
-    logger.info("Done!")
 
     # generate the fnls
-    fnls = core.rng.uniform(core.fnl_min, core.fnl_max + 1, core.fnl_shape)
+    fnls = core.rng.uniform(core.fnl_min, core.fnl_max, core.fnl_shape)
 
     # finally combine into the full alms and remove the monopole and dipole terms
-    alms = alm_l + fnls[:, np.newaxis, :] * alm_ng
+    alms = alm_l + fnls * alm_ng
     alms = remove_mono_dipole(alms)
 
     # lets make a few plots for the alms
     if core.is_main_job:
-        sim = core.rng.integers(core.nsims)
+        sim = core.rng.integers(core.nsims)  # get random sim idx
         plot_dir = os.path.join(core.plot_dir, "generator")
         os.makedirs(plot_dir, exist_ok=True)
 
@@ -277,7 +273,7 @@ def main():
             save_file=elsner_file,
         )
 
-        for pol in range(core.npol):
+        for pol in range(core.npols):
             pstr = pol_str(pol)
 
             # lets plot the alms with camb for testing that side of things
@@ -306,7 +302,7 @@ def main():
 
     fs_shape, fs_wcs = enmap.fullsky_geometry(res, proj="car")
     # need to add a B mode dim if we are using E modes, this is used for some lensing
-    full_pol = 3 if core.use_pols else core.npol
+    full_pol = core.npols + (1 if core.use_e else 0)
     fs_shape = (full_pol,) + fs_shape
     fs_map = enmap.zeros(fs_shape, fs_wcs)
 
@@ -324,6 +320,12 @@ def main():
         patch_shapes.append(gs)
         patch_wcss.append(w)
 
+    # make a copy of the alms for the lensing since they will modify them
+    maps = alms.copy()
+    if core.use_e:
+        # need to add a zero for the spin-2 component
+        maps = np.concatenate((maps, np.zeros((core.nsims, 1, core.nelem))), axis=1)
+
     if core.lensing:
         logger.debug("Getting lensing cl_phi and data")
         cl_phi = core.cosmo._camb_data.get_lens_potential_cls(  # type: ignore
@@ -332,7 +334,7 @@ def main():
         plm = lenspyx.utils_hp.synalm(cl_phi[:, 0], core.lmax, mmax=None)
 
         # transform the lensing potential into spin-1 deflection field
-        fl = np.sqrt(np.arange(core.lmax + 1) * np.arange(1, core.lmax + 2))
+        fl = np.sqrt(np.arange(core.nell) * np.arange(1, core.nell + 1))
         dlm = lenspyx.utils_hp.almxfl(plm, fl, mmax=None, inplace=False)
 
         geom_info = ("healpix", {"nside": core.nside})
@@ -349,40 +351,50 @@ def main():
 
         # actually lens the alms and cut the patches
         for sim in trange(core.nsims, desc="Lensing and Patching", total=core.nsims):
-            lens_map = lenspyx.alm2lenmap(
-                alms[sim], dlm, geometry=geom_info, nthreads=core.n_cpus
+            lenmap = lenspyx.alm2lenmap(
+                maps[sim], dlm, geometry=geom_info, nthreads=core.n_cpus
             )
-            alm_lensed[sim, 0] = geom.map2alm(
-                lens_map[0], core.lmax, core.lmax, nthreads=core.n_cpus
-            )
-            if core.use_pols:
-                alm_lensed[sim, 1:] = geom.map2alm_spin(
-                    lens_map[1:], 2, core.lmax, core.lmax, nthreads=core.n_cpus
+            lenmap = np.array(lenmap)  # convert from tuple to array
+
+            if core.use_t:
+                alm_lensed[sim, 0] = geom.map2alm(
+                    lenmap[0].copy(), core.lmax, core.lmax, nthreads=core.n_cpus
+                )
+
+            if core.use_e:
+                idx = 1 if core.use_t else 0
+                alm_lensed[sim, idx:] = geom.map2alm_spin(
+                    lenmap[1:].copy(), 2, core.lmax, core.lmax, nthreads=core.n_cpus
                 )
 
             # cut the patches
-            pixell_map = reproject.healpix2map(lens_map, fs_shape, fs_wcs, core.lmax)
+            pixell_map = reproject.healpix2map(
+                lenmap[: core.npols], fs_shape, fs_wcs, core.lmax
+            )
             for i in range(core.npatches):
                 patches[sim, i] = pixell_map.project(patch_shapes[i], patch_wcss[i])
     else:
         logger.debug("Getting patches")
-        patches = np.empty(
-            (core.nsims, core.npatches, core.npol, core.nside, core.nside),
+        patches = np.zeros(
+            (core.nsims, core.npatches, core.npols, core.nside, core.nside),
             dtype=core.r_dtype,
         )
 
-        if core.use_pols:
-            # need to add a zero for the spin-2 component
-            alms = np.concatenate((alms, np.zeros((core.nsims, 1, core.nelem))), axis=1)
+        # we need to build the spin matrix paramters, T = 0, E = 2
+        spin = []
+        if core.use_t:
+            spin.append(0)
+        if core.use_e:
+            spin.append(2)
 
         for sim in trange(core.nsims, desc="Patching", total=core.nsims):
             car_map = curvedsky.alm2map(
-                alms[sim], fs_map, copy=True, nthread=core.n_cpus
+                maps[sim], fs_map, spin=spin, copy=True, nthread=core.n_cpus
             )
 
             for i in range(core.npatches):
                 patches[sim, i] = car_map.project(patch_shapes[i], patch_wcss[i])[
-                    : core.npol
+                    : core.npols
                 ]
         logger.debug("Done")
 
@@ -393,20 +405,20 @@ def main():
         os.makedirs(plot_dir, exist_ok=True)
 
         # make the full sky mollview plots
-        plot_file = os.path.join(
-            plot_dir,
-            f"{core.base_name}_{core.sjob}_mollview[{sim}].png",
-        )
-        if core.lensing:
-            map = lenspyx.alm2lenmap(alms[sim], dlm, geom_info, nthreads=core.n_cpus)
-            plot_mollview(map, f"Lensed view for {sim}", save_file=plot_file)
-        else:
-            map = curvedsky.alm2map_healpix(
-                alms[sim], nside=core.nside, copy=True, nthread=core.n_cpus
-            )
-            plot_mollview(map, f"Unlensed view for {sim}", save_file=plot_file)
+        # plot_file = os.path.join(
+        #     plot_dir,
+        #     f"{core.base_name}_{core.sjob}_mollview[{sim}].png",
+        # )
+        # if core.lensing:
+        #     map = lenspyx.alm2lenmap(alms[sim], dlm, geom_info, nthreads=core.n_cpus)
+        #     plot_mollview(map, f"Lensed view for {sim}", save_file=plot_file)
+        # else:
+        #     map = curvedsky.alm2map_healpix(
+        #         alms[sim], nside=core.nside, copy=True, nthread=core.n_cpus
+        #     )
+        #     plot_mollview(map, f"Unlensed view for {sim}", save_file=plot_file)
 
-        for pol in range(core.npol):
+        for pol in range(core.npols):
             pstr = pol_str(pol)
 
             # make some platch plots for the sky cuts

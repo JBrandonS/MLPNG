@@ -87,6 +87,7 @@ def plot_cl(
     camb_noise=None,
     camb_beam=None,
     plot_full_camb=False,
+    lmin=2,
     **kwargs,
 ):
     # check args and ensure shape is correct
@@ -110,7 +111,7 @@ def plot_cl(
             camb_beam = np.atleast_2d(camb_beam)
             camb_cl_full = camb_cls * camb_beam**2 + camb_noise
 
-    ells = np.arange(2, lmax + 1)
+    ells = np.arange(lmin, lmax + 1)
     scale = (ells * (ells + 1) / 2 / np.pi) if scale else 1
     cls = np.atleast_2d(cls)
     npols = cls.shape[0]
@@ -125,20 +126,22 @@ def plot_cl(
         labels = ["data"] if npols == 1 else [f"data {i}" for i in range(npols)]
 
     for pol in range(npols):
-        plot_func(ells, scale * cls[pol, ells], label=labels[pol], linestyle=":")
+        plot_func(
+            ells, scale * cls[pol, lmin : lmax + 1], label=labels[pol], linestyle=":"
+        )
 
         if plot_camb:
             pstr = "" if npols == 1 else f", {pol_str(pol)}"
             plot_func(
                 ells,
-                scale * camb_cls[pol, ells],
+                scale * camb_cls[pol, lmin : lmax + 1],
                 label="camb" + pstr,
             )
 
             if plot_noise:
                 plot_func(
                     ells,
-                    scale * camb_noise[pol, ells],
+                    scale * camb_noise[pol, lmin : lmax + 1],
                     label=r"noise" + pstr,
                     linestyle="--",
                 )
@@ -146,7 +149,7 @@ def plot_cl(
             if plot_full_camb:
                 plot_func(
                     ells,
-                    scale * camb_cl_full[pol, ells],
+                    scale * camb_cl_full[pol, lmin : lmax + 1],
                     label=r"camb * beam$^2$ + noise" + pstr,
                     linestyle="--",
                 )
@@ -236,7 +239,13 @@ def plot_predictions(truth, preds, title="Predictions", fisher=None, **kwargs):
     if fisher is not None:
         std_dev = np.sqrt(1 / fisher)
 
-        plt.plot(line, line + std_dev, color="blue", linestyle="--", label="Fisher")
+        plt.plot(
+            line,
+            line + std_dev,
+            color="blue",
+            linestyle="--",
+            label="Fisher",
+        )
         plt.plot(line, line - std_dev, color="blue", linestyle="--")
 
         # lets also print the number of points within 1 sigma

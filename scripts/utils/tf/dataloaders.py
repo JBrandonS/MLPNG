@@ -375,9 +375,9 @@ class AlmLoader(DataLoaderBase):
             )
             self.fnls = self.fnls[:, 0]
 
-        (self.nsims, self.npol, self.ndata) = self.alms.shape
+        (self.nsims, self.npols, self.ndata) = self.alms.shape
         self.lmax = Alm.getlmax(self.ndata)
-        self.length = self.nsims * self.npol
+        self.length = self.nsims * self.npols
 
         if self.channels_last:
             self.shape = (self.lmax, self.lmax, 2)
@@ -413,7 +413,7 @@ class AlmLoader(DataLoaderBase):
 
     def __getitem__(self, index):
         # convert the index to a tuple of (i, j) indexing sim and pol
-        i, j = np.unravel_index(index, (self.nsims, self.npol))
+        i, j = np.unravel_index(index, (self.nsims, self.npols))
 
         # now we can get the data and label
         alm = np.array(self.alms[i, j])[self.idx_map]

@@ -10,7 +10,7 @@ import healpy as hp
 import numpy as np
 from astropy import units as u
 
-from .cosmo import Cosmology
+from ksw import Cosmology
 
 logger = logging.getLogger(__name__)
 
@@ -137,21 +137,44 @@ class Core:
         self.force_ksw = self._get("force_ksw", True)
         self.num_estimates = self._get("num_estimates", self.nsims * self.narray)
 
+        # setup the lmax values
         self.lmax = self._get("lmax", 3 * self.nside - 1)
+        if self.lmax < 300:
+            logger.warning(
+                "lmax = %s, lmax < 300 not supported. Setting lmax to 300", self.lmax
+            )
+            self.lmax = 300
         self.max_l = self.lmax + self._get("lmax_buffer", 512)
         self.cosmo_params["lmax"] = self.lmax
 
+        # setup the fnl values
         self.fnl_min, self.fnl_max = self._get("fnl_range", (-10, 10))
-        self.fnl_shape = (self.nsims, 1)
+        self.fnl_shape = (self.nsims, 1, 1)
 
-        self.use_pols = self._get("pols", False)
-        if self.use_pols:
-            self.pols = ("T", "E")
-            self.npol = 2
+        # setup the polarization which should support --pols [T|E|TE]
+        pols = self._get("pols", "T")
+        if isinstance(pols, str):
+            pols = tuple(pols)
+        elif isinstance(pols, list):
+            pols = tuple(pols)
+        # we do not want to support B mode since it is so small, so lets remove anything with B in it.
+        self.pols = tuple(c for p in pols for c in p if p != "B")
+        self.npols = len(self.pols)
+        self.iso = self._get("iso", False)
+
+        self.use_t = "T" in self.pols
+        self.use_e = "E" in self.pols
+        self.use_b = False  # "B" in self.pols
+        if not self.iso and self.use_t and self.use_e:
+            self.use_te = True
         else:
-            self.pols = "T"
-            self.npol = 1
-        logger.debug("Using polarizations: %s", self.pols)
+            self.use_te = False
+        logger.debug(
+            "Using polarizations T: %s, E: %s, TE: %s",
+            self.use_t,
+            self.use_e,
+            self.use_te,
+        )
 
         # setup our precision types to be consistent
         # also, tensorflow seems to mostly use float32, and is actually moving to half-bit registers
@@ -167,38 +190,41 @@ class Core:
             self.precision = "single"
         logger.debug("Using %s precision, where possible", self.precision)
 
-        self.total_sims = self.nsims * self.npol * self.narray
+        # setup some derived parameters
+        self.total_sims = self.nsims * self.npols * self.narray
 
+        # setup some info parameters
         self.nell = self.lmax + 1
         self.nelem = hp.Alm.getsize(self.lmax)
         self.ells = np.arange(self.nell)
-        self.alm_shape = (self.nsims, self.npol, self.nelem)
+        self.alm_shape = (self.nsims, self.npols, self.nelem)
 
+        # some patch settings
         self.patch_side_deg = self._get("patch_side_deg", 10)
         self.npatches = self._get("npatches", 10)
         self.total_patches = self.npatches * self.total_sims
         self.patch_shape = (
             self.nsims,
-            self.npol,
+            self.npols,
             self.npatches,
             self.nside,
             self.nside,
         )
 
+        # We need the number of patches to be even for the healpy code
         assert self.npatches % 2 == 0, "Number of patches must be even"
 
         # split the rest of this function into a few smaller functions for readability
         # each of these modifies attributes of the object
         self._setup_noise_beam()
-        self._setup_radii()
-
+        self._init_radii()
         self._init_slurm()
         self._init_cosmo()
         self._init_paths()
 
         # save a copy of the settings file iff --save-settings is set
         if args.save_settings:
-            dir = os.path.join("settings", "runs")
+            dir = os.path.join(self.base_dir, "settings")
             file = os.path.join(dir, f"{self.sjob}_{self.base_name}.json")
             os.makedirs(dir, exist_ok=True)
 
@@ -207,9 +233,7 @@ class Core:
                 with open(file, "w") as f:
                     json.dump(self.settings, f, indent=2)
             else:
-                logger.warning(
-                    "Settings file already exists: %s, not overwriting", file
-                )
+                logger.warning("Settings already exists: %s, not overwriting", file)
 
     def parse_args(self, args=None):
         """
@@ -236,6 +260,7 @@ class Core:
         parser.add_argument("--lmax_buffer", type=int)
         parser.add_argument("--fnl_range", type=float, nargs=2)
         parser.add_argument("--num_estimates", type=int)
+        parser.add_argument("--pols", type=str, nargs="+")
 
         # for BooleanOptionalAction: --flag will set the value `flag` to True, --no-flag will set `flag` to False
         # otherwise it will be none
@@ -243,7 +268,6 @@ class Core:
         parser.add_argument("--noise", action=argparse.BooleanOptionalAction)
         parser.add_argument("--force_generation", action=argparse.BooleanOptionalAction)
         parser.add_argument("--force_ksw", action=argparse.BooleanOptionalAction)
-        parser.add_argument("--pols", action=argparse.BooleanOptionalAction)
 
         # this allows us to save a copy of the final settings used for the run
         # only really useful for debugging, must be provided by the CLI and not in the settings file
@@ -251,11 +275,12 @@ class Core:
 
         if args is None:
             args = sys.argv[1:]
-        logger.debug(f"Parsing CLI args: {args}")
+
+        logger.info(f"Parsing CLI args: {args}")
         pargs, _ = parser.parse_known_args(args)
         return pargs
 
-    def _get(self, name, default: Any = None):
+    def _get(self, name, default: Any = None, verbose=True):
         """
         Get the value of a setting, providing the default if the setting is not found in self.settings.
         Logs information about the setting value if it is found and differs from the default, at DEBUG level.
@@ -263,18 +288,21 @@ class Core:
         Args:
             name (str): The name of the setting.
             default (Any, optional): The default value to return if the setting is not found. Defaults to None.
+            verbose (bool, optional): Whether to log information about the setting value. Defaults to True.
 
         Returns:
             Any: The value of the setting if found, otherwise the default value.
         """
         val = self.settings.get(name, None)
         if val is None:
-            logger.debug(
-                "Setting '%s' not found, using default: %s", name, repr(default)
-            )
+            if verbose:
+                logger.debug(
+                    "Setting '%s' not found, using default: %s", name, repr(default)
+                )
+
             return default
         else:
-            if val != default:
+            if val != default and verbose:
                 logger.debug(
                     "Found non-default value for '%s': %s (default: %s)",
                     name,
@@ -292,8 +320,10 @@ class Core:
         in the inverse covariance. The beam width is set to 0 in this case.
 
         If the noise parameter is set to True, the noise and beam parameters are retrieved from the configuration
-        settings. The beam width and noise scales for temperature (TT), E-mode polarization (EE), B-mode polarization (BB), and
-        temperature-E-mode polarization (TE) are converted from muK arcminutes to muK radians.
+        settings. There are two methods to load in noise:
+            - noise_file and beam_file can be set to file, these files should be in T, E, B, TE order
+            - alternativly the beam width and noise scales for temperature (TT), E-mode polarization (EE), B-mode polarization (BB), and
+        temperature-E-mode polarization (TE) should be provided via the `beam_width` and `noise_XX` where noise_XX is the noise amplitude in muK arcminutes to muK radians.
 
         The beam and noise ell values are computed based on the polarization settings and stored in the
         `noise_ell` and `beam_ell` attributes.
@@ -310,35 +340,29 @@ class Core:
         if not self.noise:
             # we cannot set the noise to 0 as this will cause a singular matrix in the inverse covariance
             # so we set it to a very small value in such a way that we will not get a singular matrix
-            noise_scale_tt = noise_scale_ee = convert(1e-3)
-            noise_scale_bb = 0
-            noise_scale_te = convert(1e-6)
+            noise_scale = convert(1e-6)
             self.beam_width = 0
-        else:
-            self.beam_width = convert(self._get("beam_width", 0))
-            noise_scale_tt = convert(self._get("noise_scale_tt", 1))
-            noise_scale_ee = convert(self._get("noise_scale_ee", 1))
-            noise_scale_bb = convert(self._get("noise_scale_bb", 0))
-            noise_scale_te = convert(self._get("noise_scale_te", 1))
 
+            self.beam_ell = np.ones((4, self.nell), dtype=self.r_dtype)
+            self.noise_ell = (
+                np.ones((4, self.nell), dtype=self.r_dtype) * noise_scale**2
+            )
+            # go ahead and set the B and Te to 0
+            self.noise_ell[2:] = 0
+            return
+
+        self.beam_width = convert(self._get("beam_width", 0))
         beam = hp.gauss_beam(self.beam_width, lmax=self.lmax, pol=True)  # (nell, npol)
-        beam = np.swapaxes(beam, 0, 1)  # convert beam to (npol, nell)
-        noise = np.ones((self.nell), dtype=self.r_dtype)
-        # noise[:2] = 1000  # set the mono and dipole values to 0
+        self.beam_ell = np.swapaxes(beam, 0, 1)  # convert beam to (npol, nell)
 
-        # here we setup the noise_ell and beam_ell attributes, these are in TT, EE, BB, TE order
-        beam_ell = [beam[0]]
-        noise_ell = [noise * noise_scale_tt**2]
-        if self.use_pols:
-            beam_ell.extend(beam[1:])
-            noise_ell.append(noise * noise_scale_ee**2)
-            noise_ell.append(noise * noise_scale_bb**2)
-            noise_ell.append(noise * noise_scale_te**2)
+        # T, E, B, TE
+        self.noise_ell = np.ones((4, self.nell), dtype=self.r_dtype)
+        self.noise_ell[0] = convert(self._get("noise_tt", 1)) ** 2
+        self.noise_ell[1] = convert(self._get("noise_ee", 1)) ** 2
+        self.noise_ell[2] = 0  # B is always 0
+        self.noise_ell[3] = convert(self._get("noise_te", 2)) ** 2
 
-        self.noise_ell = np.array(noise_ell)
-        self.beam_ell = np.array(beam_ell)
-
-    def _setup_radii(self):
+    def _init_radii(self):
         """
         Setup the radii and drs arrays.
 
@@ -357,11 +381,11 @@ class Core:
             (14600, 16000, 100),
             (16000, 50000, 100),
         ]
-        radii = []
 
         r_min = int(self._get("r_min", 1))
         r_max = int(self._get("r_max", 50000))
 
+        radii = []
         for r in ranges:
             start = max(r_min, r[0])
             end = min(r_max, r[1])
@@ -458,7 +482,7 @@ class Core:
         lens = "l" if self.lensing else "ul"
         nn = "nn" if not self.noise else "n"
         j: str = "" if self.job_array_index is None else f"_{self.job_array_index}"
-        pol_str = "T" if not self.use_pols else "TE"
+        pol_str = "".join(self.pols)
 
         def_name = f"l{self.lmax}_n{self.nside}_{lens}-{nn}_{pol_str}x{self.total_sims}_f{self.fnl_min}-{self.fnl_max}"
         self.base_name = self._get("base_name", def_name)
@@ -485,16 +509,16 @@ class Core:
         os.makedirs(self.tb_dir, exist_ok=True)
         os.makedirs(self.wandb_dir, exist_ok=True)
 
-        logger.debug("Using base name: %s", self.base_name)
-        logger.debug("Using base directory: %s", self.base_dir)
-        logger.debug("Using plot directory: %s", self.plot_dir)
-        logger.debug("Using model directory: %s", self.model_dir)
-        logger.debug("Using data directory: %s", self.data_dir)
-        logger.debug("Using data file: %s", self.file_partial)
-        logger.debug("Using complete data file: %s", self.file_complete)
-        logger.debug("Using KSW MC file: %s", self.mc_file)
-        logger.debug("Using TensorBoard directory: %s", self.tb_dir)
-        logger.debug("Using Weights & Biases directory: %s", self.wandb_dir)
+        logger.debug("Using base name: '%s'", self.base_name)
+        logger.debug("Using base directory: '%s'", self.base_dir)
+        logger.debug("Using plot directory: '%s'", self.plot_dir)
+        logger.debug("Using model directory: '%s'", self.model_dir)
+        logger.debug("Using data directory: '%s'", self.data_dir)
+        logger.debug("Using data file: '%s'", self.file_partial)
+        logger.debug("Using complete data file: '%s'", self.file_complete)
+        logger.debug("Using KSW MC file: '%s'", self.mc_file)
+        logger.debug("Using TensorBoard directory: '%s'", self.tb_dir)
+        logger.debug("Using Weights & Biases directory: '%s'", self.wandb_dir)
 
     def _init_cosmo(self):
         """
@@ -508,16 +532,65 @@ class Core:
             None
         """
         logger.debug("Initializing cosmology")
-        cosmo_params = self.cosmo_params
-        camb_params_obj = camb.set_params(**cosmo_params)
-        self.cosmo = cosmo = Cosmology(self, camb_params_obj)
 
-        logger.debug("Computing transfer functions")
-        cosmo.compute_transfer()
-        logger.debug("Computing C_ell values")
+        camb_params = camb.set_params(**self.cosmo_params)
+        # ip = camb.initialpower.InitialPowerLaw()
+        # ip.set_params(As=self.cosmo_params["As"], ns=self.cosmo_params["ns"])
+        # camb_params.set_initial_power(ip)
+        self.cosmo = cosmo = Cosmology(camb_params)
+
+        cosmo.compute_transfer(self.max_l)
         cosmo.compute_c_ell()
 
-        self.c_ells = cosmo.c_ell["c_ell"][: self.nell]
+        if self.lensing:
+            self.c_ells = cosmo.c_ell["lensed_scalar"]["c_ell"].T
+        else:
+            self.c_ells = cosmo.c_ell["unlensed_scalar"]["c_ell"].T
 
-        # CAMB Cls are (nell, 4), convert to (4, nell).
-        self.c_ells = self.c_ells.transpose()
+        # trim c_ells to the correct length
+        self.c_ells = self.c_ells[:, : self.nell]
+        self.cov_tot = self.beam_ell**2 * self.c_ells + self.noise_ell
+
+        if self.use_te:
+            # we need to square the matrix and invert it properly
+            cov = np.zeros((2, 2, self.nell))
+            cov[0, 0] = self.cov_tot[0]  # TT
+            cov[1, 1] = self.cov_tot[1]  # EE
+            cov[1, 0] = self.cov_tot[3]  # ET
+            cov[0, 1] = self.cov_tot[3]  # TE
+            icov = np.linalg.inv(cov.T).T
+
+            # lets flatten this for our code, will be TT, EE, BB, TE order to match alms
+            self.icov_tot = np.array(
+                [
+                    icov[0, 0],  # TT
+                    icov[1, 1],  # EE
+                    np.zeros(self.nell),  # BB
+                    icov[1, 0],  # TE
+                ],
+            )
+        else:
+            # to avoid a divide by zero we skip the mono and dipole terms, and b mode
+            self.icov_tot = np.zeros_like(self.cov_tot)
+            self.icov_tot[[0, 1, 3], 2:] = 1 / self.cov_tot[[0, 1, 3], 2:]
+
+    def trim_pols(self, arr, axis=1, keep_b=False, keep_te=False, pretrimmed=False):
+        """
+        Trim the polarizations from the data array.
+
+        Args:
+            data (numpy.ndarray): The data array to trim.
+            axis (int, optional): The axis along which to trim the data. Defaults to 1.
+
+        Returns:
+            numpy.ndarray: The trimmed data array.
+        """
+        start = 0 if self.use_t else (0 if pretrimmed else 1)
+        num_to_take = 1 if self.use_t else 0
+
+        if self.use_e:
+            num_to_take += 2 if keep_b else 1  # we also need B
+        if keep_te and self.use_te:
+            num_to_take += 1
+
+        return np.take(arr, range(start, start + num_to_take), axis=axis)

@@ -10,8 +10,8 @@
 # these must be in settings/ and have the .json extension
 SETTINGS=(
   # "n32"
-  "n64"
-  # "n128"
+  # "n64"
+  "n128"
   # "n256"
   # "n512"
   # "n1024"
@@ -20,25 +20,30 @@ SETTINGS=(
   # "n2048"
   # "n4096"
   
-  # "elsner"
-  # "planck"
+  "elsner"
+  "planck"
 )
 
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
 ARGS=(
-  # "--nsims" "100"
+  "--nsims" "100"
   "--lensing"
-  # "--no-noise" 
-  # "--pols"
-  "--fnl_range" "-10" "10"
+  "--no-noise" 
+  "--pols" "TE"
+  "--fnl_range" "-100" "100"
   # "--force_generation"
-  # "--no-force_ksw"
   "--narray" "100"
 )
 
 # override some slurm settings, only used for narray
-SLURM_ARGS=(
+SLURM_ARR_ARGS=(
   "--array" "1-${ARGS[@]: -1}"
+)
+
+# general slurm args for all
+SLURM_ARGS=(
+  # "--partition" "dev"
+  # "--time" "02:00:00"
 )
 
 #### Uncomment to run the elsner estimator test
@@ -60,21 +65,21 @@ fi
 job_id=""
 for x in "${SETTINGS[@]}"; do
     SETTINGS_FILE="settings/$x.json"
+    job_id="" # reset job_id for each settings file, comment out if you want to run all settings files as dependent on the previous
 
     # this will run all settings files as dependent on the previous require a single job, e.g. n32, to finish before the next, n64, starts
     if [ -z "$job_id" ]; then
-        job_id=$(sbatch "${SLURM_ARGS[@]}" "sbatch/generator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+        job_id=$(sbatch "${SLURM_ARR_ARGS[@]}" "${SLURM_ARGS[@]}" "sbatch/generator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
     else
-        job_id=$(sbatch --dependency=afterok:"$job_id" "sbatch/generator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+        job_id=$(sbatch "${SLURM_ARR_ARGS[@]}" "${SLURM_ARGS[@]}" --dependency=afterok:"$job_id" "sbatch/generator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
     fi
-    # job_id=$(sbatch "${SLURM_ARGS[@]}" "sbatch/generator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+    # job_id=$(sbatch "${SLURM_ARR_ARGS[@]}" "${SLURM_ARGS[@]}" "sbatch/generator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
 
     # combines the data into a single file
-    job_id=$(sbatch --dependency=afterok:"$job_id" "sbatch/combiner.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
-    # job_id=$(sbatch "sbatch/combiner.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+    job_id=$(sbatch "${SLURM_ARGS[@]}" --dependency=afterok:"$job_id" "sbatch/combiner.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+    # job_id=$(sbatch "${SLURM_ARGS[@]}" "sbatch/combiner.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
 
     # runs the estimator on the combined data
-    job_id=$(sbatch --dependency=afterok:"$job_id" "sbatch/estimator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
-    # sbatch --dependency=afterok:"$job_id" "sbatch/estimator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" > /dev/null 2>&1
-    # sbatch "sbatch/estimator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" > /dev/null 2>&1
+    job_id=$(sbatch "${SLURM_ARGS[@]}" --dependency=afterok:"$job_id" "sbatch/estimator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+    # sbatch "${SLURM_ARGS[@]}" "sbatch/estimator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" > /dev/null 2>&1
 done

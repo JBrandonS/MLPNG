@@ -4,7 +4,7 @@ An $A_{lm}^{NG}$ generator and training pipeline for machine learning models to 
 
 ## Overview
 
-This code is designed to do two things; provide a generation framework for generating non-gaussian CMB data, and provide a training framework to run models on the generated data. It will generate both full $A_{lm}$ arrays and full sky patch cuts. The code supports various nside, T or TE polarizations, and with or without lensing. It has been run and tested extensively on SMU's Superpod and M3 systems but may require some tweaking to run on other systems. In particular, the main bash scripts and the sbatch script will need to be updated for new systems.
+This code is designed to do two things; provide a generation framework for generating non-gaussian CMB data, and provide a training framework to run ML models on the generated data. It will generate both full $A_{lm}$ arrays and full sky patch cuts. The code supports various nside, T or TE polarizations, and with or without lensing. It has been run and tested extensively on SMU's Superpod and M3 systems but may require some tweaking to run on other systems. In particular, the main bash scripts and the sbatch script will need to be updated for new systems.
 
 The code has been broken into 2 different parts, this is due to SMU policies not allowing for the CPU based data generation on the same system as the GPU based training. If you are not limited by this you may want to combine the conda environments and the generation and training scripts into one.
 
@@ -22,8 +22,9 @@ The training is controlled by the `scripts/models/` files, which specify the arc
    - I have provided `conda-envs/mlpng.yml` which is the conda env I use on m3, you can view this file to find what packages to use. The exact versions should not be important for this code to run, but I cannot guarantee that the code will work with newer versions of the packages.
 3. Clone or download, and install [optweight](https://github.com/AdriJD/optweight) and [KSW](https://github.com/AdriJD/ksw)
    - `optweight` should be installed first, you will just need to run `pip install -e .` in the root directory.
-   - For `ksw` run `make && pip install -e . && make check` in the root.
-      - You may see an error on the make check, this seems to be an issue with the ksw test code and does not affect anything.
+   - For `ksw`
+      - You need to switch to the dev branch `git checkout -b dev origin/dev`
+      - run `make && pip install -e . && make check` in the root.
 4. You can now run the code, using the pipeline with `generator.sh` or manually with `scripts/generator.py`, `scripts/combiner.py`, and `scripts/estimator.py`. See [Running](#running) for more information.
 
 ### Trainer

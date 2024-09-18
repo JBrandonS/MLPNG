@@ -5,11 +5,9 @@ import os
 import healpy as hp
 import numpy as np
 from mpi4py import MPI
-import camb
-from ksw import KSW, Cosmology, Shape
+from ksw import KSW, Shape
 
 from . import Core
-from .estimator import conv_beam_func, run_ksw_step
 from .utils import remove_mono_dipole, setup_logging, trim_alms, print_errors
 from .utils.plots import plot_cl_alm, plot_predictions, plot_cl
 
@@ -57,7 +55,7 @@ def get_files():
             with requests.Session() as s, open(file2, "wb") as f:
                 f.write(s.get(URL2).content)
 
-def icov_func(beam, noise, c_ells, npol, datafile="data/elsner/cl_wmap5_bao_sn.dat"):
+def icov_func(beam, noise, npol, datafile="data/elsner/cl_wmap5_bao_sn.dat"):
     """
     Returned the inverse covariance of the data, used in the KSW estimator.
 
@@ -86,11 +84,6 @@ def icov_func(beam, noise, c_ells, npol, datafile="data/elsner/cl_wmap5_bao_sn.d
     # convert from dimensionless to muK^2
     S *= (2.7255 * 1e6) ** 2
 
-    if mpi_root:
-        # lets make a plot to test the cl values
-        cl_file = os.path.join("data/plots/", "cl-test.png")
-        plot_cl(S, lmax, save_file=cl_file, plot_camb=True, camb_cls=c_ells)
-
     factor = (B_inv * noise * B_inv + S) ** (-1) * B_inv
 
     def _func(alm):
@@ -111,26 +104,16 @@ def main():
     mpi_comm.Barrier()
 
     core = Core(["settings/elsner.json", "--base_name", "elsner_test"] + sys.argv[1:])
-    fnls = core.rng.uniform(core.fnl_min, core.fnl_max + 1, (1000, 1))
+    fnls = core.rng.uniform(core.fnl_min, core.fnl_max, (1000, 1))
 
-    # we need to setup the KSW here
-    cosmo_params = core.cosmo_params
-    cosmo = Cosmology(camb.set_params(**cosmo_params))
-    cosmo.compute_transfer(core.max_l)
-    cosmo.compute_c_ell()
-    core.cosmo = cosmo
-
-    noise = core.noise_ell[: core.npol]
-    beam = core.beam_ell[: core.npol]
-    c_ells = core.c_ells[: core.npol]
-
-    loc_shape = Shape.prim_local(cosmo_params["ns"], cosmo_params["pivot_scalar"])
-    cosmo.add_prim_reduced_bispectrum(loc_shape, core.radii)
+    loc_shape = Shape.prim_local(
+        core.cosmo_params["ns"], core.cosmo_params["pivot_scalar"]
+    )
+    core.cosmo.add_prim_reduced_bispectrum(loc_shape, core.radii)
 
     ksw = KSW(
-        cosmo.red_bispectra,
-        icov_func(beam, noise, core.c_ells, core.npol),
-        conv_beam_func(core),
+        core.cosmo.red_bispectra,
+        None,
         core.lmax,
         core.pols,
         core.precision,
@@ -141,11 +124,7 @@ def main():
     theta_batch = int(np.floor(1.5 * core.lmax + 1)) // mpi_size
     theta_batch = min(8, theta_batch)
 
-    logger.info("Running KSW step")
-    run_ksw_step(ksw, core, theta_batch, 100)
-    logger.info("Done")
-
-    fisher = float(ksw.compute_fisher())
+    fisher = float(ksw.compute_fisher_isotropic())
     logger.debug("Fisher: %s, standard deviation: %s", fisher, np.sqrt(1 / fisher))
 
     def alm_loader(str_idx):
@@ -162,14 +141,14 @@ def main():
         logger.debug("Sending fnl: %s for step %s", fnl, str_idx)
 
         alms = (alm_elsner_l + fnl[..., np.newaxis] * alm_elsner_nl) * t_scale
-        alms = alms[: core.npol]
+        alms = alms[: core.npols]
 
         if mpi_root and str_idx == 1:
             plot_dir = os.path.join(core.plot_dir, "elsner_test")
             os.makedirs(plot_dir, exist_ok=True)
 
             cl_file = os.path.join(plot_dir, f"{core.sjob}-{core.base_name}_cl.png")
-            c_ells = cosmo.c_ell["unlensed_scalar"]["c_ell"]
+            c_ells = core.cosmo.c_ell["unlensed_scalar"]["c_ell"]
             c_ells = np.transpose(c_ells)
             plot_cl_alm(alms, save_file=cl_file, plot_camb=True, camb_cls=c_ells)
 
@@ -182,12 +161,11 @@ def main():
             )
         if lmax > core.lmax:
             alms = trim_alms(alms, core.lmax)
-        return remove_mono_dipole(alms)
+        return alms
 
     logger.info("Computing estimates")
-    alm_strs = range(1, 1001)
-    estimates = ksw.compute_estimate_batch(
-        alm_loader, alm_strs, comm=mpi_comm, fisher=fisher
+    estimates, _, _, _ = ksw.compute_estimate_batch(
+        alm_loader, range(1, 1001), comm=mpi_comm, fisher=fisher, lin_term=0
     )
 
     if mpi_root:
@@ -195,13 +173,12 @@ def main():
         os.makedirs(plot_dir, exist_ok=True)
 
         pred_file = os.path.join(plot_dir, f"{core.sjob}-{core.base_name}_preds.png")
-        plot_predictions(fnls, estimates, fisher=fisher, save_file=pred_file)
+        plot_predictions(fnls[:-1], estimates, fisher=fisher, save_file=pred_file)
 
         cl_file = os.path.join(plot_dir, f"{core.sjob}-{core.base_name}_cl.png")
-        c_ells = cosmo.c_ell["unlensed_scalar"]["c_ell"]
+        c_ells = core.cosmo.c_ell["unlensed_scalar"]["c_ell"]
         c_ells = np.transpose(c_ells)
         plot_cl_alm(alm_loader("1"), save_file=cl_file, plot_camb=True, camb_cls=c_ells)
-        print_errors(fnls, estimates, fisher)
 
     logger.info("Finished %s!", mpi_rank)
 
