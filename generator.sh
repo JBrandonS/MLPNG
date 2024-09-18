@@ -20,35 +20,33 @@ SETTINGS=(
   # "n2048"
   # "n4096"
   
-  "elsner"
-  "planck"
+  # "elsner"
+  # "planck"
 )
 
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
 ARGS=(
-  "--nsims" "100"
+  "--nsims" "10"
   "--lensing"
   "--no-noise" 
   "--pols" "TE"
   "--fnl_range" "-100" "100"
   # "--force_generation"
-  "--narray" "100"
+  "--narray" "1"
 )
 
-# override some slurm settings, only used for narray
+# override the slurm settings for narray, only used in data generation
 SLURM_ARR_ARGS=(
   "--array" "1-${ARGS[@]: -1}"
 )
 
 # general slurm args for all
 SLURM_ARGS=(
-  # "--partition" "dev"
-  # "--time" "02:00:00"
+  "--partition" "dev"
+  "--time" "02:00:00"
+  "--ntasks" "1"
+  "--cpus-per-task" "10"
 )
-
-#### Uncomment to run the elsner estimator test
-# JOBH_ID=$(sbatch "sbatch/elsner.sbatch" "${ARGS[@]}" | awk '{print $4}')
-# echo "Submitted Elsner estimator test with ID $JOBH_ID"
 
 # Just log the overrides to the console
 if [ "${#ARGS[@]}" -ne 0 ]; then

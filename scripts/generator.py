@@ -322,9 +322,18 @@ def main():
 
     # make a copy of the alms for the lensing since they will modify them
     maps = alms.copy()
+    if not core.use_t:
+        maps.insert(0, np.zeros((core.nsims, 1, core.nelem)), axis=1)
     if core.use_e:
         # need to add a zero for the spin-2 component
         maps = np.concatenate((maps, np.zeros((core.nsims, 1, core.nelem))), axis=1)
+
+    # we need to build the spin matrix paramters, T = 0, E = 2
+    spin = []
+    if core.use_t:
+        spin.append(0)
+    if core.use_e:
+        spin.append(2)
 
     if core.lensing:
         logger.debug("Getting lensing cl_phi and data")
@@ -369,7 +378,7 @@ def main():
 
             # cut the patches
             pixell_map = reproject.healpix2map(
-                lenmap[: core.npols], fs_shape, fs_wcs, core.lmax
+                lenmap, fs_shape, fs_wcs, core.lmax, spin=spin
             )
             for i in range(core.npatches):
                 patches[sim, i] = pixell_map.project(patch_shapes[i], patch_wcss[i])
@@ -379,13 +388,6 @@ def main():
             (core.nsims, core.npatches, core.npols, core.nside, core.nside),
             dtype=core.r_dtype,
         )
-
-        # we need to build the spin matrix paramters, T = 0, E = 2
-        spin = []
-        if core.use_t:
-            spin.append(0)
-        if core.use_e:
-            spin.append(2)
 
         for sim in trange(core.nsims, desc="Patching", total=core.nsims):
             car_map = curvedsky.alm2map(
