@@ -342,7 +342,6 @@ def main():
 
         geom_info = ("healpix", {"nside": core.nside})
         geom = lenspyx.get_geom(geom_info)
-        logger.debug("Done")
 
         logger.debug("Lensing alms and getting patches")
         # create our data arrays, using empty here for speed and notice forcing npols to 3 for B mode
@@ -406,7 +405,6 @@ def main():
                 patches[sim, i] = car_map.project(patch_shapes[i], patch_wcss[i])[
                     : core.npols
                 ]
-        logger.debug("Done")
 
     # lets make a few plots of patches and mollview
     if core.is_main_job:
@@ -441,8 +439,6 @@ def main():
                 title=f"Patches for sim: {sim}, pol: {pstr}",
                 save_file=patch_file,
             )
-
-    logger.info("Done!")
 
     logger.info("Saving data")
     sdata = {}

@@ -170,7 +170,6 @@ def main():
     logger.debug("Predicting on test set")
     preds = model.predict(test_ds, verbose=2).flatten()
     truth = np.concatenate([y.numpy() for _, y in test_ds])
-    logger.debug("Done")
 
     # Plot the loss curves and metrics
     plot_dir = os.path.join(model.plot_dir, "trainer")

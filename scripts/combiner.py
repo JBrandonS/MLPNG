@@ -63,7 +63,6 @@ def recursive_copy(hf_source, hf_dest, num_files, index):
         logger.debug("%s: Data type of hf_source: %s", key, hf_source[key].dtype)
         logger.debug("%s: Data type of hf_dest: %s", key, hf_dest[key].dtype)
         hf_dest[key][index * num_elem : (index + 1) * num_elem] = hf_source[key]
-        logger.debug("%s: Done", key)
 
 
 def combine_data(directory, base_name, ext=".hdf5", remove_files=True, expected=100):
