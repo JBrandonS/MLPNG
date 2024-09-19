@@ -591,4 +591,4 @@ class Core:
         if keep_te and self.use_te:
             num_to_take += 1
 
-        return list(range(start, start + num_to_take))
+        return np.array(range(start, start + num_to_take))
