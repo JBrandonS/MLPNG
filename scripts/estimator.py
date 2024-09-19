@@ -23,9 +23,9 @@ mpi_root = mpi_rank == 0
 # estimator will run multiple jobs per id which get sent to the same log file,
 # so we only want to log the root to keep from spamming the log
 if mpi_root:
-    logger = setup_logging(name=f"{__name__}-{mpi_rank}", level=logging.DEBUG)
+    logger = setup_logging(name=f"estimator_{mpi_rank}", level=logging.DEBUG)
 else:
-    logger = setup_logging(name=f"{__name__}-{mpi_rank}", level=logging.ERROR)
+    logger = setup_logging(name=f"estimator_{mpi_rank}", level=logging.ERROR)
 
 
 def icov_func(core, alm):
@@ -97,8 +97,7 @@ def main():
 
     # note that these are not fully loaded into memory, yet
     alms = data_file["alm_lensed"] if core.lensing else data_file["alm"]
-    alms = core.trim_pols(alms, axis=1)
-    fnls = data_file["fnl"]
+    alms = core.trim_pols(alms, axis=1, pretrimmed=True)
 
     logger.info(
         "Computing %s estimates in %.2f batches",
@@ -120,13 +119,11 @@ def main():
         lin_term=0 if not core.force_ksw else None,
     )
 
-    # cleanup file
-    data_file.close()
-
     if mpi_root:
         logger.info("Saving data")
 
-        fnls.flatten()
+        fnls = np.array(data_file["fnl"][:]).flatten()
+        data_file.close()
 
         # save the data, this will append to the alm_file
         sdata = {}

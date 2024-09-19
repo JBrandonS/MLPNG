@@ -134,7 +134,7 @@ class Core:
         self.nsims = self._get("nsims", 100)
         self.narray = self._get("narray", 100)
         self.force_gen = self._get("force_generation", False)
-        self.force_ksw = self._get("force_ksw", True)
+        self.force_ksw = self._get("force_ksw", False)
         self.num_estimates = self._get("num_estimates", self.nsims * self.narray)
 
         # setup the lmax values

@@ -20,19 +20,18 @@ SETTINGS=(
   # "n2048"
   # "n4096"
   
-  # "elsner"
-  # "planck"
+  "elsner"
+  "planck"
 )
 
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
 ARGS=(
-  "--nsims" "10"
-  "--lensing"
+  "--nsims" "100"
+  "--no-lensing"
   "--no-noise" 
   "--pols" "TE"
-  "--fnl_range" "-100" "100"
-  # "--force_generation"
-  "--narray" "1"
+  "--fnl_range" "-30" "30"
+  "--narray" "100"
 )
 
 # override the slurm settings for narray, only used in data generation
@@ -42,10 +41,10 @@ SLURM_ARR_ARGS=(
 
 # general slurm args for all
 SLURM_ARGS=(
-  "--partition" "dev"
-  "--time" "02:00:00"
-  "--ntasks" "1"
-  "--cpus-per-task" "10"
+  # "--partition" "dev"
+  # "--time" "02:00:00"
+  # "--ntasks" "1"
+  # "--cpus-per-task" "10"
 )
 
 # Just log the overrides to the console
@@ -63,7 +62,7 @@ fi
 job_id=""
 for x in "${SETTINGS[@]}"; do
     SETTINGS_FILE="settings/$x.json"
-    job_id="" # reset job_id for each settings file, comment out if you want to run all settings files as dependent on the previous
+    # job_id="" # reset job_id for each settings file, comment out if you want to run all settings files as dependent on the previous
 
     # this will run all settings files as dependent on the previous require a single job, e.g. n32, to finish before the next, n64, starts
     if [ -z "$job_id" ]; then
@@ -71,7 +70,6 @@ for x in "${SETTINGS[@]}"; do
     else
         job_id=$(sbatch "${SLURM_ARR_ARGS[@]}" "${SLURM_ARGS[@]}" --dependency=afterok:"$job_id" "sbatch/generator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
     fi
-    # job_id=$(sbatch "${SLURM_ARR_ARGS[@]}" "${SLURM_ARGS[@]}" "sbatch/generator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
 
     # combines the data into a single file
     job_id=$(sbatch "${SLURM_ARGS[@]}" --dependency=afterok:"$job_id" "sbatch/combiner.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')

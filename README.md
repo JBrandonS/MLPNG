@@ -4,7 +4,7 @@ An $A_{lm}^{NG}$ generator and training pipeline for machine learning models to 
 
 ## Overview
 
-This code is designed to do two things; provide a generation framework for generating non-gaussian CMB data, and provide a training framework to run ML models on the generated data. It will generate both full $A_{lm}$ arrays and full sky patch cuts. The code supports various nside, T or TE polarizations, and with or without lensing. It has been run and tested extensively on SMU's Superpod and M3 systems but may require some tweaking to run on other systems. In particular, the main bash scripts and the sbatch script will need to be updated for new systems.
+This code is designed to do two things; provide a generation framework for generating non-gaussian CMB data, and provide a training framework to run ML models on the generated data. It will generate both full $A_{lm}$ arrays and full sky patch cuts. The code supports various nside, T, E, or TE polarizations, and with or without lensing or noise. It has been run and tested extensively on SMU's Superpod and M3 systems but may require some tweaking to run on other systems. In particular, the main bash scripts and the sbatch script will need to be updated for new systems.
 
 The code has been broken into 2 different parts, this is due to SMU policies not allowing for the CPU based data generation on the same system as the GPU based training. If you are not limited by this you may want to combine the conda environments and the generation and training scripts into one.
 
@@ -44,8 +44,6 @@ The training is controlled by the `scripts/models/` files, which specify the arc
 Several jupyter notebooks have been created for testing and are located in the `notebooks/` folder. These will use a slightly modified KSW code to run with joblib parallel instead of openMPI as jupyter does not like openMPI. This is not recommended for large scale runs but is useful for testing and debugging.
 
 The `simulator.ipynb` notebook will both simulate generating the data, acting like the `generator.py` script, and run the KSW estimator code like the `estimator.py` script. This can be ran standalone and is a good place to start when making modifications. This will not save any data.
-
-The `estimator.ipynb` will run the KSW estimator code on previously generated data.
 
 The `trainer.ipynb` will run the training code on previously generated data.
 

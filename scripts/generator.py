@@ -23,7 +23,7 @@ from .utils.plots import (
     pol_str,
 )
 
-logger = setup_logging(__name__, level=logging.DEBUG)
+logger = setup_logging("generator", level=logging.DEBUG)
 
 
 def interpolator(func, ells_sparse, axis=1, cubic=True):
@@ -197,7 +197,7 @@ def generate_alm_ng(core, alms):
             for r in range(len(radii))
         )
 
-        # here was use our function to calculate the integral
+        # here we use our function to calculate the integral
         alm_ng[sim] = trap_generator(generator, x=radii)
 
     return alm_ng
@@ -323,18 +323,12 @@ def main():
     # make a copy of the alms for the lensing since they will modify them
     maps = alms.copy()
     if not core.use_t:
-        maps.insert(0, np.zeros((core.nsims, 1, core.nelem)), axis=1)
+        maps = np.concatenate((np.zeros((core.nsims, 1, core.nelem)), maps), axis=1)
     if core.use_e:
         # need to add a zero for the spin-2 component
         maps = np.concatenate((maps, np.zeros((core.nsims, 1, core.nelem))), axis=1)
 
-    # we need to build the spin matrix paramters, T = 0, E = 2
-    spin = []
-    if core.use_t:
-        spin.append(0)
-    if core.use_e:
-        spin.append(2)
-
+    # now lets do the actual lensing and patching
     if core.lensing:
         logger.debug("Getting lensing cl_phi and data")
         cl_phi = core.cosmo._camb_data.get_lens_potential_cls(  # type: ignore
@@ -361,7 +355,7 @@ def main():
         # actually lens the alms and cut the patches
         for sim in trange(core.nsims, desc="Lensing and Patching", total=core.nsims):
             lenmap = lenspyx.alm2lenmap(
-                maps[sim], dlm, geometry=geom_info, nthreads=core.n_cpus
+                maps[sim].copy(), dlm, geometry=geom_info, nthreads=core.n_cpus
             )
             lenmap = np.array(lenmap)  # convert from tuple to array
 
@@ -376,9 +370,20 @@ def main():
                     lenmap[1:].copy(), 2, core.lmax, core.lmax, nthreads=core.n_cpus
                 )
 
+            # we need to build the spin matrix paramters, T = 0, E = 2
+            spin = []
+            if core.use_t:
+                spin.append(0)
+            if core.use_e:
+                spin.append(2)
+
             # cut the patches
             pixell_map = reproject.healpix2map(
-                lenmap, fs_shape, fs_wcs, core.lmax, spin=spin
+                core.trim_pols(lenmap, keep_b=True, axis=0),
+                fs_shape,
+                fs_wcs,
+                core.lmax,
+                spin=spin,
             )
             for i in range(core.npatches):
                 patches[sim, i] = pixell_map.project(patch_shapes[i], patch_wcss[i])
@@ -388,6 +393,9 @@ def main():
             (core.nsims, core.npatches, core.npols, core.nside, core.nside),
             dtype=core.r_dtype,
         )
+
+        # set spin transforms to 0 for the unlensed case, not sure if this is right
+        spin = np.atleast_1d(np.zeros(maps.shape[1], dtype=int))
 
         for sim in trange(core.nsims, desc="Patching", total=core.nsims):
             car_map = curvedsky.alm2map(
@@ -412,7 +420,7 @@ def main():
         #     f"{core.base_name}_{core.sjob}_mollview[{sim}].png",
         # )
         # if core.lensing:
-        #     map = lenspyx.alm2lenmap(alms[sim], dlm, geom_info, nthreads=core.n_cpus)
+        #     map = lenspyx.alm2lenmap(alms[sim].copy(), dlm, geom_info, nthreads=core.n_cpus)
         #     plot_mollview(map, f"Lensed view for {sim}", save_file=plot_file)
         # else:
         #     map = curvedsky.alm2map_healpix(

@@ -9,7 +9,7 @@ from tqdm.auto import tqdm
 from . import Core
 from .utils import setup_logging
 
-logger = setup_logging(__name__)  # , level=logging.DEBUG)
+logger = setup_logging("combiner")
 
 
 def extract_number(filename):
