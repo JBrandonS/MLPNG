@@ -2,7 +2,6 @@ import sys
 import logging
 import os
 import healpy as hp
-import camb
 
 import h5py
 import numpy as np
@@ -10,10 +9,10 @@ from mpi4py import MPI
 
 from . import Core
 from .generator import generate_alm
-from .utils import save_data, setup_logging, print_errors, remove_mono_dipole
+from .utils import save_data, setup_logging, print_errors
 from .utils.plots import plot_histogram, plot_predictions
 
-from ksw import KSW, Cosmology, Shape
+from ksw import KSW, Shape
 
 mpi_comm = MPI.COMM_WORLD
 mpi_rank = mpi_comm.Get_rank()
