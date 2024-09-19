@@ -77,7 +77,7 @@ def integrand(alm, bl_div_cl, alpha_l, nside, lmax, use_e, radii):
         Balm = Balm[0]
     Balm = np.ascontiguousarray(Balm)
 
-    B = hp.alm2map(Balm, nside)
+    B = hp.alm2map(Balm, nside, lmax)
     inner = hp.map2alm(B**2, lmax, use_pixel_weights=True)
     inner = np.ascontiguousarray(np.atleast_2d(inner))
 
@@ -99,8 +99,8 @@ def generate_alm(core, nsims=None):
     if nsims is None:
         nsims = core.nsims
 
-    sims = [hp.synalm(core.cov_tot, new=True) for _ in range(nsims)]
-    return sims[:, core.pol_idxs()]
+    sims = [hp.synalm(core.c_ells, lmax=core.lmax, new=True) for _ in range(nsims)]
+    return np.array(sims)[:, core.pol_idxs()]
 
 
 def trap_generator(generator, x):
@@ -166,7 +166,7 @@ def generate_alm_ng(core, alms):
 
     # next 3 lines prevent a division by zero due to the monopole and dipole terms being 0
     bl_div_cl = np.zeros_like(beta_l)
-    bl_div_cl[:, lmin:] = beta_l[:, lmin:] * core.icov_tot.T[None, lmin:, : core.npols]
+    bl_div_cl[:, lmin:] = beta_l[:, lmin:] / core.c_ells.T[None, lmin:, : core.npols]
 
     # ensure all arrays are contiguous
     alpha_l = np.ascontiguousarray(alpha_l)
