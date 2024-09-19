@@ -574,16 +574,14 @@ class Core:
             self.icov_tot = np.zeros_like(self.cov_tot)
             self.icov_tot[[0, 1, 3], 2:] = 1 / self.cov_tot[[0, 1, 3], 2:]
 
-    def trim_pols(self, arr, axis=1, keep_b=False, keep_te=False, pretrimmed=False):
+    def pol_idxs(self, keep_b=False, keep_te=False, pretrimmed=False):
         """
-        Trim the polarizations from the data array.
+        Get the polarization indices based on the configuration settings.
 
-        Args:
-            data (numpy.ndarray): The data array to trim.
-            axis (int, optional): The axis along which to trim the data. Defaults to 1.
-
-        Returns:
-            numpy.ndarray: The trimmed data array.
+        Parameters:
+            keep_b (bool): Whether to keep the B-mode polarization. Default is False.
+            keep_te (bool): Whether to keep the TE-mode polarization. Default is False.
+            pretrimmed (bool): Whether the alms are pretrimmed, i.e. have we removed the t-modes. Default is False.
         """
         start = 0 if self.use_t else (0 if pretrimmed else 1)
         num_to_take = 1 if self.use_t else 0
@@ -593,4 +591,4 @@ class Core:
         if keep_te and self.use_te:
             num_to_take += 1
 
-        return np.take(arr, range(start, start + num_to_take), axis=axis)
+        return list(range(start, start + num_to_take))

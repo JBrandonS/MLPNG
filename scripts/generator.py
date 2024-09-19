@@ -100,7 +100,7 @@ def generate_alm(core, nsims=None):
         nsims = core.nsims
 
     sims = [hp.synalm(core.cov_tot, new=True) for _ in range(nsims)]
-    return core.trim_pols(sims)
+    return sims[:, core.pol_idxs()]
 
 
 def trap_generator(generator, x):
@@ -379,7 +379,7 @@ def main():
 
             # cut the patches
             pixell_map = reproject.healpix2map(
-                core.trim_pols(lenmap, keep_b=True, axis=0),
+                lenmap[core.pol_idxs(keep_b=True)],
                 fs_shape,
                 fs_wcs,
                 core.lmax,

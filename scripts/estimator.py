@@ -72,12 +72,11 @@ def main():
     )
 
     # The default theta_batch size is 25, which is really small, we want to increase it
-    # going too high can cause memory issues, so we will cap it at 256
     theta_batch = int(np.floor(1.5 * core.lmax + 1)) // mpi_size
     logger.debug("Using theta_batch %s", theta_batch)
 
     # since we are only doing full sky right now, we do not need to use MC methods
-    if core.force_ksw:
+    if core.force_ksw:  # TODO: test mc methods
         if os.path.exists(core.mc_file):
             logger.info("Loading KSW state from %s", core.mc_file)
             ksw.start_from_read_state(core.mc_file, mpi_comm)
@@ -91,13 +90,15 @@ def main():
 
         fisher = float(ksw.compute_fisher())  # type: ignore
     else:
-        icov_ell = core.trim_pols(core.icov_tot, axis=0)
+        icov_ell = core.icov_tot[core.pol_idxs()]
         fisher = ksw.compute_fisher_isotropic(icov_ell, comm=mpi_comm)
     logger.info("Fisher: %s, standard deviation: %s", fisher, np.sqrt(1 / fisher))
 
     # note that these are not fully loaded into memory, yet
     alms = data_file["alm_lensed"] if core.lensing else data_file["alm"]
-    alms = core.trim_pols(alms, axis=1, pretrimmed=True)
+
+    # get the polarization indexes but do not yet trim the alms as they will be loaded into memory
+    pol_idxs = core.pol_idxs(pretrimmed=True)
 
     logger.info(
         "Computing %s estimates in %.2f batches",
@@ -110,8 +111,13 @@ def main():
             "this will lead to uneven workloads."
         )
 
+    def alm_loader(idx):
+        """load the alms into memory with debug logging"""
+        logger.debug("Sending alm %s", idx)
+        return icov_func(core, alms[idx, pol_idxs])
+
     estimates, cubic_terms, lin_terms, fisher_terms = ksw.compute_estimate_batch(
-        lambda idx: icov_func(core, alms[idx]),
+        alm_loader,
         range(core.num_estimates),
         comm=mpi_comm,
         fisher=fisher,
