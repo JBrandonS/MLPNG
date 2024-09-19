@@ -21,13 +21,13 @@ SETTINGS=(
   # "n4096"
   
   "elsner"
-  "planck"
+  # "planck"
 )
 
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
 ARGS=(
   "--nsims" "100"
-  "--no-lensing"
+  "--lensing"
   "--no-noise" 
   "--pols" "TE"
   "--fnl_range" "-30" "30"
@@ -42,9 +42,9 @@ SLURM_ARR_ARGS=(
 # general slurm args for all
 SLURM_ARGS=(
   # "--partition" "dev"
-  # "--time" "02:00:00"
+  # "--time" "00:30:00"
   # "--ntasks" "1"
-  # "--cpus-per-task" "10"
+  # "--cpus-per-task" "2"
 )
 
 # Just log the overrides to the console
