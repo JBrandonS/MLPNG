@@ -484,8 +484,8 @@ class Core:
         j: str = "" if self.job_array_index is None else f"_{self.job_array_index}"
         pol_str = "".join(self.pols)
 
-        def_name = f"l{self.lmax}_n{self.nside}_{lens}-{nn}_{pol_str}x{self.total_sims}_f{self.fnl_min}-{self.fnl_max}"
-        self.base_name = self._get("base_name", def_name)
+        def_name = self._get("base_name", f"l{self.lmax}_n{self.nside}")
+        self.base_name = f"{def_name}_{lens}-{nn}_{pol_str}x{self.total_sims}_f{self.fnl_min}-{self.fnl_max}"
 
         self.base_dir = self._get("base_dir", "data")
         self.plot_dir = join_paths(self._get("plot_dir", "plots"))
