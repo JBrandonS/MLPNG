@@ -2,17 +2,18 @@ import sys
 import logging
 import os
 import healpy as hp
+import camb
 
 import h5py
 import numpy as np
 from mpi4py import MPI
 
+from ksw import KSW, Shape, Cosmology
+
 from . import Core
 from .generator import generate_alm
 from .utils import save_data, setup_logging, print_errors
 from .utils.plots import plot_histogram, plot_predictions
-
-from ksw import KSW, Shape
 
 mpi_comm = MPI.COMM_WORLD
 mpi_rank = mpi_comm.Get_rank()
@@ -27,10 +28,10 @@ else:
     logger = setup_logging(name=f"estimator_{mpi_rank}", level=logging.ERROR)
 
 
-def icov_func(core, alm):
+def icov_func(icov, alm):
     ret = np.zeros_like(alm)
     for pol in range(ret.shape[0]):
-        ret[pol] = hp.almxfl(alm[pol], core.icov_tot[pol])
+        ret[pol] = hp.almxfl(alm[pol].copy(), icov[pol])
     return ret
 
 
@@ -54,17 +55,73 @@ def main():
         core.total_sims >= mpi_size
     ), "total_sims < mpi_size, lower ntasks or increase sims"
 
+    logger.info(
+        "Computing %s estimates in %.2f batches",
+        core.num_estimates,
+        core.num_estimates / mpi_size,
+    )
+    if core.num_estimates % mpi_size != 0:
+        logger.warning(
+            "num_estimates is not divisible by mpi_size, "
+            "this will lead to uneven workloads."
+        )
+
     # early loading to fail fast if the file does not exist
     data_file = h5py.File(core.file_complete, "r", swmr=True, locking=False)
 
+    # setup our cosmology and compute the c_ells
+    camb_params = camb.set_params(**core.cosmo_params)
+    ip = camb.initialpower.InitialPowerLaw()
+    ip.set_params(As=core.cosmo_params["As"], ns=core.cosmo_params["ns"])
+    camb_params.set_initial_power(ip)
+    cosmo = Cosmology(camb_params)
+    cosmo.compute_transfer(core.lmax)
+    cosmo.compute_c_ell()
     loc_shape = Shape.prim_local(
         core.cosmo_params["ns"], core.cosmo_params["pivot_scalar"]
     )
-    core.cosmo.add_prim_reduced_bispectrum(loc_shape, core.radii)
+    cosmo.add_prim_reduced_bispectrum(loc_shape, core.radii)
+
+    if core.lensing:
+        c_ells = cosmo.c_ell["lensed_scalar"]["c_ell"].T
+    else:
+        c_ells = cosmo.c_ell["unlensed_scalar"]["c_ell"].T
+    c_ells = c_ells[:, : core.nell].copy()  # trim c_ells to the correct length
+
+    # and lets get the icov_ell
+    cov_tot = np.sqrt(c_ells.copy()) # ** 2  # core.beam_ell**2 * c_ells + core.noise_ell
+    cov_tot[..., :2] = 0  # we do not want to use the mono and dipole terms
+
+    # n = (2 * np.arange(core.nell) + 1) / 2
+    # cov_tot[..., 2:] /= n[None, 2:]
+    print("cov_tot", cov_tot) 
+    # if core.use_te:
+    #     # we need to square the matrix and invert it properly
+    #     cov = np.zeros((2, 2, core.nell))
+    #     cov[0, 0] = cov_tot[0]  # TT
+    #     cov[1, 1] = cov_tot[1]  # EE
+    #     cov[1, 0] = cov_tot[3]  # ET
+    #     cov[0, 1] = cov_tot[3]  # TE
+    #     icov = np.linalg.inv(cov.T).T
+
+    #     # lets flatten this for our code, will be TT, EE, BB, TE order to match alms
+    #     icov_ell = np.array(
+    #         [
+    #             icov[0, 0],  # TT
+    #             icov[1, 1],  # EE
+    #             np.zeros(core.nell),  # BB
+    #             icov[1, 0],  # TE
+    #         ],
+    #     )
+    # else:
+    # to avoid a divide by zero we skip the mono and dipole terms, and b mode
+    icov_ell = np.zeros_like(cov_tot)
+    icov_ell[[0, 1, 3], 2:] = 1 / cov_tot[[0, 1, 3], 2:]
+    icov_ell = icov_ell.copy()
 
     ksw = KSW(
-        core.cosmo.red_bispectra,
-        lambda a: a,
+        cosmo.red_bispectra,
+        None,  # lambda a: a,  # icov_func(icov_ell, a),  # we will send the alms directly
         core.lmax,
         core.pols,
         core.precision,
@@ -89,34 +146,41 @@ def main():
 
         fisher = float(ksw.compute_fisher())  # type: ignore
     else:
-        icov_ell = core.icov_tot[core.pol_idxs()]
-        fisher = ksw.compute_fisher_isotropic(icov_ell, comm=mpi_comm)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            # ib = np.where(core.beam_ell != 0, 1 / core.beam_ell, 0)
+            icov = np.where(
+                cov_tot != 0,  # + ib * core.noise_ell * ib != 0,
+                1 / (cov_tot),  # + ib * core.noise_ell * ib),
+                0,
+            )
+            icov = icov[core.pol_idxs()].copy()
+
+        nelem = icov.shape[1]
+
+        # Create a new array of shape (2, 2, nelem) initialized with zeros
+        # icov_new = np.zeros((2, 2, nelem))
+
+        # Fill the diagonal elements with the values from the original icov array
+        # icov_new[0, 0, :] = icov[0, :]
+        # icov_new[1, 1, :] = icov[1, :]
+        print("icov shape", icov.shape)
+        print("icov contig", icov.flags["C_CONTIGUOUS"])
+        fisher = ksw.compute_fisher_isotropic(icov, comm=mpi_comm)
     logger.info("Fisher: %s, standard deviation: %s", fisher, np.sqrt(1 / fisher))
 
     # note that these are not fully loaded into memory, yet
     alms = data_file["alm_lensed"] if core.lensing else data_file["alm"]
+    print("alm dtype:", alms.dtype)
 
-    # get the polarization indexes but do not yet trim the alms as they will be loaded into memory
+    # def alm_loader(idx):
+    #     """load the alms into memory with debug logging"""
+    #     logger.debug("Sending alm %s", idx)
+    #     return icov_func(core, alms[idx, pol_idxs])
+
     pol_idxs = core.pol_idxs(pretrimmed=True)
-
-    logger.info(
-        "Computing %s estimates in %.2f batches",
-        core.num_estimates,
-        core.num_estimates / mpi_size,
-    )
-    if core.num_estimates % mpi_size != 0:
-        logger.warning(
-            "num_estimates is not divisible by mpi_size, "
-            "this will lead to uneven workloads."
-        )
-
-    def alm_loader(idx):
-        """load the alms into memory with debug logging"""
-        logger.debug("Sending alm %s", idx)
-        return icov_func(core, alms[idx, pol_idxs])
-
-    estimates, cubic_terms, lin_terms, fisher_terms = ksw.compute_estimate_batch(
-        alm_loader,
+    estimates, _, _, _ = ksw.compute_estimate_batch(
+        lambda idx: icov_func(icov_ell, alms[idx, pol_idxs]),
+        # lambda idx: alms[idx, pol_idxs],
         range(core.num_estimates),
         comm=mpi_comm,
         fisher=fisher,
@@ -127,7 +191,8 @@ def main():
     if mpi_root:
         logger.info("Saving data")
 
-        fnls = np.array(data_file["fnl"][:]).flatten()
+        fnls = np.array(data_file["fnl"][:])
+        print(fnls)
         data_file.close()
 
         # save the data, this will append to the alm_file

@@ -20,31 +20,33 @@ SETTINGS=(
   # "n2048"
   # "n4096"
   
-  "elsner"
+  # "elsner"
   # "planck"
 )
 
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
 ARGS=(
   "--nsims" "100"
-  "--lensing"
+  "--no-lensing"
   "--no-noise" 
-  "--pols" "TE"
-  "--fnl_range" "-30" "30"
-  "--narray" "100"
+  "--pols" "T"
+  "--double_precision"
+  "--fnl_range" "-10" "10"
+  "--iso"
+  "--narray" "1"
 )
 
-# override the slurm settings for narray, only used in data generation
-SLURM_ARR_ARGS=(
+# override the slurm array settings for narray, only used in data generation
+ARR_ARGS=(
   "--array" "1-${ARGS[@]: -1}"
 )
 
 # general slurm args for all
 SLURM_ARGS=(
   # "--partition" "dev"
-  # "--time" "00:30:00"
-  # "--ntasks" "1"
-  # "--cpus-per-task" "2"
+  "--time" "02:00:00"
+  "--ntasks" "1"
+  "--cpus-per-task" "10"
 )
 
 # Just log the overrides to the console
@@ -57,25 +59,48 @@ elif [ "${#SLURM_ARGS[@]}" -ne 0 ]; then
   echo "Submitting jobs with Slurm overrides:" "${SLURM_ARGS[@]}"
 fi
 
+submit_job() {
+  # define our submit function which will pull in the settings from global variables
+  # this will check for a job_id and if found use that as a dependency to wait for the previous job to finish
+
+  local job_id=$1
+  local sbatch=$2
+  local settings=$3
+
+  # only want this for generator, as it uses the narray setting
+  local use_arr_args=${4:-"false"}
+  if [[ "$use_arr_args" == "true" ]]; then
+    arr_args=("${ARR_ARGS[@]}")
+  else
+    arr_args=()
+  fi
+
+  if [ -z "$job_id" ]; then
+      # no job_id found, just run the job 
+      job_id=$(sbatch "${arr_args[@]}" "${SLURM_ARGS[@]}" "$sbatch" "${ARGS[@]}" "$settings" | awk '{print $4}')
+  else
+      job_id=$(sbatch "${arr_args[@]}" "${SLURM_ARGS[@]}" --dependency=afterok:"$job_id" "$sbatch" "${ARGS[@]}" "$settings" | awk '{print $4}')
+  fi
+
+  # acts as our return value
+  echo "$job_id"
+}
+
 # loops over all settings files
 # each block submits a slurm job based on the settings files
 job_id=""
 for x in "${SETTINGS[@]}"; do
-    SETTINGS_FILE="settings/$x.json"
-    # job_id="" # reset job_id for each settings file, comment out if you want to run all settings files as dependent on the previous
+    settings="settings/$x.json"
 
-    # this will run all settings files as dependent on the previous require a single job, e.g. n32, to finish before the next, n64, starts
-    if [ -z "$job_id" ]; then
-        job_id=$(sbatch "${SLURM_ARR_ARGS[@]}" "${SLURM_ARGS[@]}" "sbatch/generator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
-    else
-        job_id=$(sbatch "${SLURM_ARR_ARGS[@]}" "${SLURM_ARGS[@]}" --dependency=afterok:"$job_id" "sbatch/generator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
-    fi
+    # comment out if you want to run all settings files as dependent on the previous
+    # job_id="" # reset job_id for each settings file
 
-    # combines the data into a single file
-    job_id=$(sbatch "${SLURM_ARGS[@]}" --dependency=afterok:"$job_id" "sbatch/combiner.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
-    # job_id=$(sbatch "${SLURM_ARGS[@]}" "sbatch/combiner.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
+    # Submit the generator job
+    # job_id=$(submit_job "$job_id" "sbatch/generator.sbatch" "$settings" "true")
 
-    # runs the estimator on the combined data
-    job_id=$(sbatch "${SLURM_ARGS[@]}" --dependency=afterok:"$job_id" "sbatch/estimator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" | awk '{print $4}')
-    # sbatch "${SLURM_ARGS[@]}" "sbatch/estimator.sbatch" "${ARGS[@]}" "$SETTINGS_FILE" > /dev/null 2>&1
+    # Combine the data into a single file
+    # job_id=$(submit_job "$job_id" "sbatch/combiner.sbatch" "$settings")
+
+    # Run the estimator on the combined data
+    job_id=$(submit_job "$job_id" "sbatch/estimator.sbatch" "$settings")
 done

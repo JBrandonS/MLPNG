@@ -164,13 +164,13 @@ def plot_cl_alm(alm, lmax=None, title="Angular power spectrum from alm", **kwarg
     Plot the angular power spectrum from alm.
 
     Parameters:
-    alm (array-like): The alm coefficients.
-    lmax (int, optional): The maximum multipole moment. If not provided, it will be determined from the length of alm.
-    title (str, optional): The title of the plot.
-    **kwargs: Additional keyword arguments to be passed to the plot_cl function.
+        alm (array-like): The alm coefficients.
+        lmax (int, optional): The maximum multipole moment. If not provided, it will be determined from the length of alm.
+        title (str, optional): The title of the plot.
+        **kwargs: Additional keyword arguments to be passed to the plot_cl function.
 
     Returns:
-    None
+        None
     """
     lmax = lmax if lmax else hp.Alm.getlmax(np.shape(alm)[-1])
     if len(np.shape(alm)) > 1:
@@ -187,14 +187,14 @@ def plot_cl_map(map, wcs, lmax, title="Angular power spectrum from map", **kwarg
     Plot the angular power spectrum from a map.
 
     Parameters:
-    map (ndarray): The input map.
-    wcs (WCS): The world coordinate system of the map.
-    lmax (int): The maximum multipole moment.
-    title (str, optional): The title of the plot. Default is "Angular power spectrum from map".
-    **kwargs: Additional keyword arguments to be passed to the plot_cl function.
+        map (ndarray): The input map.
+        wcs (WCS): The world coordinate system of the map.
+        lmax (int): The maximum multipole moment.
+        title (str, optional): The title of the plot. Default is "Angular power spectrum from map".
+        **kwargs: Additional keyword arguments to be passed to the plot_cl function.
 
     Returns:
-    None
+        None
     """
     if len(np.shape(map)) > 1:
         cls = []
@@ -238,6 +238,7 @@ def plot_predictions(truth, preds, title="Predictions", fisher=None, **kwargs):
 
     if fisher is not None:
         std_dev = np.sqrt(1 / fisher)
+        # std_dev = 1 / fisher
 
         plt.plot(
             line,

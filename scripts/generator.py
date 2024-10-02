@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 
+import camb
 import healpy as hp
 import numpy as np
 from joblib import Parallel, delayed
@@ -11,6 +12,7 @@ from tqdm.auto import tqdm, trange
 import lenspyx
 from pixell import curvedsky, enmap, reproject
 
+from ksw import Cosmology
 from ksw.radial_functional import radial_func
 
 from . import Core
@@ -77,7 +79,7 @@ def integrand(alm, bl_div_cl, alpha_l, nside, lmax, use_e, radii):
         Balm = Balm[0]
     Balm = np.ascontiguousarray(Balm)
 
-    B = hp.alm2map(Balm, nside, lmax)
+    B = hp.alm2map(Balm, nside)
     inner = hp.map2alm(B**2, lmax, use_pixel_weights=True)
     inner = np.ascontiguousarray(np.atleast_2d(inner))
 
@@ -85,7 +87,7 @@ def integrand(alm, bl_div_cl, alpha_l, nside, lmax, use_e, radii):
     return radii**2 * np.array(results)
 
 
-def generate_alm(core, nsims=None):
+def generate_alm(core, c_ells, nsims=None):
     """
     generates the gaussian alms using the given core.
 
@@ -99,7 +101,7 @@ def generate_alm(core, nsims=None):
     if nsims is None:
         nsims = core.nsims
 
-    sims = [hp.synalm(core.c_ells, lmax=core.lmax, new=True) for _ in range(nsims)]
+    sims = [hp.synalm(c_ells, lmax=core.lmax, new=True) for _ in range(nsims)]
     return np.array(sims)[:, core.pol_idxs()]
 
 
@@ -125,7 +127,7 @@ def trap_generator(generator, x):
     return integral
 
 
-def generate_alm_ng(core, alms):
+def generate_alm_ng(core, cosmo, alms, c_ells):
     """
     This function calculates the non-gaussian alms using the given core and the gaussian alms.
 
@@ -142,9 +144,9 @@ def generate_alm_ng(core, alms):
     lmin = 2
 
     # get the transfer functions with tr_ell_k being \Delta_\ell(k)
-    tr_ells = core.cosmo.transfer["ells"]
-    tr_k = core.cosmo.transfer["k"]
-    tr_ell_k = core.cosmo.transfer["tr_ell_k"][..., :2]  # this is T, E, PHI
+    tr_ells = cosmo.transfer["ells"]
+    tr_k = cosmo.transfer["k"]
+    tr_ell_k = cosmo.transfer["tr_ell_k"][..., :2]  # this is T, E, PHI
 
     # this will be the f(k) value to be placed in the radial function
     # first will be for alpha_ell, second will be beta_ell
@@ -152,8 +154,8 @@ def generate_alm_ng(core, alms):
     f_k = np.ones((len(tr_k), 2), dtype=core.r_dtype)
 
     # for beta, get the Pk from camb and convert from the dimensionless Pk from camb to the dimensionful
-    Pk = core.cosmo.camb_params.primordial_power(tr_k, 0)
-    f_k[:, 1] = 2 * np.pi**2 * tr_k ** (-3) * Pk
+    Pk = cosmo.camb_params.primordial_power(tr_k, 0)
+    f_k[:, 1] = tr_k ** (core.cosmo_params["ns"] - 4) * Pk * 2 * np.pi**2
 
     # this computes \frac{2}{\pi} \int_0^\infty dk k^2 f_k tr_ell_k j_\ell(k r)
     rad = radial_func(f_k, tr_ell_k, tr_k, radii, tr_ells)
@@ -166,7 +168,7 @@ def generate_alm_ng(core, alms):
 
     # next 3 lines prevent a division by zero due to the monopole and dipole terms being 0
     bl_div_cl = np.zeros_like(beta_l)
-    bl_div_cl[:, lmin:] = beta_l[:, lmin:] / core.c_ells.T[None, lmin:, : core.npols]
+    bl_div_cl[:, lmin:] = beta_l[:, lmin:] / c_ells.T[None, lmin:, : core.npols]
 
     # ensure all arrays are contiguous
     alpha_l = np.ascontiguousarray(alpha_l)
@@ -245,17 +247,30 @@ def main():
 
     # Get our gaussian alms, very fast so no need to parallelize
     logger.info("Starting data generation")
-    alm_l = generate_alm(core)
+
+    # setup our cosmology and compute the c_ells
+    cosmo = Cosmology(camb.set_params(**core.cosmo_params))
+    # cosmo.compute_transfer(core.max_l)
+    cosmo.compute_transfer(core.lmax)
+    cosmo.compute_c_ell()
+
+    if core.lensing:
+        c_ells = cosmo.c_ell["lensed_scalar"]["c_ell"].T
+    else:
+        c_ells = cosmo.c_ell["unlensed_scalar"]["c_ell"].T
+    c_ells = c_ells[:, : core.nell]  # trim c_ells to the correct length
+
+    alm_l = generate_alm(core, c_ells)
 
     # get the non-gaussian alms, this will take a long time
     logger.debug("Starting non-gaussian Alm generation")
-    alm_ng = generate_alm_ng(core, alm_l)
+    alm_ng = generate_alm_ng(core, cosmo, alm_l, c_ells)
 
     # generate the fnls
-    fnls = core.rng.uniform(core.fnl_min, core.fnl_max, core.fnl_shape)
+    fnls = core.rng.uniform(core.fnl_min, core.fnl_max, (core.nsims,))
 
     # finally combine into the full alms and remove the monopole and dipole terms
-    alms = alm_l + fnls * alm_ng
+    alms = alm_l + fnls[:, None, None] * alm_ng
     alms = remove_mono_dipole(alms)
 
     # lets make a few plots for the alms
@@ -285,7 +300,7 @@ def main():
                 alms[sim, pol],
                 save_file=filebase,
                 plot_camb=True,
-                camb_cls=core.c_ells[pol],
+                camb_cls=c_ells[pol],
                 plot_noise=False,
                 plot_full_camb=True,
                 camb_noise=core.noise_ell[pol],
@@ -331,7 +346,8 @@ def main():
     # now lets do the actual lensing and patching
     if core.lensing:
         logger.debug("Getting lensing cl_phi and data")
-        cl_phi = core.cosmo._camb_data.get_lens_potential_cls(  # type: ignore
+        # PP PT PE
+        cl_phi = cosmo._camb_data.get_lens_potential_cls(  # type: ignore
             core.lmax, CMB_unit="muK", raw_cl=True
         )
         plm = lenspyx.utils_hp.synalm(cl_phi[:, 0], core.lmax, mmax=None)
@@ -354,7 +370,7 @@ def main():
         # actually lens the alms and cut the patches
         for sim in trange(core.nsims, desc="Lensing and Patching", total=core.nsims):
             lenmap = lenspyx.alm2lenmap(
-                maps[sim].copy(), dlm, geometry=geom_info, nthreads=core.n_cpus
+                maps[sim], dlm, geometry=geom_info, nthreads=core.n_cpus
             )
             lenmap = np.array(lenmap)  # convert from tuple to array
 
@@ -370,11 +386,7 @@ def main():
                 )
 
             # we need to build the spin matrix paramters, T = 0, E = 2
-            spin = []
-            if core.use_t:
-                spin.append(0)
-            if core.use_e:
-                spin.append(2)
+            spin = np.array([0, 2])[core.pol_idxs()]
 
             # cut the patches
             pixell_map = reproject.healpix2map(
@@ -398,7 +410,7 @@ def main():
 
         for sim in trange(core.nsims, desc="Patching", total=core.nsims):
             car_map = curvedsky.alm2map(
-                maps[sim], fs_map, spin=spin, copy=True, nthread=core.n_cpus
+                maps[sim].copy(), fs_map, spin=spin, copy=True, nthread=core.n_cpus
             )
 
             for i in range(core.npatches):
