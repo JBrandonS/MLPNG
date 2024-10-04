@@ -20,7 +20,7 @@ SETTINGS=(
   # "n2048"
   # "n4096"
   
-  # "elsner"
+  "elsner"
   # "planck"
 )
 
@@ -28,12 +28,11 @@ SETTINGS=(
 ARGS=(
   "--nsims" "100"
   "--no-lensing"
-  "--no-noise" 
-  "--pols" "T"
-  "--double_precision"
-  "--fnl_range" "-10" "10"
-  "--iso"
-  "--narray" "1"
+  "--no-noise"
+  "--isotropic" 
+  "--pols" "TE"
+  "--fnl_range" "-100" "100"
+  "--narray" "100"
 )
 
 # override the slurm array settings for narray, only used in data generation
@@ -44,9 +43,9 @@ ARR_ARGS=(
 # general slurm args for all
 SLURM_ARGS=(
   # "--partition" "dev"
-  "--time" "02:00:00"
-  "--ntasks" "1"
-  "--cpus-per-task" "10"
+  # "--time" "02:00:00"
+  # "--ntasks" "1"
+  # "--cpus-per-task" "25"
 )
 
 # Just log the overrides to the console
@@ -66,9 +65,8 @@ submit_job() {
   local job_id=$1
   local sbatch=$2
   local settings=$3
+  local use_arr_args=${4:-"false"} # only want this for generator, as it uses the narray setting
 
-  # only want this for generator, as it uses the narray setting
-  local use_arr_args=${4:-"false"}
   if [[ "$use_arr_args" == "true" ]]; then
     arr_args=("${ARR_ARGS[@]}")
   else
@@ -93,13 +91,13 @@ for x in "${SETTINGS[@]}"; do
     settings="settings/$x.json"
 
     # comment out if you want to run all settings files as dependent on the previous
-    # job_id="" # reset job_id for each settings file
+    # job_id=""
 
     # Submit the generator job
-    # job_id=$(submit_job "$job_id" "sbatch/generator.sbatch" "$settings" "true")
+    job_id=$(submit_job "$job_id" "sbatch/generator.sbatch" "$settings" "true")
 
     # Combine the data into a single file
-    # job_id=$(submit_job "$job_id" "sbatch/combiner.sbatch" "$settings")
+    job_id=$(submit_job "$job_id" "sbatch/combiner.sbatch" "$settings")
 
     # Run the estimator on the combined data
     job_id=$(submit_job "$job_id" "sbatch/estimator.sbatch" "$settings")

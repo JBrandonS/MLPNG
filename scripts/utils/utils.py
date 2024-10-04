@@ -170,7 +170,7 @@ def remove_mono_dipole(alm, inplace=False):
         alm (array-like): The input alms.
         inplace (bool, optional): If True, the input alms will be modified in-place.
                                 If False, a copy of the input alms will be made before modification.
-                                Default is True.
+                                Default is False.
 
     Returns:
         array-like: The alms with the monopole and dipole terms removed.

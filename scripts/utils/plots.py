@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 
 import healpy as hp
 import matplotlib.pyplot as plt
@@ -6,13 +7,14 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from pixell import curvedsky, enmap
+from tqdm.auto import trange
 
 from .utils import trim_alms
 
 logger = logging.getLogger(__name__)
 
 
-def pol_str(pol, double=False):
+def pol_str(pol: int, double: bool = False):
     """
     Converts the polarization number, {0, 1, 2} to a string {T, E, B} or {TT, EE, TE} if double is True
     """
@@ -22,13 +24,13 @@ def pol_str(pol, double=False):
 
 
 def finalize_plot(
-    title=None,
-    tight_layout=True,
-    legend=True,
-    grid=True,
-    save_file=None,
-    show=False,
-    close=True,
+    title: str | None = None,
+    tight_layout: bool = True,
+    legend: bool = True,
+    grid: bool = True,
+    save_file: str | None = None,
+    show: bool = False,
+    close: bool = True,
 ):
     """
     Finalize the plot by adding a legend, grid, tight layout, saving the file, showing the plot and closing it.
@@ -49,7 +51,7 @@ def finalize_plot(
         plt.close()
 
 
-def plot_patches(patches, n_plots=8, title="Patches", **kwargs):
+def plot_patches(patches, n_plots: int = 8, title: str = "Patches", **kwargs):
     n_plots = min(n_plots, patches.shape[0])
     nrows = int(np.ceil(n_plots / 4))
     ncols = min(n_plots, 4)
@@ -159,7 +161,12 @@ def plot_cl(
     finalize_plot(title, **kwargs)
 
 
-def plot_cl_alm(alm, lmax=None, title="Angular power spectrum from alm", **kwargs):
+def plot_cl_alm(
+    alm: np.ndarray | list[np.ndarray],
+    lmax: int | None = None,
+    title: str = "Angular power spectrum from alm",
+    **kwargs,
+):
     """
     Plot the angular power spectrum from alm.
 
@@ -182,7 +189,13 @@ def plot_cl_alm(alm, lmax=None, title="Angular power spectrum from alm", **kwarg
     plot_cl(cls, lmax=lmax, title=title, **kwargs)
 
 
-def plot_cl_map(map, wcs, lmax, title="Angular power spectrum from map", **kwargs):
+def plot_cl_map(
+    map: np.ndarray,
+    wcs,
+    lmax: int,
+    title: str = "Angular power spectrum from map",
+    **kwargs,
+):
     """
     Plot the angular power spectrum from a map.
 
@@ -209,7 +222,13 @@ def plot_cl_map(map, wcs, lmax, title="Angular power spectrum from map", **kwarg
     plot_cl(cls, lmax=lmax, title=title, **kwargs)
 
 
-def plot_predictions(truth, preds, title="Predictions", fisher=None, **kwargs):
+def plot_predictions(
+    truth: np.ndarray,
+    preds: np.ndarray,
+    title: str = "Predictions",
+    fisher: float | None = None,
+    **kwargs,
+):
     """
     Plots the true labels against the predicted labels. If provided will plot the expected deviations from the provided fisher
     and scaled_variance.
@@ -230,7 +249,9 @@ def plot_predictions(truth, preds, title="Predictions", fisher=None, **kwargs):
 
     # Create a scatter plot with seaborn
     plt.figure(figsize=(16, 12))
-    sns.scatterplot(data=df, x="True Fnl", y="Predicted Fnl", label="Estimates")
+    sns.scatterplot(
+        data=df, x="True Fnl", y="Predicted Fnl", label="Estimates", alpha=0.3
+    )
 
     # Truth line
     line = [min(truth), max(truth)]
@@ -238,7 +259,7 @@ def plot_predictions(truth, preds, title="Predictions", fisher=None, **kwargs):
 
     if fisher is not None:
         std_dev = np.sqrt(1 / fisher)
-        # std_dev = 1 / fisher
+        title += f", Fisher: {fisher:.2f}, Fisher Error: {std_dev:.2f}"
 
         plt.plot(
             line,
@@ -253,7 +274,6 @@ def plot_predictions(truth, preds, title="Predictions", fisher=None, **kwargs):
         diff = np.array(preds).flatten() - np.array(truth).flatten()
         diff = np.abs(diff)
         bbox = dict(boxstyle="round", fc="blanchedalmond", ec="orange", alpha=0.5)
-        std_dev = np.sqrt(1 / fisher)
         for i in range(1, 4):
             within = np.sum(diff < i * std_dev) / len(diff) * 100
             plt.text(
@@ -269,7 +289,7 @@ def plot_predictions(truth, preds, title="Predictions", fisher=None, **kwargs):
     finalize_plot(title, **kwargs)
 
 
-def plot_histogram(truth, preds, **kwargs):
+def plot_histogram(truth: np.ndarray, preds: np.ndarray, **kwargs):
     """Plot and save a histogram of predictions with mean and std dev as title"""
     # Calculate mean and standard deviation
     truth = truth.flatten()
@@ -297,7 +317,7 @@ def plot_histogram(truth, preds, **kwargs):
     finalize_plot(legend=False, **kwargs)
 
 
-def plot_mollview(maps, title, **kwargs):
+def plot_mollview(maps, title: str, **kwargs):
     """
     Plot a Mollweide projection of the given maps.
 
@@ -330,58 +350,90 @@ def plot_mollview(maps, title, **kwargs):
 def plot_elsner_comp(
     alm_l,
     alm_nl,
-    elsner_idx=1,
-    TCMB=2.7255,
-    title="Elsner comparison",
+    TCMB: float = 2.7255,
+    index: int | None = None,
+    average: int = 0,
+    title: str = "Elsner comparison",
+    elsner_dir: str = "data/elsner",
     **kwargs,
 ):
-    idx = str(elsner_idx).zfill(4)
-    alm_elsner_l = np.array(
-        hp.read_alm(f"data/elsner/alm_l_{idx}_v3.fits", hdu=(1, 2, 3))
-    )
-    alm_elsner_nl = np.array(
-        hp.read_alm(f"data/elsner/alm_nl_{idx}_v3.fits", hdu=(1, 2, 3))
-    )
+    """Plot comparison between simulated and Elsner alms.
+
+    Parameters:
+        alm_l : array-like
+            Linear alms from simulations.
+        alm_nl : array-like
+            Non-linear alms from simulations.
+        TCMB : float, optional
+            Temperature of the CMB in Kelvin. Default is 2.7255.
+        index : int or None, optional
+            Index of the Elsner simulation to use. If None, a random index is chosen. Default is None.
+        average : int, optional
+            Number of Elsner simulations to average. If greater than 0, the specified number of simulations are averaged. Default is 0.
+        title : str, optional
+            Title of the plot. Default is "Elsner comparison".
+        elsner_dir : str, optional
+            Directory containing the Elsner simulation files. Default is "data/elsner".
+        **kwargs : dict, optional
+            Additional keyword arguments passed to the plotting functions.
+    Returns:
+        None
+    """
+    # need to set up some inner args, but dont want to remove all options
+    inner_kwargs = kwargs.copy()
+    inner_kwargs["close"] = False
+    inner_kwargs["show"] = False
+
+    # get our elsner sims
+    if average > 0:
+        lsum = 0
+        nlsum = 0
+        logger.debug("Averaging %s elsner sims, this will take a while", average)
+        for i in trange(1, average + 1, desc="Averaging elsner sims"):
+            i = str(i).zfill(4)
+            lsum += hp.read_alm(f"{elsner_dir}/alm_l_{i}_v3.fits", hdu=(1, 2, 3))
+            nlsum += hp.read_alm(f"{elsner_dir}/alm_nl_{i}_v3.fits", hdu=(1, 2, 3))
+        elsner_l = np.array(lsum / average)
+        elsner_nl = np.array(nlsum / average)
+    else:
+        if index is None:
+            index = np.random.randint(1, 1001)
+
+        idx = str(index).zfill(4)
+        elsner_l = np.array(
+            hp.read_alm(f"{elsner_dir}/alm_l_{idx}_v3.fits", hdu=(1, 2, 3))
+        )
+        elsner_nl = np.array(
+            hp.read_alm(f"{elsner_dir}/alm_nl_{idx}_v3.fits", hdu=(1, 2, 3))
+        )
 
     t_scale = TCMB * 1e6
-    alm_elsner_l *= t_scale
-    alm_elsner_nl *= t_scale
+    elsner_l *= t_scale
+    elsner_nl *= t_scale
 
     # we need to reshape either the alms or the elsner to match the same lmax to plot
-    if alm_l.shape[-1] > alm_elsner_l.shape[-1]:
-        lmax = hp.Alm.getlmax(alm_elsner_l.shape[-1])
+    if alm_l.shape[-1] > elsner_l.shape[-1]:
+        lmax = hp.Alm.getlmax(elsner_l.shape[-1])
         alm_l = trim_alms(alm_l, lmax)
         alm_nl = trim_alms(alm_nl, lmax)
     else:
         lmax = hp.Alm.getlmax(alm_l.shape[-1])
-        alm_elsner_l = trim_alms(alm_elsner_l, lmax)
-        alm_elsner_nl = trim_alms(alm_elsner_nl, lmax)
-
-    # need to set up some intter args, but dont want to remove all options
-    inner_kwargs = kwargs.copy()
-    inner_kwargs["close"] = False
-    inner_kwargs["show"] = False
+        elsner_l = trim_alms(elsner_l, lmax)
+        elsner_nl = trim_alms(elsner_nl, lmax)
 
     npols = alm_l.shape[0]
     _, axes = plt.subplots(3, npols, figsize=(16, 12))
     if len(axes.shape) == 1:
         # fix for single pol
         axes = axes[:, np.newaxis]
+
     for pol in range(npols):
         ylabel = r"$\ell(\ell+1)/2\pi\;C_{\ell}" + f"^{pol_str(pol)}$"
         plt.sca(axes[0, pol])
         plot_cl_alm(
-            alm_elsner_l[pol],
+            [elsner_l[pol], alm_l[pol]],
             lmax,
-            labels="elsner",
-            title=f"linear, pol: {pol_str(pol)}",
-            ylabel=ylabel,
-            **inner_kwargs,
-        )
-        plot_cl_alm(
-            alm_l[pol],
-            lmax,
-            labels="sim",
+            labels=["elsner", "sim"],
             title=f"linear, pol: {pol_str(pol)}",
             ylabel=ylabel,
             **inner_kwargs,
@@ -389,17 +441,9 @@ def plot_elsner_comp(
 
         plt.sca(axes[1, pol])
         plot_cl_alm(
-            [alm_elsner_nl[pol]],
+            [elsner_nl[pol], alm_nl[pol]],
             lmax,
-            labels=["elsner"],
-            title=f"non-linear alms, pol: {pol_str(pol)}",
-            ylabel=ylabel,
-            **inner_kwargs,
-        )
-        plot_cl_alm(
-            [alm_nl[pol]],
-            lmax,
-            labels=["sim"],
+            labels=["elsner", "sim"],
             title=f"non-linear alms, pol: {pol_str(pol)}",
             ylabel=ylabel,
             **inner_kwargs,
@@ -407,7 +451,7 @@ def plot_elsner_comp(
 
         plt.sca(axes[2, pol])
         plot_cl_alm(
-            [alm_elsner_l[pol] + alm_elsner_nl[pol], alm_l[pol] + alm_nl[pol]],
+            [elsner_l[pol] + elsner_nl[pol], alm_l[pol] + alm_nl[pol]],
             lmax,
             labels=["elsner", "sim"],
             title=f"full alms, fnl: 1, pol: {pol_str(pol)}",

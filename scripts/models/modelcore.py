@@ -166,7 +166,7 @@ class ModelCore(Core):
             self.init_dataset()
 
         # setup the name for the model, can have information such as slurm id
-        self.name = name if name is not None else self.base_name
+        self.name = name if name is not None else self.name
 
         inputs = Input(self._dataset.shape)
         outputs = self._model(inputs, **kwargs)
