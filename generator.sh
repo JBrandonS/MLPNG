@@ -11,7 +11,7 @@
 SETTINGS=(
   # "n32"
   # "n64"
-  "n128"
+  # "n128"
   # "n256"
   # "n512"
   # "n1024"
@@ -26,13 +26,14 @@ SETTINGS=(
 
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
 ARGS=(
-  "--nsims" "100"
+  "--nsims" "400"
   "--no-lensing"
   "--no-noise"
   "--isotropic" 
-  "--pols" "TE"
+  "--pols" "T"
+  "--isotropic"
   "--fnl_range" "-100" "100"
-  "--narray" "100"
+  "--narray" "20"
 )
 
 # override the slurm array settings for narray, only used in data generation
@@ -45,7 +46,7 @@ SLURM_ARGS=(
   # "--partition" "dev"
   # "--time" "02:00:00"
   # "--ntasks" "1"
-  # "--cpus-per-task" "25"
+  # "--cpus-per-task" "30"
 )
 
 # Just log the overrides to the console
@@ -73,10 +74,9 @@ submit_job() {
     arr_args=()
   fi
 
-  if [ -z "$job_id" ]; then
-      # no job_id found, just run the job 
+  if [ -z "$job_id" ]; then # no job_id found, just run the job 
       job_id=$(sbatch "${arr_args[@]}" "${SLURM_ARGS[@]}" "$sbatch" "${ARGS[@]}" "$settings" | awk '{print $4}')
-  else
+  else # job_id found, run the job with a dependency on the previous job
       job_id=$(sbatch "${arr_args[@]}" "${SLURM_ARGS[@]}" --dependency=afterok:"$job_id" "$sbatch" "${ARGS[@]}" "$settings" | awk '{print $4}')
   fi
 

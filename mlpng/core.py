@@ -181,6 +181,7 @@ class Core:
         parser.add_argument("--force_ksw", action=argparse.BooleanOptionalAction)
         parser.add_argument("--double_precision", action=argparse.BooleanOptionalAction)
         parser.add_argument("--plot", action=argparse.BooleanOptionalAction)
+        parser.add_argument("--isotropic", action=argparse.BooleanOptionalAction)
 
         # this allows us to save a copy of the final settings used for the run
         # only really useful for debugging, must be provided by the CLI and not in the settings file
@@ -323,7 +324,6 @@ class Core:
         )
 
         # setup our precision types to be consistent
-        # TODO:
         # some parts of the code which interface with cython will use float64, look into
         if self._get("double_precision", False):
             self.r_dtype = np.float64
@@ -519,20 +519,16 @@ class Core:
         self.dirs = {}
         self.dirs["base"] = self._get("base_dir", "data")
         self.dirs["plot"] = join_paths(self._get("plot_dir", "plots"))
-        self.dirs["model"] = join_paths(self._get("model_dir", "models"))
         self.dirs["data"] = join_paths(self._get("data_dir", "data"))
-        self.dirs["wandb"] = join_paths(self._get("wandb_dir", "wandb"))
 
         tstr = f"_{self.slurm.array_index}" if self.slurm.array_index > 0 else ""
         self.file = os.path.join(self.dirs["data"], f"{self.name}{tstr}.hdf5")
         logger.debug("Using data file: %s", self.file)
 
-        self.dirs["mc"] = join_paths(self._get("mc_dir", "kswmc"))
-        self.mc_file = os.path.join(self.dirs["mc"], f"{self.name}.hdf5")
-        logger.debug("Using KSW MC file: %s", self.mc_file)
-
-        self.dirs["tb"] = join_paths(self._get("tb_dir", "tensorboard"))
-        logger.debug("directories %s", self.dirs)
+        if self.force_ksw:
+            self.dirs["mc"] = join_paths(self._get("mc_dir", "kswmc"))
+            self.mc_file = os.path.join(self.dirs["mc"], f"{self.name}.hdf5")
+            logger.debug("Using KSW MC file: %s", self.mc_file)
 
     def pol_idxs(self, keep_b=False, keep_te=False, pretrimmed=False):
         """
@@ -554,12 +550,12 @@ class Core:
 
         return np.array(range(start, start + num_to_take))
 
-    def get_plot_file(self, name, dir=None, extension=".png", create=True):
+    def get_plot_file(self, name, dir=None, extension=".png", create_dir=True):
         if dir is None:
-            dir = os.path.join(self.dirs["plot"], str(self.slurm.job))
+            dir = os.path.join(self.dirs["plot"], str(self.name))
 
         if not os.path.exists(dir):
-            if create:
+            if create_dir:
                 os.makedirs(dir, exist_ok=True)
             else:
                 raise ValueError(f"Directory {dir} does not exist")

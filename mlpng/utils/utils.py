@@ -44,8 +44,8 @@ def setup_logging(
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
-    # this sets the log level for all of the scripts.* loggers
-    logging.getLogger("scripts").setLevel(scripts_level)
+    # this sets the log level for all of the mlpng.* loggers
+    logging.getLogger("mlpng").setLevel(scripts_level)
 
     return logger
 

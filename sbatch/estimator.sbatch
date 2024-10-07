@@ -4,11 +4,11 @@
 #SBATCH --ntasks=64
 #SBATCH --mem-per-cpu=8G
 #SBATCH --cpus-per-task=1
-#SBATCH --output=logs/estimator/%j.log
+#SBATCH --output=data/logs/estimator/%j.log
 #SBATCH --time=1-00:00:00
 
 # create the logging dir
-mkdir -p logs/estimator
+mkdir -p data/logs/estimator
 
 module purge
 module load conda 
@@ -17,4 +17,4 @@ module load gcc/11.2.0 intel-oneapi-mkl/2022.2.1-c4efjsy fftw/3.3.10-gz7qiki ope
 eval "$(conda shell.bash hook)"
 conda activate mlpng
 
-time srun python -m scripts.estimator "$@"
+time srun python -m mlpng.estimator "$@"

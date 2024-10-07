@@ -250,7 +250,7 @@ def plot_predictions(
     # Create a scatter plot with seaborn
     plt.figure(figsize=(16, 12))
     sns.scatterplot(
-        data=df, x="True Fnl", y="Predicted Fnl", label="Estimates", alpha=0.3
+        data=df, x="True Fnl", y="Predicted Fnl", label="Estimates", alpha=0.5
     )
 
     # Truth line
@@ -407,6 +407,7 @@ def plot_elsner_comp(
             hp.read_alm(f"{elsner_dir}/alm_nl_{idx}_v3.fits", hdu=(1, 2, 3))
         )
 
+    # we should scale the elsner alms to match the simulations
     t_scale = TCMB * 1e6
     elsner_l *= t_scale
     elsner_nl *= t_scale

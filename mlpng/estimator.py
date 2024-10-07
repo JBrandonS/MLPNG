@@ -110,24 +110,21 @@ def main():
 
         fisher = ksw.compute_fisher()
     else:
-        # FIXME
         with np.errstate(divide="ignore", invalid="ignore"):
             ib = np.where(core.beam_ell != 0, 1 / core.beam_ell, 0)
-            cl = c_ells
-            icov = np.where(
-                cl + ib * core.noise_ell * ib != 0,
-                1 / (cl + ib * core.noise_ell * ib),
-                0,
-            )
-            icov = icov[core.pol_idxs()]
+            dom = c_ells + ib * core.noise_ell * ib
+            icov = np.where(dom != 0, 1 / dom, 0)[core.pol_idxs()]
+
         fisher = ksw.compute_fisher_isotropic(icov)
     print(f"Fisher: {fisher}, standard deviation: {1 / np.sqrt(fisher)}")
 
-    # FIXME: we need to compute the inverse covariance matrix, support non-iso
-    icov_ell = np.zeros_like(c_ells)
-    icov_ell = np.where(
-        c_ells != 0, 1 / (core.beam_ell**2 * c_ells + core.noise_ell), 0
-    )
+    if not core.use_te:
+        cov_ell = core.beam_ell**2 * c_ells + core.noise_ell
+        print(f"cov_ell: {cov_ell.shape}")
+        icov_ell = np.zeros_like(cov_ell)
+        icov_ell = 1 / cov_ell[:, core.lmin :]
+    else:
+        raise NotImplementedError("TE not supported yet")
 
     # Finally we can get our estimates
     pol_idxs = core.pol_idxs(pretrimmed=True)
@@ -145,19 +142,19 @@ def main():
         logger.info("Saving data")
 
         fnls = np.array(data["fnl"][:])
-        data.close()
+        plot_predictions(
+            fnls, estimates, fisher=fisher, save_file=core.get_plot_file("preds")
+        )
+        plot_histogram(fnls, estimates, save_file=core.get_plot_file("hist"))
 
         # save the data, this will append to the alm_file
         sdata = {}
         sdata["fisher"] = fisher
         sdata["estimate"] = estimates
         sdata["error"] = (estimates - fnls) * np.sqrt(fisher)
-        save_data(core.file, sdata, mode="a")
+        data.close()
 
-        plot_predictions(
-            fnls, estimates, fisher=fisher, save_file=core.get_plot_file("preds")
-        )
-        plot_histogram(fnls, estimates, save_file=core.get_plot_file("hist"))
+        save_data(core.file, sdata, mode="a")
 
     logger.info("Finished %s!", mpi_rank)
 

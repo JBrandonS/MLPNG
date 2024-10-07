@@ -5,7 +5,7 @@
 #SBATCH --mem=2000G
 #SBATCH --cpus-per-task=128
 #SBATCH --gpus-per-task=8
-#SBATCH --output=logs/tuning/%j.log
+#SBATCH --output=data/logs/tuning/%j.log
 #SBATCH --time=2-00:00:00
 #SBATCH --exclusive
 
@@ -15,7 +15,7 @@
 # note that keras tunes saves often so this is not a huge issue, but it is annoying
 
 # create the logging dir
-mkdir -p logs/tuning
+mkdir -p data/logs/tuning
 
 # copy the file to a runs dir so we can have many going at once
 # this is needed if you are running multiple tuning jobs at once
@@ -30,7 +30,7 @@ eval "$(conda shell.bash hook)"
 conda activate mlpng-gpu 
 
 i=0
-command="srun python -m scripts.tuner $*"
+command="srun python -m mlpng.tuner $*"
 echo "Running command: $command"
 while [ $i -lt 30 ]; do
     if eval "$command"; then
