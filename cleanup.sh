@@ -89,7 +89,7 @@ if [[ ! $(squeue --me -h -n jupyter-dev) && -f .jupyter-dev.out ]]; then
 fi
 
 # logs
-rm -rvf logs/*
+rm -rvf data/logs/*
 
 if [[ "$remove_plots" == true ]]; then
     rm -rvf data/plots/*
