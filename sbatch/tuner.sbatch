@@ -8,6 +8,7 @@
 #SBATCH --output=data/logs/tuning/%j.log
 #SBATCH --time=2-00:00:00
 #SBATCH --exclusive
+#SBATCH --account=jrmeyers_ml_cmb_0001 
 
 # keras tuner / possibly cuda, has a bug that means memory is not cleaned correctly and you get OOM
 # this script therefore will loop through and retry the job until it completes successfully
