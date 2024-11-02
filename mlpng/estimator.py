@@ -2,15 +2,12 @@ import sys
 import logging
 import os
 import healpy as hp
-import camb
 
 import h5py
 import numpy as np
 from mpi4py import MPI
 
-from ksw import KSW, Shape, Cosmology
-
-from . import Core
+from . import Core, get_itotcov_ell
 from .generator import generate_alm
 from .utils import save_data, setup_logging
 from .utils.plots import plot_histogram, plot_predictions
@@ -31,9 +28,9 @@ else:
 def icov_func(icov, alm):
     ret = np.zeros_like(alm)
     for pol in range(ret.shape[0]):
-        ret[pol] = hp.almxfl(alm[pol], icov[pol])
+        ic = icov[pol, pol] if icov.ndim == 3 else icov[pol]
+        ret[pol] = hp.almxfl(alm[pol], ic)
     return ret
-
 
 def main():
     core = Core()
@@ -58,41 +55,20 @@ def main():
     # early loading to fail fast if the file does not exist
     data = h5py.File(core.file, "r", swmr=True, locking=False)
 
-    # setup our cosmology and compute the c_ells
-    camb_params = camb.set_params(**core.cosmo_params, verbose=False)
-    cosmo = Cosmology(camb_params)
-    cosmo.compute_transfer(core.lmax)
-    cosmo.compute_c_ell()
-
-    if core.lensing:
-        c_ells = cosmo.c_ell["lensed_scalar"]["c_ell"].T
-    else:
-        c_ells = cosmo.c_ell["unlensed_scalar"]["c_ell"].T
-
-    loc_shape = Shape.prim_local(
-        core.cosmo_params["ns"], core.cosmo_params["pivot_scalar"]
-    )
-    cosmo.add_prim_reduced_bispectrum(loc_shape, core.radii)
-
-    ksw = KSW(
-        cosmo.red_bispectra,
-        lambda a: a,  # we will send the alms directly
-        core.lmax,
-        core.pols,
-        core.precision,
-    )
+    core.init_estimator()
 
     # The default theta_batch size is 25, which is really small, we want to increase it
     theta_batch = int(np.floor(1.5 * core.lmax + 1)) // mpi_size
     logger.debug("Using theta_batch %s", theta_batch)
 
     # since we are only doing full sky right now, we do not need to use MC methods
+    # TODO, check mc methods
     if core.force_ksw:
         if os.path.exists(core.mc_file):
             logger.info("Loading KSW state from %s", core.mc_file)
-            ksw.start_from_read_state(core.mc_file)
+            core.estimator.start_from_read_state(core.mc_file, comm=mpi_comm)
         else:
-            alm_steps = generate_alm(core, 100)
+            alm_steps = generate_alm(core, nsims=core.mc_steps)
             logger.debug("Done")
 
             def step_loader(idx):
@@ -101,36 +77,44 @@ def main():
                 return alm_steps[idx, : core.npols]
 
             logger.info("Running KSW step, num steps: %s", 100)
-            ksw.step_batch(step_loader, range(100), theta_batch=theta_batch)
+            core.estimator.step_batch(
+                step_loader,
+                range(core.mc_steps),
+                mpi_comm,
+                theta_batch=theta_batch,
+            )
 
             # save the mc state if we are using the mc file
-            if True:
-                logger.info("Saving KSW state to %s", core.mc_file)
-                ksw.write_state(core.mc_file)
+            logger.info("Saving KSW state to %s", core.mc_file)
+            core.estimator.write_state(core.mc_file, comm=mpi_comm)
 
-        fisher = ksw.compute_fisher()
+        fisher = core.estimator.compute_fisher()
     else:
-        with np.errstate(divide="ignore", invalid="ignore"):
-            ib = np.where(core.beam_ell != 0, 1 / core.beam_ell, 0)
-            dom = c_ells + ib * core.noise_ell * ib
-            icov = np.where(dom != 0, 1 / dom, 0)[core.pol_idxs()]
+        ic_ell = np.zeros_like(core.c_ell)
+        ic_ell[..., core.lmin :] = 1 / core.c_ell[..., core.lmin :]
 
-        fisher = ksw.compute_fisher_isotropic(icov)
-    print(f"Fisher: {fisher}, standard deviation: {1 / np.sqrt(fisher)}")
+        inoise = np.full(core.n_ell.shape, 1e-16)
+        inoise[..., core.lmin :] = 1 / core.n_ell[..., core.lmin :]
 
-    if not core.use_te:
-        cov_ell = core.beam_ell**2 * c_ells + core.noise_ell
-        print(f"cov_ell: {cov_ell.shape}")
-        icov_ell = np.zeros_like(cov_ell)
-        icov_ell = 1 / cov_ell[:, core.lmin :]
-    else:
-        raise NotImplementedError("TE not supported yet")
+        icov = get_itotcov_ell(ic_ell, inoise, core.b_ell)
+
+        logger.debug("Computing Fisher")
+        fisher = core.estimator.compute_fisher_isotropic(icov, comm=mpi_comm)
+    logger.info("Fisher: %s, standard deviation: %s", fisher, 1 / np.sqrt(fisher))
 
     # Finally we can get our estimates
     pol_idxs = core.pol_idxs(pretrimmed=True)
     alms = data["alm_lensed"] if core.lensing else data["alm"]  # not in memory yet
-    estimates, _, _, _ = ksw.compute_estimate_batch(
-        lambda idx: icov_func(icov_ell, alms[idx, pol_idxs]),
+
+    # look into changing this but its working
+    cov = core.c_ell + core.n_ell / core.b_ell**2
+    icov = np.zeros_like(core.s_ell)
+    icov[..., core.lmin :] = 1 / cov[..., core.lmin :]
+    icov[..., : core.lmin] = 0
+    icov *= core.b_ell**2 # maybe could do this is cov to save some time
+
+    estimates, _, _, _ = core.estimator.compute_estimate_batch(
+        lambda idx: icov_func(icov, alms[idx, pol_idxs]),
         range(core.num_estimates),
         comm=mpi_comm,
         fisher=fisher,
@@ -152,8 +136,8 @@ def main():
         sdata["fisher"] = fisher
         sdata["estimate"] = estimates
         sdata["error"] = (estimates - fnls) * np.sqrt(fisher)
-        data.close()
 
+        data.close()
         save_data(core.file, sdata, mode="a")
 
     logger.info("Finished %s!", mpi_rank)

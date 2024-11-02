@@ -11,7 +11,7 @@
 SETTINGS=(
   # "n32"
   # "n64"
-  # "n128"
+  "n128"
   # "n256"
   # "n512"
   # "n1024"
@@ -20,20 +20,20 @@ SETTINGS=(
   # "n2048"
   # "n4096"
   
-  "elsner"
+  # "elsner"
   # "planck"
 )
 
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
 ARGS=(
-  "--nsims" "400"
-  "--no-lensing"
-  "--no-noise"
-  "--isotropic" 
+  "--nsims" "100"
+  # "--no-lensing"
+  # "--no-noise"
+  # "--isotropic" 
   "--pols" "T"
-  "--isotropic"
+  # "--isotropic"
   "--fnl_range" "-100" "100"
-  "--narray" "20"
+  "--narray" "10"
 )
 
 # override the slurm array settings for narray, only used in data generation
@@ -46,7 +46,7 @@ SLURM_ARGS=(
   # "--partition" "dev"
   # "--time" "02:00:00"
   # "--ntasks" "1"
-  # "--cpus-per-task" "30"
+  # "--cpus-per-task" "10"
 )
 
 # Just log the overrides to the console
@@ -91,7 +91,7 @@ for x in "${SETTINGS[@]}"; do
     settings="settings/$x.json"
 
     # comment out if you want to run all settings files as dependent on the previous
-    # job_id=""
+    job_id=""
 
     # Submit the generator job
     job_id=$(submit_job "$job_id" "sbatch/generator.sbatch" "$settings" "true")

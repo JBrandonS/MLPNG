@@ -1,12 +1,14 @@
+"""..."""
+
 import logging
 import os
 import sys
+import psutil  # Add this import
 
-import camb
 import healpy as hp
 import numpy as np
 from joblib import Parallel, delayed
-from scipy.interpolate import CubicSpline, interp1d
+from scipy.interpolate import interp1d
 from tqdm.auto import trange
 
 import matplotlib.pyplot as plt
@@ -15,11 +17,10 @@ import lenspyx
 from lenspyx import utils_hp
 from pixell import curvedsky, enmap, reproject
 
-from ksw import Cosmology
 from ksw.radial_functional import radial_func
 
 from . import Core
-from .utils import remove_mono_dipole, save_data, setup_logging
+from .utils import save_data, setup_logging, remove_mono_dipole
 from .utils.plots import (
     plot_cl_alm,
     plot_patches,
@@ -30,35 +31,52 @@ from .utils.plots import (
 
 logger = setup_logging("generator", level=logging.DEBUG)
 
+def log_memory_usage():
+    """Logs the current memory usage."""
+    process = psutil.Process(os.getpid())
+    mem_info = process.memory_info()
+    logger.debug(
+        f"Memory usage: RSS={mem_info.rss / (1024 ** 2):.2f} MB, VMS={mem_info.vms / (1024 ** 2):.2f} MB"
+    )
 
-def interpolator(func, ells_sparse, axis=1, cubic=True, **kwargs):
+def interpolator(func, ells_sparse, axis=1, kind="cubic", fill_value="extrapolate"):
     """
-    Interpolates a function using either cubic spline or interp1d (linear) interpolation.
+    Interpolates a given function over specified sparse points using a specified method.
 
     Parameters:
-        func (array_like): The function values to be interpolated.
-        ells_sparse (array_like): The sparse grid points.
-        axis (int, optional): The axis along which to interpolate. Default is 1.
-        cubic (bool, optional): If True, cubic spline interpolation is used. If False, linear interpolation is used. Default is True.
-        kwargs: Additional keyword arguments to be passed to the interpolating function.
+    func : array-like
+        The function values to interpolate.
+    ells_sparse : array-like
+        The sparse points at which the function values are known.
+    axis : int, optional
+        The axis along which to interpolate. Default is 1.
+    kind : str, optional
+        Specifies the kind of interpolation as a string. Default is 'cubic'.
+        Options include 'linear', 'nearest', 'zero', 'slinear', 'quadratic', 'cubic', etc.
+    fill_value : str or float, optional
+        Specifies the value to use for points outside the interpolation range.
+        Default is 'extrapolate'.
+    **kwargs : additional keyword arguments
+        Additional arguments to pass to the interpolation function.
 
     Returns:
-        object: An interpolating function.
+    scipy.interpolate.interp1d
+        An interpolation function that can be called with new points to obtain interpolated values.
     """
 
-    if cubic:
-        return CubicSpline(ells_sparse, func, axis, **kwargs)
-    else:
-        return interp1d(ells_sparse, func, axis=axis, **kwargs)
+    return interp1d(
+        ells_sparse, func, kind, axis, bounds_error=False, fill_value=fill_value
+    )
 
 
-def generate_alm(core, c_ells, nsims=None):
+def generate_alm(core, nsims=None, cls=None):
     """
     generates the gaussian alms using the given core.
 
     Parameters:
         core: The core object containing necessary parameters and data.
         nsims: The number of simulations to generate. If not provided will use the core's nsims.
+        cls: The cls to use for the generation. If not provided will use the core's s_ell.
 
     Returns:
         sims: The generated alms. in TT, EE, BB, TE order.
@@ -66,11 +84,17 @@ def generate_alm(core, c_ells, nsims=None):
     if nsims is None:
         nsims = core.nsims
 
-    sims = [hp.synalm(c_ells, lmax=core.lmax, new=True) for _ in range(nsims)]
+    if cls is None:
+        if core.noise:
+            cls = core.b_ell**2 * core.c_ell + core.n_ell
+        else:
+            cls = core.c_ell.copy()
+
+    sims = [hp.synalm(cls, lmax=core.lmax, new=True) for _ in range(nsims)]
     return np.ascontiguousarray(sims)[:, core.pol_idxs()]
 
 
-def integrand(alm, alpha_l, bl_div_cl, lmax, nside):
+def integrand(alm, alpha_l, bl_div_cl, lmax, nside, upscale=False):
     """
     Calculates the Outer integral of Hansen 2010 eq 27. That is:
 
@@ -80,17 +104,27 @@ def integrand(alm, alpha_l, bl_div_cl, lmax, nside):
         alm (ndarray): The input spherical harmonic coefficients.
         alpha_l (ndarray): The alpha_l coefficients.
         bl_div_cl (ndarray): The division of beta_ell function and C_l.
+        lmax (int): The maximum l value.
+        nside (int): The nside value.
+        upscale (bool, optional): If True, the nside will be increased by 1 increment to improve calculations.
 
     Returns:
         ndarray: The calculated integrand.
     """
-    npols = alm.shape[0]
+    if upscale:
+        if nside >= 4096:
+            raise ValueError(f"Nside {nside} is too large for upscaling")
 
+        # valid nsides for use_pixel_weights
+        nsides = np.array([32, 64, 128, 256, 512, 1024, 2048, 4096])
+        nside = nsides[nsides > nside][0]
+
+    npols = alm.shape[0]
     Balm = [hp.almxfl(alm[p], bl_div_cl[..., p]) for p in range(npols)]
-    B = hp.alm2map(Balm, nside, lmax, pol=False)
+    B = hp.alm2map(Balm, nside, pol=False)
     inner = hp.map2alm(B**2, lmax, use_pixel_weights=True, pol=False)
     inner = np.array(inner, ndmin=2)
-    return np.array([hp.almxfl(inner[p], alpha_l[:, p]) for p in range(npols)])
+    return np.array([hp.almxfl(inner[p], alpha_l[..., p]) for p in range(npols)])
 
 
 def trap_generator(generator, radii):
@@ -114,8 +148,7 @@ def trap_generator(generator, radii):
 
     return integral
 
-
-def generate_alm_ng(core, cosmo, alms, c_ells):
+def generate_alm_ng(core, alms):
     """
     This function calculates the non-gaussian alms using the given core and the gaussian alms.
 
@@ -128,37 +161,34 @@ def generate_alm_ng(core, cosmo, alms, c_ells):
     """
 
     # get the transfer functions with tr_ell_k being \Delta_\ell(k)
-    tr_ells = cosmo.transfer["ells"]
-    tr_k = cosmo.transfer["k"]
-    tr_ell_k = cosmo.transfer["tr_ell_k"][..., core.pol_idxs()]  # this is T, E, PHI
+    tr_ells = core.cosmo.transfer["ells"]
+    tr_k = core.cosmo.transfer["k"]
+    # this is T, E, PHI
+    tr_ell_k = core.cosmo.transfer["tr_ell_k"][..., core.pol_idxs()]
 
     # this will be the f(k) value to be placed in the radial function
     # first will be for alpha_ell, second will be beta_ell
     # see komatsu 2003 eq 5 and 6
     f_k = np.ones((len(tr_k), 2), dtype=core.r_dtype)
+    Pk = core.cosmo.camb_params.primordial_power(tr_k, 0)
+    f_k[:, 1] = 2 * np.pi**2 * Pk / (tr_k) ** (3)
 
-    # for beta, get the Pk from camb and convert from the dimensionless Pk from camb to the dimensionful
-    Pk = cosmo.camb_params.primordial_power(tr_k, 0)
-    # we do not need the tr_k**(ns - 1) term as it is accounted for in the Pk
-    f_k[:, 1] = 2 * np.pi**2 * tr_k ** (-3) * Pk
-
-    # this computes \frac{2}{\pi} \int_0^\infty dk k^2 f_k tr_ell_k j_\ell(k r)
     rad = radial_func(f_k, tr_ell_k, tr_k, core.radii, tr_ells)
 
     alpha_ell = rad[..., 0]
     alpha_l = interpolator(alpha_ell, tr_ells)(core.ells)
-    alpha_l[:, : core.lmin] = 0.0  # remove the monopole and dipole terms
 
     beta_ell = rad[..., 1]
     beta_l = interpolator(beta_ell, tr_ells)(core.ells)
 
-    # next 3 lines prevent a division by zero due to the monopole and dipole terms being 0
+    # C_l here is the C_l = b_l^2 * C_l^T + N_l, see Komatsu 2005
+    icov = np.zeros_like(core.s_ell)
+    s_ell = core.c_ell + core.n_ell / core.b_ell**2
+    icov[..., core.lmin :] = 1 / s_ell[..., core.lmin :]
     bl_div_cl = np.zeros_like(beta_l)
-    bl_div_cl[:, core.lmin :] = (
-        beta_l[:, core.lmin :] / c_ells.T[None, core.lmin :, : core.npols]
-    )
+    bl_div_cl[:, core.lmin :] = beta_l[:, core.lmin :] * icov.T[None, core.lmin :]
 
-    # ensure all arrays are contiguous, they wont be since we are using the interpolator
+    # ensure all arrays are c contiguous, they wont be since we are using the interpolator which returns f contiguous
     alpha_l = np.ascontiguousarray(alpha_l)
     bl_div_cl = np.ascontiguousarray(bl_div_cl)
 
@@ -167,7 +197,7 @@ def generate_alm_ng(core, cosmo, alms, c_ells):
     # if the data files are larger than the available memory, it will error
     # so we give it a temp folder to use, which wont have that problem
     temp_folder = os.environ.get("SCRATCH", None)
-    logger.debug(f"Using temp folder for Alm_ng generation: {temp_folder}")
+    logger.debug("Using temp folder for Alm_ng generation: %s", temp_folder)
     parallel = Parallel(core.n_cpus, return_as="generator", temp_folder=temp_folder)
     alm_ng = np.zeros_like(alms)
 
@@ -189,71 +219,115 @@ def generate_alm_ng(core, cosmo, alms, c_ells):
 
     return alm_ng
 
-def make_alm_plots(core, alm_l, alm_ng, alms, c_ells):
+
+def make_alm_plots(core, alm_l, alm_ng, alms):
+    """
+    Generate and save various alm plots for comparison and testing.
+
+    Parameters:
+        core (object): Core object containing necessary methods and attributes for plotting.
+        alm_l (array): Array of linear alm values.
+        alm_ng (array): Array of non-Gaussian alm values.
+        alms (array): Array of full alm values.
+    """
     logger.debug("Generating alm plots")
     sim = core.rng.integers(core.nsims)  # get random sim idx
 
     # plot a few comparison with different functions to get views
     idx = core.rng.integers(1, 1001)
     plot_elsner_comp(
+        core,
         alm_l[sim],
         alm_ng[sim],
         index=idx,
         save_file=core.get_plot_file("ecomp"),
         plot_func=plt.plot,
+        elsner_pols=core.pol_idxs(),
     )
     plot_elsner_comp(
+        core,
         alm_l[sim],
         alm_ng[sim],
         index=idx,
         save_file=core.get_plot_file("ecomp_log"),
         plot_func=plt.loglog,
+        elsner_pols=core.pol_idxs(),
     )
     plot_elsner_comp(
+        core,
         alm_l[sim],
         alm_ng[sim],
         index=idx,
         save_file=core.get_plot_file("ecomp_semilogy"),
         plot_func=plt.semilogy,
+        elsner_pols=core.pol_idxs(),
     )
 
     # lets plot the alms with camb for testing that side of things
     cl_settings = {
         "plot_camb": True,
-        "camb_cls": c_ells,
         "plot_noise": False,
         "plot_full_camb": True,
-        "camb_noise": core.noise_ell,
-        "camb_beam": core.beam_ell,
     }
     # full alms
     plot_cl_alm(
+        core,
         alms[sim],
         save_file=core.get_plot_file(f"{sim}_alm"),
         ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}",
         **cl_settings,
     )
     plot_cl_alm(
+        core,
         alm_l[sim],
         save_file=core.get_plot_file(f"{sim}_alm_l"),
         ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}^{L}$",
         **cl_settings,
     )
     plot_cl_alm(
+        core,
         alm_ng[sim],
         save_file=core.get_plot_file(f"{sim}_alm_ng"),
         ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}^{NG}$",
-        **cl_settings,
     )
+    log_memory_usage()  # Log memory usage
 
-def patch_and_lens(core, cosmo, alms):
+
+def patch_and_lens(core, alms):
+    """
+    Generate patches and optionally lens the input alms.
+    Parameters:
+        core (object): Core configuration object containing various parameters.
+            - patch_side_deg (float): Side length of the patch in degrees.
+            - nside (int): Number of sides for the patch.
+            - npols (int): Number of polarization states.
+            - use_e (bool): Flag to indicate if E modes are used.
+            - lensing (bool): Flag to indicate if lensing is applied.
+            - nsims (int): Number of simulations.
+            - nelem (int): Number of elements.
+            - lmax (int): Maximum multipole moment.
+            - cosmo (object): Cosmology object with lensing potential data.
+            - nell (int): Number of ell values.
+            - r_dtype (dtype): Data type for real numbers.
+            - c_dtype (dtype): Data type for complex numbers.
+            - n_cpus (int): Number of CPUs to use.
+            - plot (bool): Flag to indicate if plots should be generated.
+            - slurm (object): Slurm object for job management.
+            - rng (object): Random number generator.
+        alms (ndarray): Input alms array.
+    Returns:
+        tuple: A tuple containing:
+            - patches (ndarray): Generated patches.
+            - alm_lensed (ndarray or None): Lensed alms if lensing is applied, otherwise None.
+    """
+
     logger.debug("Generating patch geometry")
     ps_rad = np.deg2rad(core.patch_side_deg)
     res = ps_rad / core.nside
 
     fs_shape, fs_wcs = enmap.fullsky_geometry(res, proj="car")
     # need to add a B mode dim if we are using E modes, this is used for some lensing
-    full_pol = core.npols + (1 if core.use_e else 0)
+    full_pol = core.npols + (1 if core.use_e and core.lensing else 0)
     fs_shape = (full_pol,) + fs_shape
     fs_map = enmap.zeros(fs_shape, fs_wcs)
 
@@ -276,17 +350,17 @@ def patch_and_lens(core, cosmo, alms):
 
     # make a copy of the alms for the lensing since they will modify them
     maps = alms.copy()
-    if not core.use_t:
-        maps = np.concatenate((np.zeros((core.nsims, 1, core.nelem)), maps), axis=1)
-    if core.use_e:
-        # need to add a zero for the spin-2 component
-        maps = np.concatenate((maps, np.zeros((core.nsims, 1, core.nelem))), axis=1)
 
     # now lets do the actual lensing and patching
     if core.lensing:
         logger.debug("Getting lensing cl_phi and data")
+        if not core.use_t:
+            maps = np.concatenate((np.zeros((core.nsims, 1, core.nelem)), maps), axis=1)
+        if core.use_e:
+            # need to add a zero for the spin-2 component
+            maps = np.concatenate((maps, np.zeros((core.nsims, 1, core.nelem))), axis=1)
         # PP PT PE
-        cl_phi = cosmo._camb_data.get_lens_potential_cls(core.lmax, "muK", True)
+        cl_phi = core.cosmo._camb_data.get_lens_potential_cls(core.lmax, "muK", True)
         plm = utils_hp.synalm(cl_phi[:, 0], core.lmax, mmax=None)
 
         # transform the lensing potential into spin-1 deflection field
@@ -329,15 +403,15 @@ def patch_and_lens(core, cosmo, alms):
                 spin=np.array([0, 2])[core.pol_idxs()],
             )
             for i in range(core.npatches):
-                patches[sim, i] = pixell_map.project(shapes[i], wcss[i])
+                patches[sim, i] = pixell_map.project(shapes[i], wcss[i])  # type: ignore
 
             if core.plot and core.slurm.is_main:
                 sim = core.rng.integers(core.nsims)
-                map = lenspyx.alm2lenmap(
+                lenmap = lenspyx.alm2lenmap(
                     alms[sim], dlm, geom_info, nthreads=core.n_cpus
                 )
                 plot_mollview(
-                    map,
+                    lenmap,
                     f"Lensed view for {sim}",
                     save_file=core.get_plot_file(f"{sim}-moll"),
                 )
@@ -358,13 +432,13 @@ def patch_and_lens(core, cosmo, alms):
             )
 
             for i in range(core.npatches):
-                patches[sim, i] = car_map.project(shapes[i], wcss[i])[: core.npols]
+                patches[sim, i] = car_map.project(shapes[i], wcss[i])[: core.npols]  # type: ignore
 
         # lets make a few plots of patches and mollview
         if core.plot and core.slurm.is_main:
             sim = core.rng.integers(core.nsims)
 
-            map = curvedsky.alm2map_healpix(
+            lenmap = curvedsky.alm2map_healpix(
                 alms[sim],
                 nside=core.nside,
                 spin=np.array([0, 0])[core.pol_idxs()],
@@ -372,7 +446,7 @@ def patch_and_lens(core, cosmo, alms):
                 nthread=core.n_cpus,
             )
             plot_mollview(
-                map,
+                lenmap,
                 f"Unlensed view for {sim}",
                 save_file=core.get_plot_file(f"{sim}-moll"),
             )
@@ -381,13 +455,14 @@ def patch_and_lens(core, cosmo, alms):
     if core.plot and core.slurm.is_main:
         sim = core.rng.integers(core.nsims)
         for pol in range(core.npols):
-            pstr = pol_str(pol)
+            pstr = pol_str(core.pol_idxs()[pol])
             plot_patches(
                 patches[sim, :, pol],
                 title=f"Patches for sim: {sim}, pol: {pstr}",
                 save_file=core.get_plot_file(f"{sim}{pstr}-patch.png"),
             )
 
+    log_memory_usage()  # Log memory usage
     return patches, alm_lensed
 
 
@@ -426,37 +501,29 @@ def main():
 
     logger.info("Starting data generation")
 
-    # setup our cosmology and compute the c_ells
-    # this is not pulled into the core due to the nvidia server not liking KSW
-    cosmo = Cosmology(camb.set_params(**core.cosmo_params, verbose=False))
-    cosmo.compute_transfer(core.lmax)
-    cosmo.compute_c_ell()
+    core.init_estimator()
 
-    if core.lensing:
-        c_ells = cosmo.c_ell["lensed_scalar"]["c_ell"].T
-    else:
-        c_ells = cosmo.c_ell["unlensed_scalar"]["c_ell"].T
-
-    alm_l = generate_alm(core, c_ells)
+    alm_l = generate_alm(core)
 
     # get the non-gaussian alms, this will take a long time
     logger.debug("Starting non-gaussian Alm generation")
-    alm_ng = generate_alm_ng(core, cosmo, alm_l, c_ells)
+    alm_ng = generate_alm_ng(core, alm_l)
 
     # generate the fnls
     fnls = core.rng.uniform(core.fnl_min, core.fnl_max, (core.nsims,))
 
     # finally combine into the full alms and remove the monopole and dipole terms
     alms = alm_l + fnls[:, None, None] * alm_ng
-    alms = remove_mono_dipole(alms)  # dont think this is needed, but safety
+    alms = remove_mono_dipole(alms, inplace=True)  # safety
+
     logger.info("Completed Alm generation!")
 
     if core.plot and core.slurm.is_main:
         # lets make a few plots for the alms
-        make_alm_plots(core, alm_l, alm_ng, alms, c_ells)
+        make_alm_plots(core, alm_l, alm_ng, alms)
 
     logger.info("Starting lensing and patch generation")
-    patches, alm_lensed = patch_and_lens(core, cosmo, alms)
+    patches, alm_lensed = patch_and_lens(core, alms)
 
     logger.info("Saving data")
     sdata = {}
@@ -468,6 +535,7 @@ def main():
     save_data(core.file, sdata, remove_if_exists=True)
 
     logger.info("Finished %s!", core.slurm.job)
+    log_memory_usage()  # Log memory usage
 
 
 if __name__ == "__main__":

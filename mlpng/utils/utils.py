@@ -41,14 +41,11 @@ def setup_logging(
         handlers=handlers,
     )
 
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
-
-    # this sets the log level for all of the mlpng.* loggers
     logging.getLogger("mlpng").setLevel(scripts_level)
 
-    return logger
-
+    log = logging.getLogger(name)
+    log.setLevel(level)
+    return log
 
 def save_data(file_path, data_dict, mode="x", remove_if_exists=False):
     """
@@ -88,8 +85,8 @@ def save_data(file_path, data_dict, mode="x", remove_if_exists=False):
                 if key in hf:
                     logger.debug("%s: Appending to existing", key)
                     # Resize the dataset to accommodate the new data
-                    hf[key].resize(
-                        (hf[key].shape[0] + value.shape[0],) + value.shape[1:]
+                    hf[key].resize(  # type: ignore
+                        (hf[key].shape[0] + value.shape[0],) + value.shape[1:]  # type: ignore
                     )  # type: ignore
                     # Append the new data
                     hf[key][-value.shape[0] :] = value  # type: ignore
@@ -156,7 +153,7 @@ def get_fisher(file):
             fisher = float(hdf.get("fisher", [None])[0])  # type: ignore
             logger.info("Loaded fisher matrix: %s", fisher)
     except Exception as e:
-        logger.error(f"Could not load fisher matrix: {e}")
+        logger.error("Could not load fisher matrix: %s", e)
         fisher = None
 
     return fisher

@@ -11,11 +11,6 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-def cosmo_defaults():
-    """Some default settings that are required by KSW / camb."""
-    return {"As": 2.13e-09, "ns": 0.9624, "pivot_scalar": 0.05}
-
-
 class Core:
     """
     The `Core` class represents the core functionality of the MLPNG (Machine Learning for Primordial Non-Gaussianity) project.
@@ -65,6 +60,7 @@ class Core:
     nsims: int
     narray: int
     total_sims: int
+    """Total simulations for the complete experiment."""
     fnl_min: float
     fnl_max: float
     nell: int
@@ -75,6 +71,12 @@ class Core:
     precision: str
     file: str
     radii: np.ndarray
+    c_ell: np.ndarray
+    n_ell: np.ndarray
+    b_ell: np.ndarray
+    s_ell: np.ndarray
+    # cosmo: Any
+    # estimator: Any
 
     def __init__(self, argv=None):
         """
@@ -92,15 +94,15 @@ class Core:
         # From there we store the settings in the settings dict attribute
         # We then override the settings with the command line arguments
         # We then set the cosmological parameters to the defaults and override them with the settings
-        logger.info("Loading settings from file %s", args.settings_file)
-        with open(args.settings_file, "r") as f:
+        logger.info("Loading settings from file '%s'", args.settings_file)
+        with open(args.settings_file, "r", encoding="utf-8") as f:
             settings = self.settings = json.load(f)
 
         # replace the settings with the command line arguments
         for key, value in vars(args).items():
             # we do not want to save the settings_file or save_settings options, so ignore those
             if value is not None and key not in ["settings_file", "save_settings"]:
-                logger.debug(f"Forcing setting '{key}' to '{value}' due to CLI")
+                logger.debug("Forcing setting '%s' to %s due to CLI", key, value)
                 settings[key] = value
 
         # set the cosmological parameters defaults, and update based on cosmo_params
@@ -113,15 +115,19 @@ class Core:
         # This just logs any changes to the defaults, but only if in debug mode
         # Not really needed, but good logs can be helpful
         if logger.isEnabledFor(logging.DEBUG):
-            defaults = cosmo_defaults()
-            for key in defaults.keys():
-                if key in cosmo_params and defaults[key] != cosmo_params[key]:
-                    logger.debug(
-                        "Overriding cosmo param %s from %s to %s",
-                        key,
-                        defaults[key],
-                        cosmo_params[key],
-                    )
+            overridden_params = {
+                key: (value, cosmo_params[key])
+                for key, value in cosmo_defaults().items()
+                if key in cosmo_params and value != cosmo_params[key]
+            }
+
+            for key, (default_value, overridden_value) in overridden_params.items():
+                logger.debug(
+                    "Overriding cosmo param '%s' from %s to %s",
+                    key,
+                    default_value,
+                    overridden_value,
+                )
 
         logger.info("Running with settings: \n%s", json.dumps(settings, indent=2))
 
@@ -134,16 +140,16 @@ class Core:
 
         # save a copy of the settings file iff --save-settings is set
         if args.save_settings:
-            dir = os.path.join(self.dirs["base"], "settings")
-            file = os.path.join(dir, f"{self.slurm.job}_{self.name}.json")
-            os.makedirs(dir, exist_ok=True)
+            base_dir = os.path.join(self.dirs["base"], "settings")
+            file = os.path.join(base_dir, f"{self.slurm.job}_{self.name}.json")
+            os.makedirs(base_dir, exist_ok=True)
 
             if not os.path.exists(file):
-                logger.info("Saving run settings to file: %s", file)
-                with open(file, "w") as f:
+                logger.info("Saving run settings to file: '%s'", file)
+                with open(file, "w", encoding="utf-8") as f:
                     json.dump(self.settings, f, indent=2)
             else:
-                logger.warning("Settings already exists: %s, not overwriting", file)
+                logger.warning("Settings already exists: '%s', not overwriting", file)
 
     def parse_args(self, args=None):
         """
@@ -190,7 +196,7 @@ class Core:
         if args is None:
             args = sys.argv[1:]
 
-        logger.info(f"Parsing CLI args: {args}")
+        logger.info("Parsing CLI args: %s", args)
         pargs, _ = parser.parse_known_args(args)
         return pargs
 
@@ -212,15 +218,17 @@ class Core:
                 "Setting '%s' not found, using default: %s", name, repr(default)
             )
             return default
+
+        if val != default:
+            logger.debug(
+                "Found non-default value for '%s': %s (default: %s)",
+                name,
+                repr(val),
+                repr(default),
+            )
         else:
-            if val != default:
-                logger.debug(
-                    "Found non-default value for '%s': %s (default: %s)",
-                    name,
-                    repr(val),
-                    repr(default),
-                )
-            return val
+            logger.debug("Found default value for '%s': %s", name, repr(val))
+        return val
 
     def _init(self):
         """
@@ -293,10 +301,10 @@ class Core:
                 "lmax = %s, lmax < 300 not supported. Setting lmax to 300", self.lmax
             )
             self.lmax = 300
-        self.cosmo_params["lmax"] = self.lmax
+        self.cosmo_params["lmax"] = self.lmax  # + self._get("lmax_buffer", 128)
 
         # setup the fnl values
-        self.fnl_min, self.fnl_max = self._get("fnl_range", (-1000, 1000))
+        self.fnl_min, self.fnl_max = self._get("fnl_range", (-100, 100))
 
         # setup the polarization which should support --pols [T|E|TE]
         pols = self._get("pols", "T")
@@ -307,7 +315,7 @@ class Core:
         # we do not want to support B mode since it is so small, so lets remove anything with B in it.
         self.pols = tuple(c for p in pols for c in p if p != "B")
         self.npols = len(self.pols)
-        self.isotropic = self._get("isotropic", False)
+        self.isotropic = self._get("isotropic", True)
 
         self.use_t = "T" in self.pols
         self.use_e = "E" in self.pols
@@ -325,7 +333,7 @@ class Core:
 
         # setup our precision types to be consistent
         # some parts of the code which interface with cython will use float64, look into
-        if self._get("double_precision", False):
+        if self._get("double_precision", True):
             self.r_dtype = np.float64
             self.c_dtype = np.complex128
             self.precision = "double"
@@ -371,8 +379,7 @@ class Core:
         Set up the noise and beam parameters for the Core object.
 
         This method initializes the noise and beam parameters based on the configuration settings.
-        If the noise parameter is set to False, the noise is set to a very small value to avoid a singular matrix
-        in the inverse covariance. The beam width is set to 0 in this case.
+        If the noise parameter is set to False, then noise_ell is set to none
 
         If the noise parameter is set to True, the noise and beam parameters are retrieved from the configuration
         settings. There are two methods to load in noise:
@@ -388,34 +395,32 @@ class Core:
         """
 
         def convert(x):
+            # converts from arcmin to radians
             return x * (np.pi / 180 / 60)
 
         self.noise = self._get("noise", True)
-        if not self.noise:
-            # we cannot set the noise to 0 as this will cause a singular matrix in the inverse covariance
-            # so we set it to a very small value in such a way that we will not get a singular matrix
-            # TODO: Consider just using None here and checking for None in the code
-            noise_scale = convert(1e-6)
-            self.beam_width = 0
+        if self.noise:
+            # TODO beam_width and noises should be float, or 1d array with 1 (T), or 2 (t, pol) elements
+            # or 2d array with (npol, nfreq) elements which will be n_ell = 1 / sum (n_ell[freq])
+            # possibly also allow just providing a file with the noise and beam values
+            fwhm = convert(self._get("beam_width", 1))
+            # sigma = fwhm / np.sqrt(8.0 * np.log(2.0))
+            # b_ell = np.exp(-1 / 2 * self.ells * (self.ells + 1) * sigma**2)
+            # b_ell = b_ell[None, ...]
+            b_ell = hp.sphtfunc.gauss_beam(fwhm, self.lmax, True).T
 
-            self.beam_ell = np.ones((4, self.nell), dtype=self.r_dtype)
-            self.noise_ell = (
-                np.ones((4, self.nell), dtype=self.r_dtype) * noise_scale**2
-            )
-            # go ahead and set the B and Te to 0
-            self.noise_ell[2:] = 0
-            return
+            # T, E, B, TE
+            n_ell = np.ones((4, self.nell), dtype=self.r_dtype)
+            n_ell[0] = convert(self._get("noise_tt", 5)) ** 2
+            n_ell[1] = convert(self._get("noise_ee", 5)) ** 2
+            n_ell[2] = 0  # B is always 0
+            n_ell[3] = convert(self._get("noise_te", 25)) ** 2
+        else:
+            n_ell = np.full((4, self.nell), 1e-16, dtype=self.r_dtype)
+            b_ell = np.ones((4, self.nell), dtype=self.r_dtype)
 
-        self.beam_width = convert(self._get("beam_width", 0))
-        beam = hp.gauss_beam(self.beam_width, lmax=self.lmax, pol=True)  # (nell, npol)
-        self.beam_ell = np.swapaxes(beam, 0, 1)  # convert beam to (npol, nell)
-
-        # T, E, B, TE
-        self.noise_ell = np.ones((4, self.nell), dtype=self.r_dtype)
-        self.noise_ell[0] = convert(self._get("noise_tt", 1)) ** 2
-        self.noise_ell[1] = convert(self._get("noise_ee", 1)) ** 2
-        self.noise_ell[2] = 0  # B is always 0
-        self.noise_ell[3] = convert(self._get("noise_te", 2)) ** 2
+        self.n_ell = n_ell[self.pol_idxs(keep_b=False, keep_te=True)]
+        self.b_ell = b_ell[self.pol_idxs(keep_b=False, keep_te=True)]
 
     def _radii(self):
         """
@@ -429,7 +434,7 @@ class Core:
         """
         #    start,  stop, resolution
         ranges = [
-            (0, 9500, 150),
+            (1e-3, 9500, 150),
             (9500, 11000, 300),
             (11000, 13800, 150),
             (13800, 14600, 400),
@@ -437,29 +442,24 @@ class Core:
             (16000, 50000, 100),
         ]
 
-        r_min = int(self._get("r_min", 1))
-        r_max = int(self._get("r_max", 50000))
-
         radii = []
         for r in ranges:
-            start = max(r_min, r[0])
-            end = min(r_max, r[1])
-
-            if start >= end:
-                continue
+            start, end, num = r
 
             if r == ranges[-1]:  # For the last range, use logspace
-                temp_radii = np.logspace(np.log10(start), np.log10(end), num=r[2])
+                temp_radii = np.logspace(np.log10(start), np.log10(end), num, True)
             else:
-                temp_radii = np.linspace(start, end, num=r[2], endpoint=False)
+                temp_radii = np.linspace(start, end, num, False)
 
             radii.extend(temp_radii)
 
+        r_min = int(self._get("r_min", 0))
+        r_max = int(self._get("r_max", 50000))
         self.radii = np.array([r for r in radii if r_min <= r <= r_max])
 
     def _slurm(self):
         """
-        Reads in some important slurm variables into the slurm dictonary.
+        Reads in some important slurm variables into the slurm dictionary.
 
         Attributes:
             slurm (dict): A dictionary containing the SLURM job settings.
@@ -473,47 +473,76 @@ class Core:
         Raises:
             ValueError: If the SLURM_ARRAY_TASK_COUNT does not match the narray value.
         """
-        self.slurm = slurm = Slurm()
-        slurm.name = os.getenv("SLURM_JOB_NAME", "unknown")
-        slurm.job = int(os.getenv("SLURM_JOB_ID", 0))
-        slurm.task_count = int(os.getenv("SLURM_ARRAY_TASK_COUNT", 0))
-        slurm.array = int(os.getenv("SLURM_ARRAY_JOB_ID", 0))
+        array_index = int(os.getenv("SLURM_ARRAY_TASK_ID", default="-1"))
+        self.slurm = slurm = Slurm(
+            name=os.getenv("SLURM_JOB_NAME", "unknown"),
+            job=int(os.getenv("SLURM_JOB_ID", "0")),
+            task_count=int(os.getenv("SLURM_ARRAY_TASK_COUNT", "0")),
+            array=int(os.getenv("SLURM_ARRAY_JOB_ID", "0")),
+            array_index=array_index,
+            is_main=array_index in {1, -1},
+        )
 
-        if slurm.task_count > 0:
-            if int(slurm.task_count) != self.narray:
-                raise ValueError(
-                    f"SLURM_ARRAY_TASK_COUNT {slurm.task_count} does not match narray value {self.narray}. "
-                    "Make sure to update the sbatch scripts when changing narray."
-                )
+        if slurm.task_count > 0 and slurm.task_count != self.narray:
+            raise ValueError(
+                f"SLURM_ARRAY_TASK_COUNT {slurm.task_count} does not match narray value {self.narray}. "
+                "Make sure to update the sbatch scripts when changing narray."
+            )
 
-            slurm.array_index = int(os.getenv("SLURM_ARRAY_TASK_ID", 0))
-            slurm.is_main = slurm.array_index == 1
-        else:
-            slurm.is_main = True
-
-        logger.debug("Running with slurm settings: %s", self.slurm)
+        logger.debug("Running with slurm settings: %s", slurm)
         logger.debug("Number of available CPUs: %s", self.n_cpus)
 
     def _paths(self):
+        """
+        Generates and sets up directory paths and filenames based on the object's attributes.
+        This method constructs various directory paths and filenames required for the simulation
+        and analysis based on the object's configuration. It ensures that the necessary directories
+        exist and constructs filenames that incorporate various settings such as lensing, noise,
+        polarization, and simulation parameters.
+        The following directories are created and stored in the `self.dirs` dictionary:
+        - base: The base directory for data storage.
+        - plot: The directory for storing plot files.
+        - data: The directory for storing data files.
+        - mc: The directory for storing Monte Carlo files (if `force_ksw` is True).
+        The following filenames are constructed and stored:
+        - self.file: The main data file.
+        - self.mc_file: The Monte Carlo file (if `force_ksw` is True).
+        The filenames incorporate various settings such as:
+        - `lmax` and `nside` for resolution.
+        - `lensing` and `noise` settings.
+        - Polarization settings.
+        - Number of simulations.
+        - `fnl` range.
+        - SLURM array index (if applicable).
+        Logging is used to debug the paths and filenames being used.
+        Raises:
+            OSError: If there is an issue creating the directories.
+        """
+
         def join_paths(*args):
             path = os.path.join(self.dirs["base"], *args)
             os.makedirs(path, exist_ok=True)
             return path
 
-        # generate the base name for the files based on settings
+        # generate some base strings the files based on settings
+        csims = self.nsims * self.narray  # get the number of simulations
         lens = "l" if self.lensing else "ul"
         nn = "nn" if not self.noise else "n"
         pol_str = "".join(self.pols)
+        tstr = f"_{self.slurm.array_index}" if self.slurm.array_index > 0 else ""
+
+        # add an i for isotropic if needed
         if self.isotropic and self.use_t and self.use_e:
             pol_str = f"i{pol_str}"
-        name = self._get("base_name", f"l{self.lmax}_n{self.nside}")
-        csims = self.nsims * self.narray  # get the number of simulations
+
         # simplify the fnl range string if abs(min) and max are the same
         if self.fnl_max == abs(self.fnl_min):
             fstr = f"{self.fnl_max}"
         else:
             fstr = f"{self.fnl_min}-{self.fnl_max}"
+
         # finally we build our string
+        name = self._get("base_name", f"l{self.lmax}_n{self.nside}")
         self.name = f"{name}_{lens}_{nn}_{pol_str}x{csims}_f{fstr}"
 
         self.dirs = {}
@@ -521,14 +550,77 @@ class Core:
         self.dirs["plot"] = join_paths(self._get("plot_dir", "plots"))
         self.dirs["data"] = join_paths(self._get("data_dir", "data"))
 
-        tstr = f"_{self.slurm.array_index}" if self.slurm.array_index > 0 else ""
         self.file = os.path.join(self.dirs["data"], f"{self.name}{tstr}.hdf5")
         logger.debug("Using data file: %s", self.file)
 
         if self.force_ksw:
             self.dirs["mc"] = join_paths(self._get("mc_dir", "kswmc"))
             self.mc_file = os.path.join(self.dirs["mc"], f"{self.name}.hdf5")
-            logger.debug("Using KSW MC file: %s", self.mc_file)
+            self.mc_steps = self._get("mc_steps", 100)
+            logger.debug(
+                "Using KSW MC file: %s, with nsteps %s", self.mc_file, self.mc_steps
+            )
+
+    def init_estimator(self, verbose=False):
+        """
+        Initializes the estimator for cosmological parameter estimation.
+        This method sets up the cosmological parameters, computes the transfer functions,
+        and initializes the KSW estimator for bispectrum analysis.
+        Parameters:
+        -----------
+            verbose : bool, optional
+                If True, enables verbose logging for debugging purposes. Default is False.
+        Attributes:
+        -----------
+            cosmo : Cosmology
+                An instance of the Cosmology class initialized with the given parameters.
+            c_ell : ndarray
+                The computed C_ell values, either lensed or unlensed, based on the configuration.
+            s_ell : ndarray
+                The signal C_ell values with noise added and monopole/dipole terms removed.
+            estimator : KSW
+                An instance of the KSW estimator initialized with the computed bispectra.
+        """
+
+        # we do local imports since this will not work on the superpod due to mpi issues, but we dont need ksw there anyways
+        # pylint: disable=C0415
+        import camb
+        from ksw import Cosmology, Shape, KSW
+
+        camb_params = camb.set_params(**self.cosmo_params, verbose=verbose)
+
+        if verbose:
+            logger.debug(camb_params)
+            logger.debug(camb.get_results(camb_params))
+
+        self.cosmo: Cosmology = Cosmology(camb_params, verbose)
+        self.cosmo.compute_transfer(self.lmax, verbose)
+        self.cosmo.compute_c_ell()
+
+        if self.lensing:
+            c_ells = self.cosmo.c_ell["lensed_scalar"]["c_ell"].T
+        else:
+            c_ells = self.cosmo.c_ell["unlensed_scalar"]["c_ell"].T
+        self.c_ell = c_ells[self.pol_idxs()]
+
+        if self.noise:
+            self.s_ell = self.b_ell**2 * self.c_ell + self.n_ell
+            self.s_ell[:, : self.lmin] = 0.0  # remove the monopole and dipole terms
+        else:
+            self.s_ell = self.c_ell.copy()
+
+        ns = self.cosmo_params["ns"]
+        ps = self.cosmo_params["pivot_scalar"]
+        shape = Shape.prim_local(ns, pivot=ps)
+        self.cosmo.add_prim_reduced_bispectrum(shape, self.radii)
+
+        self.estimator: KSW = KSW(
+            self.cosmo.red_bispectra,
+            None,  # lambda a: a,  # we will send the alms directly
+            self.lmax,
+            self.pols,
+            self.precision,
+        )
 
     def pol_idxs(self, keep_b=False, keep_te=False, pretrimmed=False):
         """
@@ -550,24 +642,104 @@ class Core:
 
         return np.array(range(start, start + num_to_take))
 
-    def get_plot_file(self, name, dir=None, extension=".png", create_dir=True):
-        if dir is None:
-            dir = os.path.join(self.dirs["plot"], str(self.name))
+    def get_plot_file(self, name, base_dir=None, extension=".png", create_dir=True):
+        """
+        Generate the file path for a plot image.
+        Parameters:
+            name (str): The name of the plot file.
+            base_dir (str, optional): The base directory where the plot file will be saved.
+                        Defaults to None, which sets it to a subdirectory
+                        under the 'plot' directory named after the instance's name.
+            extension (str, optional): The file extension for the plot file. Defaults to ".png".
+            create_dir (bool, optional): Whether to create the directory if it does not exist.
+                            Defaults to True.
+        Returns:
+            str: The full file path for the plot image.
+        Raises:
+            ValueError: If the directory does not exist and `create_dir` is set to False.
+        """
 
-        if not os.path.exists(dir):
+        if base_dir is None:
+            base_dir = os.path.join(self.dirs["plot"], str(self.name))
+
+        if not os.path.exists(base_dir):
             if create_dir:
-                os.makedirs(dir, exist_ok=True)
+                os.makedirs(base_dir, exist_ok=True)
             else:
-                raise ValueError(f"Directory {dir} does not exist")
+                raise ValueError(f"Directory {base_dir} does not exist")
 
-        return os.path.join(dir, f"{self.name}_{self.slurm.job}_{name}{extension}")
+        return os.path.join(base_dir, f"{self.name}_{self.slurm.job}_{name}{extension}")
 
 
 @dataclass
 class Slurm:
+    """
+    A class to represent a Slurm job configuration.
+    Attributes:
+        name (str): The name of the job. Default is "unknown".
+        job (int): The job ID. Default is 0.
+        task_count (int): The number of tasks. Default is 0.
+        array (int): The array job ID. Default is 0.
+        array_index (int): The index of the array job. Default is 0.
+        is_main (bool): Indicates if this is the main job. Default is False.
+    """
     name: str = "unknown"
     job: int = 0
     task_count: int = 0
     array: int = 0
     array_index: int = 0
     is_main: bool = False
+
+
+def cosmo_defaults():
+    """Some default settings that are required by KSW / camb."""
+    return {"As": 2.13e-09, "ns": 0.9624, "pivot_scalar": 0.05}
+
+
+def get_itotcov_ell(icov_signal_ell, icov_noise_ell=None, b_ell=None):
+    """
+    Combine signal and noise power spectra into total inverse
+    isotropic covariance: S^-1 (S^-1 + B N^-1 B)^-1 B N^-1 B
+    = (S + B^-1 N B^-1)^-1.
+
+    Parameters
+    ----------
+    icov_signal_ell : (npol, npol, nell) or (npol, nell) array
+        Inverse signal covariance
+    icov_noise_ell : (npol, npol, nell) or (npol, nell) array
+        Inverse noise covariance matrix
+    b_ell : (npol, nell) array
+        Beam transfer function.
+
+    Returns
+    -------
+    itotcov_ell : (npol, npol, nell) array
+        Total inverse covariance matrix.
+    """
+    if icov_noise_ell is None:
+        return icov_signal_ell.copy()
+
+    # Check if icov_signal_ell is (npol, nell) and convert to (npol, npol, nell)
+    if icov_signal_ell.ndim == 2:
+        npol, _ = icov_signal_ell.shape
+        icov_signal_ell = (
+            icov_signal_ell[:, np.newaxis, :] * np.eye(npol)[:, :, np.newaxis]
+        )
+
+    # Check if icov_noise_ell is (npol, nell) and convert to (npol, npol, nell)
+    if icov_noise_ell.ndim == 2:
+        npol, _ = icov_noise_ell.shape
+        icov_noise_ell = (
+            icov_noise_ell[:, np.newaxis, :] * np.eye(npol)[:, :, np.newaxis]
+        )
+
+    if b_ell is not None:
+        b_ell = b_ell * np.eye(b_ell.shape[0])[:, :, np.newaxis]
+        in_mat = np.einsum("ijl, jkl, kol -> iol", b_ell, icov_noise_ell, b_ell)
+    else:
+        in_mat = icov_noise_ell
+
+    imat = np.linalg.inv((icov_signal_ell + in_mat).T).T
+    itotcov_ell = np.einsum("ijl, jkl -> ikl", imat, in_mat)
+    itotcov_ell = np.einsum("ijl, jkl -> ikl", icov_signal_ell, itotcov_ell)
+    return itotcov_ell

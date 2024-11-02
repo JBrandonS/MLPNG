@@ -75,8 +75,10 @@ def plot_patches(patches, n_plots: int = 8, title: str = "Patches", **kwargs):
 
 
 def plot_cl(
+    core,
     cls,
-    lmax,
+    lmin=None,
+    lmax=None,
     title="Angular power spectrum from cl",
     labels=None,
     xlabel=r"$\ell$",
@@ -84,38 +86,18 @@ def plot_cl(
     scale=True,
     plot_func=plt.semilogy,
     plot_camb=False,
-    camb_cls=None,
     plot_noise=False,
-    camb_noise=None,
-    camb_beam=None,
     plot_full_camb=False,
-    lmin=2,
     **kwargs,
 ):
-    # check args and ensure shape is correct
-    if plot_camb:
-        if camb_cls is None:
-            raise ValueError("Need to provide camb_cls if plt_camb is True.")
-        camb_cls = np.atleast_2d(camb_cls)
-
-        if plot_noise:
-            if camb_noise is None:
-                raise ValueError("Need to provide noise if plotting noise.")
-            camb_noise = np.atleast_2d(camb_noise)
-
-        if plot_full_camb:
-            if camb_noise is None or camb_beam is None:
-                raise ValueError(
-                    "Need to provide camb_noise and camb_beam if plotting full camb."
-                )
-
-            camb_noise = np.atleast_2d(camb_noise)
-            camb_beam = np.atleast_2d(camb_beam)
-            camb_cl_full = camb_cls * camb_beam**2 + camb_noise
+    if lmax is None:
+        lmax = core.lmax
+    if lmin is None:
+        lmin = core.lmin
 
     ells = np.arange(lmin, lmax + 1)
     scale = (ells * (ells + 1) / 2 / np.pi) if scale else 1
-    cls = np.atleast_2d(cls)
+    cls = np.atleast_2d(cls)[:, lmin : lmax + 1]
     npols = cls.shape[0]
 
     if labels is not None:
@@ -128,33 +110,31 @@ def plot_cl(
         labels = ["data"] if npols == 1 else [f"data {i}" for i in range(npols)]
 
     for pol in range(npols):
-        plot_func(
-            ells, scale * cls[pol, lmin : lmax + 1], label=labels[pol], linestyle=":"
-        )
+        plot_func(ells, scale * cls[pol], label=labels[pol], linestyle=":")
 
+        pstr = "" if npols == 1 else f", {pol_str(pol)}"
         if plot_camb:
-            pstr = "" if npols == 1 else f", {pol_str(pol)}"
             plot_func(
                 ells,
-                scale * camb_cls[pol, lmin : lmax + 1],
+                scale * core.c_ell[pol, lmin : lmax + 1],
                 label="camb" + pstr,
             )
 
-            if plot_noise:
-                plot_func(
-                    ells,
-                    scale * camb_noise[pol, lmin : lmax + 1],
-                    label=r"noise" + pstr,
-                    linestyle="--",
-                )
+        if plot_noise:
+            plot_func(
+                ells,
+                core.n_ell[pol, lmin : lmax + 1],
+                label=r"noise" + pstr,
+                linestyle="--",
+            )
 
-            if plot_full_camb:
-                plot_func(
-                    ells,
-                    scale * camb_cl_full[pol, lmin : lmax + 1],
-                    label=r"camb * beam$^2$ + noise" + pstr,
-                    linestyle="--",
-                )
+        if plot_full_camb:
+            plot_func(
+                ells,
+                scale * core.s_ell[pol, lmin : lmax + 1],
+                label=r"camb + noise" + pstr,
+                linestyle="--",
+            )
 
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
@@ -162,6 +142,7 @@ def plot_cl(
 
 
 def plot_cl_alm(
+    core,
     alm: np.ndarray | list[np.ndarray],
     lmax: int | None = None,
     title: str = "Angular power spectrum from alm",
@@ -186,10 +167,11 @@ def plot_cl_alm(
             cls.append(curvedsky.alm2cl(single_alm))
     else:
         cls = [curvedsky.alm2cl(alm)]
-    plot_cl(cls, lmax=lmax, title=title, **kwargs)
+    plot_cl(core, cls, lmax=lmax, title=title, **kwargs)
 
 
 def plot_cl_map(
+    core,
     map: np.ndarray,
     wcs,
     lmax: int,
@@ -219,7 +201,7 @@ def plot_cl_map(
         tmap = enmap.ndmap(map, wcs)
         alm = curvedsky.map2alm(tmap, lmax=lmax, copy=True)
         cls = [curvedsky.alm2cl(alm)]
-    plot_cl(cls, lmax=lmax, title=title, **kwargs)
+    plot_cl(core, cls, lmax=lmax, title=title, **kwargs)
 
 
 def plot_predictions(
@@ -348,6 +330,7 @@ def plot_mollview(maps, title: str, **kwargs):
 
 
 def plot_elsner_comp(
+    core,
     alm_l,
     alm_nl,
     TCMB: float = 2.7255,
@@ -355,6 +338,7 @@ def plot_elsner_comp(
     average: int = 0,
     title: str = "Elsner comparison",
     elsner_dir: str = "data/elsner",
+    elsner_pols=[0, 1, 2],
     **kwargs,
 ):
     """Plot comparison between simulated and Elsner alms.
@@ -412,6 +396,9 @@ def plot_elsner_comp(
     elsner_l *= t_scale
     elsner_nl *= t_scale
 
+    elsner_l = elsner_l[elsner_pols]
+    elsner_nl = elsner_nl[elsner_pols]
+
     # we need to reshape either the alms or the elsner to match the same lmax to plot
     if alm_l.shape[-1] > elsner_l.shape[-1]:
         lmax = hp.Alm.getlmax(elsner_l.shape[-1])
@@ -432,6 +419,7 @@ def plot_elsner_comp(
         ylabel = r"$\ell(\ell+1)/2\pi\;C_{\ell}" + f"^{pol_str(pol)}$"
         plt.sca(axes[0, pol])
         plot_cl_alm(
+            core,
             [elsner_l[pol], alm_l[pol]],
             lmax,
             labels=["elsner", "sim"],
@@ -442,6 +430,7 @@ def plot_elsner_comp(
 
         plt.sca(axes[1, pol])
         plot_cl_alm(
+            core,
             [elsner_nl[pol], alm_nl[pol]],
             lmax,
             labels=["elsner", "sim"],
@@ -452,6 +441,7 @@ def plot_elsner_comp(
 
         plt.sca(axes[2, pol])
         plot_cl_alm(
+            core,
             [elsner_l[pol] + elsner_nl[pol], alm_l[pol] + alm_nl[pol]],
             lmax,
             labels=["elsner", "sim"],
