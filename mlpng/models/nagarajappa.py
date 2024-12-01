@@ -1,6 +1,6 @@
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense
+from keras.layers import Conv2D, MaxPooling2D, Flatten, Dense
 
-from scripts.models import ModelCore, register_model
+from mlpng.models import ModelCore, register_model
 
 
 @register_model

@@ -1,5 +1,5 @@
 {
-    "cosmo_params" : {
+    "cosmo_params": {
         "H0": 67.4,
         "As": 2.457e-09,
         "ns": 0.9649,
@@ -7,7 +7,7 @@
         "omch2": 0.120,
         "tau": 0.054
     },
-    "nsims" : 100,
-    "narray" : 100,                       
+    "nsims": 100,
+    "narray": 100,
     "nside": 2048
 }

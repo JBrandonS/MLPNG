@@ -32,6 +32,7 @@ def icov_func(icov, alm):
         ret[pol] = hp.almxfl(alm[pol], ic)
     return ret
 
+
 def main():
     core = Core()
 
@@ -111,7 +112,7 @@ def main():
     icov = np.zeros_like(core.s_ell)
     icov[..., core.lmin :] = 1 / cov[..., core.lmin :]
     icov[..., : core.lmin] = 0
-    icov *= core.b_ell**2 # maybe could do this is cov to save some time
+    icov *= core.b_ell**2  # maybe could do this is cov to save some time
 
     estimates, _, _, _ = core.estimator.compute_estimate_batch(
         lambda idx: icov_func(icov, alms[idx, pol_idxs]),

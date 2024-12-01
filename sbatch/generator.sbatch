@@ -7,7 +7,7 @@
 #SBATCH --output=data/logs/generator/%A/%j.log
 #SBATCH --array=1-100
 #SBATCH --time=1-00:00:00
-#SBATCH --account=jrmeyers_ml_cmb_0001 
+#SBATCH --account=jrmeyers_ml_cmb_0001
 
 # create our logging dir, if needed
 mkdir -p data/logs/generator/"$SLURM_ARRAY_JOB_ID"/
@@ -22,4 +22,3 @@ conda activate mlpng
 # mkdir -p data/profiles/generator
 # time srun python -m cProfile -o data/profiles/generator/$SLURM_JOB_ID.prof -m mlpng.generator "$@"
 time srun python -m mlpng.generator "$@"
-

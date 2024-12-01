@@ -153,3 +153,6 @@ Additional thanks to:
 - Daan Meerburg
 - Jorik Melsen
 - Thomas Flöss
+
+gh repo clone Arne-Thomsen/deepsphere-cosmo-tf2
+depth wise convs

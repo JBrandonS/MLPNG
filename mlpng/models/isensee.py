@@ -23,9 +23,9 @@ from tensorflow.keras.layers import (
 )
 from tensorflow.keras.optimizers import Adam
 
-from scripts.models import AutoModel, ModelCore, register_model
-from scripts.utils import plot_histogram, plot_predictions
-from scripts.utils.tf import plot_metrics, try_init_wandb
+from mlpng.models import AutoModel, ModelCore, register_model
+from mlpng.utils import plot_histogram, plot_predictions
+from mlpng.utils.tf import plot_metrics, try_init_wandb
 
 from tensorflow.keras.callbacks import (
     EarlyStopping,

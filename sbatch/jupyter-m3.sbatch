@@ -6,11 +6,11 @@
 #SBATCH --mem=64G
 #SBATCH --cpus-per-task=32
 #SBATCH --time=10:00:00
-#SBATCH --account=jrmeyers_ml_cmb_0001 
+#SBATCH --account=jrmeyers_ml_cmb_0001
 
 conda_env="mlpng"
 
-print_help () {
+print_help() {
     echo "Usage: $0 [options]"
     echo ""
     echo "Options:"
@@ -20,10 +20,11 @@ print_help () {
 }
 
 # Parse the CLI arguments
-if ! valid_args=$(getopt \
-    -o e:h \
-    --long env,help \
-    -- "$@"
+if ! valid_args=$(
+    getopt \
+        -o e:h \
+        --long env,help \
+        -- "$@"
 ); then
     # invalid arguments found, print usage and exit
     print_help
@@ -35,7 +36,7 @@ eval set -- "$valid_args"
 
 # Here we actually process the CLI arguments
 while [ $# -gt 0 ]; do
-  case "$1" in
+    case "$1" in
     -h | --help)
         print_help
         exit 0
@@ -48,7 +49,7 @@ while [ $# -gt 0 ]; do
         shift
         break
         ;;
-  esac
+    esac
 done
 
 module purge

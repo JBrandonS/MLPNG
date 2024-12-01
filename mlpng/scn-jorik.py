@@ -1,0 +1,584 @@
+import os
+import sys
+import logging
+import healpy as hp
+import numpy as np
+
+# os.environ["KERAS_BACKEND"] = "tensorflow"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
+# os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
+
+import matplotlib.pyplot as plt
+from scipy import rand
+import tensorflow as tf
+from tensorflow.keras import layers
+from tensorflow.keras.layers import (
+    Layer,
+    Conv1D,
+    Dense,
+    Dropout,
+    LayerNormalization,
+    Activation,
+    Concatenate,
+)
+from tensorflow.keras.callbacks import (
+    EarlyStopping,
+    TerminateOnNaN,
+    TensorBoard,
+    ModelCheckpoint,
+)
+from tensorflow.keras.optimizers import AdamW, Adam
+from tensorflow.keras.optimizers.schedules import ExponentialDecay, LearningRateSchedule
+from tensorflow.keras.metrics import RootMeanSquaredError
+
+from mlpng import Core
+from mlpng.utils import (
+    setup_logging,
+    load_data,
+    get_fisher,
+    plot_predictions,
+    plot_histogram,
+    print_errors,
+    plot_metrics,
+    WarmupLearningRate,
+    AttentionSchedule,
+    try_init_wandb,
+)
+from mlpng.utils.dataloaders import HDF5Dataset
+
+from deepsphere import HealpyGCNN, healpy_layers as hp_layer
+from deepsphere.healpy_layers import (
+    HealpyChebyshev,
+    HealpyPool,
+    HealpyPseudoConv_Transpose,
+)
+from deepsphere.gnn_layers import Chebyshev
+import tfkan
+import keract
+
+
+logger = setup_logging(__name__, level=logging.DEBUG)
+
+MAX_EPOCHS = 100
+
+
+def to_tf(
+    ds,
+    npix,
+    batch_size,
+    for_unet=False,
+    norm_y=False,
+):
+    gen = tf.data.Dataset.from_generator(
+        lambda: ds,
+        output_signature=(
+            tf.TensorSpec(shape=(npix, 1), dtype=tf.float32),  # type: ignore
+            tf.TensorSpec(shape=(), dtype=tf.float32),  # type: ignore
+        ),
+    )
+
+    if norm_y:
+        gen = gen.map(lambda x, y: (x, y / 100), tf.data.AUTOTUNE)
+
+    if for_unet:
+        gen = gen.map(lambda x, y: (x, x), tf.data.AUTOTUNE)  # for unet
+
+    return (
+        gen.apply(tf.data.experimental.assert_cardinality(len(ds)))
+        .cache()
+        .shuffle(buffer_size=1024, reshuffle_each_iteration=True)
+        .batch(
+            batch_size,
+            drop_remainder=True,
+            num_parallel_calls=tf.data.AUTOTUNE,
+            deterministic=False,
+        )
+        .prefetch(tf.data.AUTOTUNE)
+    )
+
+
+@tf.keras.saving.register_keras_serializable()
+class LinearWarmup(tf.keras.optimizers.schedules.LearningRateSchedule):
+    """Linear warmup schedule."""
+
+    def __init__(
+        self,
+        after_warmup_lr_sched: (
+            tf.keras.optimizers.schedules.LearningRateSchedule | float
+        ),
+        warmup_steps: int,
+        warmup_learning_rate: float,
+        name: str | None = None,
+    ):
+        """Add linear warmup schedule to a learning rate schedule.
+
+        warmup_lr is the initial learning rate, the final learning rate of the
+        init_warmup period is the initial learning rate of lr_schedule in use.
+        The learning rate at each step linearly increased according to the following
+        formula:
+          learning_rate = warmup_lr + step / warmup_steps
+                        * (final_warmup_lr - warmup_lr).
+        Using warmup overrides the learning rate schedule by the number of warmup
+        steps.
+
+        Args:
+          after_warmup_lr_sched: tf.keras.optimizers.schedules .LearningRateSchedule
+            or a constant.
+          warmup_steps: Number of the warmup steps.
+          warmup_learning_rate: Initial learning rate for the warmup.
+          name: Optional, name of warmup schedule.
+        """
+        super().__init__()
+        self._name = name
+        self._after_warmup_lr_sched = after_warmup_lr_sched
+        self._warmup_steps = warmup_steps
+        self._init_warmup_lr = warmup_learning_rate
+        if isinstance(
+            after_warmup_lr_sched, tf.keras.optimizers.schedules.LearningRateSchedule
+        ):
+            self._final_warmup_lr = after_warmup_lr_sched(warmup_steps)
+        else:
+            self._final_warmup_lr = tf.cast(after_warmup_lr_sched, dtype=tf.float32)
+
+    def __call__(self, step: int):
+
+        global_step = tf.cast(step, dtype=tf.float32)
+        # print("Global step", global_step, flush=True)
+
+        linear_warmup_lr = self._init_warmup_lr + global_step / self._warmup_steps * (
+            self._final_warmup_lr - self._init_warmup_lr
+        )
+
+        if isinstance(
+            self._after_warmup_lr_sched,
+            tf.keras.optimizers.schedules.LearningRateSchedule,
+        ):
+            after_warmup_lr = self._after_warmup_lr_sched(step)
+        else:
+            after_warmup_lr = tf.cast(self._after_warmup_lr_sched, dtype=tf.float32)
+
+        lr = tf.cond(
+            global_step < self._warmup_steps,
+            lambda: linear_warmup_lr,
+            lambda: after_warmup_lr,
+        )
+        return lr
+
+    def get_config(self):
+        if isinstance(
+            self._after_warmup_lr_sched,
+            tf.keras.optimizers.schedules.LearningRateSchedule,
+        ):
+            config = {
+                "after_warmup_lr_sched": self._after_warmup_lr_sched.get_config()
+            }  # pytype: disable=attribute-error
+        else:
+            config = {
+                "after_warmup_lr_sched": self._after_warmup_lr_sched
+            }  # pytype: disable=attribute-error
+
+        config.update(
+            {
+                "warmup_steps": self._warmup_steps,
+                "warmup_learning_rate": self._init_warmup_lr,
+                "name": self._name,
+            }
+        )
+        return config
+
+
+@tf.keras.saving.register_keras_serializable()
+class SCNBlock(tf.keras.Model):
+
+    def __init__(
+        self,
+        filters,
+        n_mid=None,
+        n_out=None,
+        n_neighbors=20,
+        cheb_degree=11,
+        cheb_init=None,
+        cheb_act=None,
+        cheb_bias=True,
+        cheb_batch=True,
+        batch_size=None,
+        activation="gelu",
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.filters = filters
+        self.n_neighbors = n_neighbors
+        if n_mid is None:
+            n_mid = filters * 4
+        if n_out is None:
+            n_out = filters
+        self.n_mid = n_mid
+        self.n_out = n_out
+        self.cheb_degree = cheb_degree
+        self.cheb_init = cheb_init
+        self.cheb_act = cheb_act
+        self.cheb_bias = cheb_bias
+        self.cheb_batch = cheb_batch
+        self.batch_size = batch_size
+        self.activation = activation
+
+        self.res_conv_1d = Conv1D(self.filters, kernel_size=1)
+
+    def build(self, input_shape):
+        nside = hp.npix2nside(input_shape[1])
+        self.res_conv_1d.build(input_shape)
+
+        cheb = HealpyChebyshev(
+            K=self.cheb_degree,
+            initializer=self.cheb_init,
+            activation=self.cheb_act,
+            use_bias=self.cheb_bias,
+            use_bn=self.cheb_batch,
+            depth_wise=True,
+        )
+
+        self.gcnn = HealpyGCNN(
+            int(nside),
+            np.arange(input_shape[1]),
+            layers=[
+                cheb,
+                # LayerNormalization(),
+                Conv1D(self.n_mid, kernel_size=1),
+                LayerNormalization(),
+                Activation(self.activation),
+                Conv1D(self.n_out, kernel_size=1),
+                # LayerNormalization(),
+            ],
+            verbose=False,
+            max_batch_size=self.batch_size,
+            initial_Fin=input_shape[-1],
+        )
+        self.gcnn.build(input_shape)
+        super().build(input_shape)
+
+    def call(self, inputs, training=None, mask=None):
+        res = inputs
+        if res.shape[-1] != self.filters:
+            res = self.res_conv_1d(res)
+
+        x = self.gcnn(inputs)
+        return x + res
+
+    def compute_output_shape(self, input_shape):
+        output = (input_shape[0], input_shape[1], self.n_out)
+        return output
+
+
+@tf.keras.saving.register_keras_serializable()
+def SCNUNet(
+    input_shape,
+    base_channels=32,
+    n_neighbors=20,
+    blocks=[1, 1, 3, 1],
+    pools=[1, 1, 1, 1, 1, 1 ,1],
+    cheb_degree=7,
+    cheb_init=None,
+    cheb_act=None,
+    cheb_bias=True,
+    cheb_batch=False,
+    max_batch_size=256,
+    n_bottleneck=1,
+    token_dim=256,
+    channel_dim=2048,
+    name="SCNUNet",
+    scn_act="gelu",
+):
+    inputs = tf.keras.Input(shape=input_shape)
+    channels = [base_channels * 2**p for p in range(len(blocks))]
+    skips = []
+
+    x = inputs
+    for block in range(len(blocks)):
+        for _ in range(blocks[block]):
+            x = SCNBlock(
+                channels[block],
+                n_neighbors=n_neighbors,
+                cheb_degree=cheb_degree,
+                cheb_init=cheb_init,
+                cheb_act=cheb_act,
+                cheb_bias=cheb_bias,
+                cheb_batch=cheb_batch,
+                batch_size=max_batch_size,
+                activation=scn_act,
+            )(x)
+        skips.append(x)
+        x = HealpyPool(p=pools[block], pool_type="MAX")(x)
+
+    # bottleneck
+    for i in range(n_bottleneck):
+        x = mixer_block(token_dim, channel_dim, name=f"Bottleneck_{i}")(x)
+    if n_bottleneck > 0:
+        x = layers.LayerNormalization(name="Bottleneck_norm")(x)
+
+    for block, skip in zip(reversed(range(len(blocks))), reversed(skips)):
+        x = HealpyPseudoConv_Transpose(pools[block], channels[block])(x)
+        # x = Concatenate()([x, skip])
+
+        for _ in range(blocks[block]):
+            x = SCNBlock(
+                channels[block],
+                n_neighbors=n_neighbors,
+                cheb_degree=cheb_degree,
+                cheb_init=cheb_init,
+                cheb_act=cheb_act,
+                cheb_bias=cheb_bias,
+                cheb_batch=cheb_batch,
+                batch_size=max_batch_size,
+            )(x)
+
+    x = Conv1D(input_shape[-1], 1)(x)
+    return tf.keras.Model(inputs=inputs, outputs=x, name=name)
+
+
+@tf.keras.saving.register_keras_serializable()
+class mlp_block(layers.Layer):
+    def __init__(self, hidden_dim=512, activation="gelu", name="MLPBlock"):
+        super().__init__(name=name)
+        self.hidden_dim = hidden_dim
+        self.activation = activation
+
+    def build(self, input_shape):
+        self.d1 = layers.Dense(self.hidden_dim, activation=self.activation)
+        self.d2 = layers.Dense(input_shape[-1])
+
+    def call(self, inputs):
+        x = self.d1(inputs)
+        return self.d2(x)
+
+    def get_config(self):
+        return {
+            "hidden_dim": self.hidden_dim,
+            "activation": self.activation,
+            "name": self.name,
+        }
+
+
+@tf.keras.saving.register_keras_serializable()
+class mixer_block(layers.Layer):
+    def __init__(
+        self,
+        token_dim=256,
+        channel_dim=2048,
+        name="MLPMixerBlock",
+        activation="gelu",
+    ):
+        super().__init__(name=name)
+        self.token_dim = token_dim
+        self.channel_dim = channel_dim
+        self.activation = activation
+
+        self.norm = layers.LayerNormalization()
+        self.perm_1 = layers.Permute((2, 1))
+        self.perm_2 = layers.Permute((2, 1))
+        self.token_mixing = mlp_block(
+            token_dim, activation=activation, name="TokenMixing"
+        )
+        self.channel_mixing = mlp_block(
+            channel_dim, activation=activation, name="ChannelMixing"
+        )
+
+    def call(self, inputs):
+        y = self.norm(inputs)
+        y = self.perm_1(y)
+        y = self.perm_2(self.token_mixing(self.perm_1(y)))
+        y = self.perm_2(y)
+        x = inputs + y
+        y = self.norm(x)
+        return x + self.channel_mixing(y)
+
+    def get_config(self):
+        return {
+            "token_dim": self.token_dim,
+            "channel_dim": self.channel_dim,
+            "activation": self.activation,
+            "name": self.name,
+        }
+
+
+def get_model(
+    full_model,
+    n_layers=5,
+    token_dim=256,
+    channel_dim=2048,
+    activation="relu",
+    name="SCNReg",
+):
+    encoder_input = full_model.input
+    encoder_output = None
+    for layer in full_model.layers:
+        if "Bottleneck_0" == layer.name:
+            encoder_output = layer.output
+            break
+    encoder_model = tf.keras.Model(inputs=encoder_input, outputs=encoder_output)
+    encoder_model.trainable = False
+
+    x = encoder_model.output
+    for i in range(n_layers):
+        x = mixer_block(
+            token_dim, channel_dim, activation=activation, name=f"MLPMixerBlock_{i}"
+        )(x)
+    x = layers.GlobalAveragePooling1D()(x)
+    x = Dense(1, kernel_initializer="zeros")(x)
+
+    return tf.keras.Model(inputs=encoder_input, outputs=x, name=name)
+
+
+def plot_weights(model, save_dir):
+    print("Plotting weights to directory", save_dir, flush=True)
+    os.makedirs(save_dir, exist_ok=True)
+    for layer in model.layers:
+        weights = layer.get_weights()
+        if weights:
+            filename = os.path.join(save_dir, f"{layer.name}.png")
+            plt.figure()
+            for i, weight in enumerate(weights):
+                print(weight.shape, flush=True)
+                # Plot each weight map
+                for j in range(weight.shape[-1]):
+                    test_map = weight[..., j]
+
+                    try:
+                        hp.mollview(test_map, nest=True)
+                    except:
+                        pass
+            plt.savefig(filename)
+            plt.close()
+
+
+def unet_plots(model, ds, core, name):
+    predictions = model.predict(ds, verbose=2)
+    sim = list(ds.take(1).as_numpy_iterator())[0]
+    sim = sim[0][0]
+    sim = sim.flatten()
+    test_map = predictions[0, :, 0].flatten()
+    np.save(f"{core.dirs['model']}/{core.name}-unet-preds.npy", predictions)
+    hp.mollview(test_map, title="Predictions", nest=True)
+    os.makedirs(f"{core.dirs['plot']}/{core.name}", exist_ok=True)
+    plt.savefig(f"{core.dirs['plot']}/{core.name}/unet-preds.png")
+    plt.close()
+
+    sim_cl = hp.anafast(hp.reorder(sim, n2r=True), lmax=core.lmax)
+    cl = hp.anafast(hp.reorder(test_map, n2r=True), lmax=core.lmax)
+    ells = np.arange(len(cl))
+    plt.figure()
+    plt.plot(ells, ells * (ells + 1) * cl, label="pred")
+    plt.plot(ells, ells * (ells + 1) * sim_cl, "--", label="sim")
+    plt.legend()
+    plt.savefig(f"{core.dirs['plot']}/{core.name}/{name}-cl.png")
+    plt.close()
+
+    plt.figure()
+    plt.semilogx(ells, ells * (ells + 1) * cl, label="pred")
+    plt.semilogx(ells, ells * (ells + 1) * sim_cl, "--", label="sim")
+    plt.legend()
+    plt.savefig(f"{core.dirs['plot']}/{core.name}/{name}-cl-sx.png")
+    plt.close()
+
+    plt.figure()
+    plt.semilogy(ells, ells * (ells + 1) * cl, label="pred")
+    plt.semilogy(ells, ells * (ells + 1) * sim_cl, "--", label="sim")
+    plt.legend()
+    plt.savefig(f"{core.dirs['plot']}/{core.name}/{name}-cl-sy.png")
+    plt.close()
+
+    plt.figure()
+    plt.loglog(ells, ells * (ells + 1) * cl, label="pred")
+    plt.loglog(ells, ells * (ells + 1) * sim_cl, "--", label="sim")
+    plt.legend()
+    plt.savefig(f"{core.dirs['plot']}/{core.name}/{name}-cl-ll.png")
+    plt.close()
+
+
+def main():
+    args = [
+        "settings/n128.json",
+        "--nsims",
+        "100",
+        "--narray",
+        "1000",
+        "--pols",
+        "T",
+        "--fnl_range",
+        "-100",
+        "100",
+    ]
+    core = Core(args)
+    fisher = get_fisher(core.file)
+    npix = hp.nside2npix(core.nside)
+
+    reg_file = f"{core.dirs['model']}/{core.name}-{core.slurm.job}-jorik.keras"
+    strategy = tf.distribute.MirroredStrategy()
+    metrics = []
+
+    BATCH_SIZE = 64
+
+    f = 1
+    ds = HDF5Dataset(core.file, x_name="alm", y_name="fnl")
+    train_ds, test_ds, val_ds = ds.split(0.9 / f, 0.05 / f, 0.05 / f, verbose=True)
+    train_tf, test_tf, val_tf = (
+        to_tf(x, npix, BATCH_SIZE, for_unet=False, norm_y=False)
+        for x in [train_ds, test_ds, val_ds]
+    )
+    decay_steps = len(train_ds) // BATCH_SIZE  # once per epoch
+
+    with strategy.scope():
+        learning_rate = ExponentialDecay(4e-3, decay_steps * 3, 0.95, staircase=False)
+        learning_rate = LinearWarmup(learning_rate, decay_steps * 10, 1e-8)
+        hloss = tf.keras.losses.Huber(delta=1 / np.sqrt(fisher) / 100)
+
+        model = get_model(unet)
+        model.build((BATCH_SIZE, npix, 1))
+        model.compile(
+            optimizer=AdamW(learning_rate, weight_decay=0.1),  # type: ignore
+            loss=hloss,
+            metrics=["mse"],  # type: ignore
+        )
+
+    model.summary()
+
+    tf_dir = f"{core.dirs['tb']}/{core.name}-reg"
+    callbacks = [
+        TerminateOnNaN(),
+        EarlyStopping(monitor="val_loss", patience=8, restore_best_weights=True),
+        TensorBoard(log_dir=tf_dir),
+        ModelCheckpoint(tf_dir, monitor="val_loss", save_best_only=True),
+    ]
+    try_init_wandb(notes="model testing", tags=["SCNUNet"], append_to=callbacks)
+
+    history = model.fit(
+        train_tf,
+        epochs=300,
+        validation_data=val_tf,
+        callbacks=callbacks,
+        verbose=2,
+    )
+    model.evaluate(test_tf, verbose=2)  # type: ignore
+    model.save(reg_file)
+
+    ###########################################################
+
+    preds = model.predict(test_tf, verbose=2).flatten() * 100  # type: ignore
+    truth = np.concatenate([y for _, y in test_tf]) * 100  # type: ignore
+
+    name = f"SCNUReg-{core.slurm.job}"
+    save_base = f"{core.dirs['plot']}/{core.name}"
+    os.makedirs(save_base, exist_ok=True)
+
+    print_errors(truth, preds, fisher)
+    plot_metrics(history, metrics=["loss"], save_file=f"{save_base}/{name}-loss.png")
+    plot_predictions(
+        truth,
+        preds,
+        fisher=fisher,
+        save_file=f"{save_base}/{name}-preds.png",
+    )
+    plot_histogram(truth, preds, save_file=f"{save_base}/{name}-hist.png")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

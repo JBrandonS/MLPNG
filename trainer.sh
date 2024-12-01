@@ -3,7 +3,7 @@
 # This script will generate a set of training jobs based off the SETTINGS and MODELS arrays.
 
 # The settings files to use for the sims. These should be found in settings/*.json
-SETTINGS=(  
+SETTINGS=(
     # "n64"
     "n128"
     # "elsner"
@@ -16,14 +16,14 @@ SETTINGS=(
 # see scripts/core.parse_args for more info and available arguments, or to add more
 # some additional args are allowed for the trainer see scripts/models/modelcore.py
 ARGS=(
-  # "--nsims" "100"
-  # "--lensing"
-  # "--no-noise" 
-  # "--pols"
-  # "--no-summary"
-  "--tb"
-  # "--wandb"
-  "--narray" "1000"
+    # "--nsims" "100"
+    # "--lensing"
+    # "--no-noise"
+    # "--pols"
+    # "--no-summary"
+    "--tb"
+    # "--wandb"
+    "--narray" "1000"
 )
 
 # The AI models to train on the data, see scripts/trainer.py and scripts/models/ for more info

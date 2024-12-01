@@ -7,7 +7,7 @@
 #SBATCH --gpus-per-task=4
 #SBATCH --output=data/logs/training/%j.log
 #SBATCH --time=24:00:00
-#SBATCH --account=jrmeyers_ml_cmb_0001 
+#SBATCH --account=jrmeyers_ml_cmb_0001
 
 # create the logging dir
 mkdir -p data/logs/training
@@ -16,6 +16,6 @@ module purge
 module load conda nvidia/nvhpc
 
 eval "$(conda shell.bash hook)"
-conda activate mlpng-gpu 
+conda activate mlpng-gpu
 
 time srun python -m mlpng.trainer "$@"

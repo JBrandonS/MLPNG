@@ -1,5 +1,5 @@
+import os
 import logging
-from typing import Optional
 
 import healpy as hp
 import matplotlib.pyplot as plt
@@ -453,3 +453,43 @@ def plot_elsner_comp(
     plt.suptitle(title)
     kwargs.pop("plot_func", None)
     finalize_plot(**kwargs)
+
+
+def plot_metrics(history, save_file=None, metrics=["loss"]):
+    num_metrics = len(metrics)
+    fig, axs = plt.subplots(num_metrics, figsize=(15, 6 * num_metrics))
+
+    if num_metrics == 1:
+        axs = [axs]
+
+    for i, metric in enumerate(metrics):
+        axs[i].semilogy(history.history[metric])
+        axs[i].semilogy(history.history[f"val_{metric}"])
+        axs[i].set_title(f"{metric}")
+        axs[i].set_ylabel(metric)
+        axs[i].set_xlabel("Epoch")
+        axs[i].legend(["Train", "Validation"], loc="upper right")
+
+    plt.tight_layout()
+    if save_file is not None:
+        plt.savefig(save_file)
+
+
+def plot_activations(plot_dir, model, data, name, layers=None):
+    import keract  # pip install keract for this to work
+
+    first_batch = next(iter(data.take(1)))
+    images, _ = first_batch
+    img = images[0][None, :, :, :]  # need to add back in the batch dim
+
+    activations = keract.get_activations(model, img, auto_compile=True)
+
+    if layers is not None:
+        activations = activations.get(layers)
+
+    keract.display_activations(
+        activations,
+        save=True,
+        directory=os.path.join(plot_dir, name),
+        data_format="channels_last",
+    )

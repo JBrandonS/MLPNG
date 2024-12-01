@@ -7,11 +7,11 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --gpus-per-task=1
 #SBATCH --time=8:00:00
-#SBATCH --account=jrmeyers_ml_cmb_0001 
+#SBATCH --account=jrmeyers_ml_cmb_0001
 
-conda_env="mlpng-gpu"
+conda_env="deepsphere"
 
-print_help () {
+print_help() {
     echo "Usage: $0 [options]"
     echo ""
     echo "Options:"
@@ -21,10 +21,11 @@ print_help () {
 }
 
 # Parse the CLI arguments
-if ! valid_args=$(getopt \
-    -o e:h \
-    --long env,help \
-    -- "$@"
+if ! valid_args=$(
+    getopt \
+        -o e:h \
+        --long env,help \
+        -- "$@"
 ); then
     # invalid arguments found, print usage and exit
     print_help
@@ -36,7 +37,7 @@ eval set -- "$valid_args"
 
 # Here we actually process the CLI arguments
 while [ $# -gt 0 ]; do
-  case "$1" in
+    case "$1" in
     -h | --help)
         print_help
         exit 0
@@ -49,11 +50,14 @@ while [ $# -gt 0 ]; do
         shift
         break
         ;;
-  esac
+    esac
 done
 
 module purge
-module load conda nvidia/nvhpc
+module load spack conda gcc/13.2.0 cuda/12.4.1-vz7djzz hpc-x/2.17.1 openblas/0.3.26-sauswx6 amdlibflame/4.2-5lac6gu nccl/2.21.5-1-nnpmvmq cudnn/8.9.7.29-12-lo4uzx3
+module list
+
+echo "Loading conda env: $conda_env"
 conda activate "$conda_env"
 
 time srun jupyter notebook --ip=0.0.0.0

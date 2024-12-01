@@ -1,7 +1,6 @@
 import logging
-import tensorflow as tf
-from tensorflow.keras.initializers import TruncatedNormal
-from tensorflow.keras.layers import (
+from keras.initializers import TruncatedNormal
+from keras.layers import (
     Add,
     Dense,
     Dropout,
@@ -10,11 +9,12 @@ from tensorflow.keras.layers import (
     LayerNormalization,
     BatchNormalization,
     MultiHeadAttention,
+    GlobalAveragePooling2D,
 )
 
-from scripts.models import ModelCore, register_model
-from scripts.utils import setup_logging
-from scripts.utils.tf import AlmLoader
+from mlpng.models import ModelCore, register_model
+from mlpng.utils import setup_logging
+from mlpng.utils.tf import AlmLoader
 
 logger = setup_logging(__name__, level=logging.DEBUG)
 
@@ -32,17 +32,17 @@ class ALM(ModelCore):
             self.BATCH_SIZE = 32
 
     def init_dataset(self, *args, **kwargs):
-        self._dataset = AlmLoader(self.file_complete, *args, **kwargs)
+        self._dataset = AlmLoader(self.file, *args, **kwargs)
         return self._dataset
 
     def _model(
         self,
         inputs,
         dropout_rate=0.3,
-        depth=3,
+        depth=7,
         ff_density=512,
         mha_num_heads=8,
-        mha_dropout=0.3,
+        mha_dropout=0.5,
     ):
         layer = inputs
         layer = tf.reshape(layer, (-1, self.lmax, 2 * self.lmax))
@@ -52,16 +52,16 @@ class ALM(ModelCore):
         # This should give us a good amount of room to reduce the size without much impact on the model
         layer = Dense(2 * self.lmax)(layer)
         layer = Dense(self.lmax)(layer)
-        layer = Dense(self.lmax // 8)(layer)
-        d_model = layer.shape[-1]  # // mha_num_heads
+        layer = GroupNormalization(groups=-1)(layer)
+        d_model = layer.shape[-1]
 
         for _ in range(depth):
             x = MultiHeadAttention(
                 num_heads=mha_num_heads,
                 key_dim=d_model,
                 dropout=mha_dropout,
-                # kernel_initializer=TruncatedNormal(stddev=0.01),
-                # bias_initializer=TruncatedNormal(stddev=0.01),
+                kernel_initializer=TruncatedNormal(stddev=0.01),
+                bias_initializer=TruncatedNormal(stddev=0.01),
             )(layer, layer)
             layer = Add()([layer, x])
             # this normalization applies to all the data vs just a single channel
@@ -73,10 +73,12 @@ class ALM(ModelCore):
             x = Dropout(dropout_rate)(x)
             layer = Add()([layer, x])
             layer = GroupNormalization(groups=-1)(layer)
+            # d_model = d_model // 2
 
         # Now we do a final FF to get the output as a scalar
         layer = Flatten()(layer)
-        layer = Dense(512)(layer)
+        layer = Dense(512, activation="relu")(layer)
+        layer = Dropout(dropout_rate)(layer)
         layer = Dense(128)(layer)
-        layer = Dense(64, activation="relu")(layer)
+        layer = Dense(64)(layer)
         return Dense(1)(layer)

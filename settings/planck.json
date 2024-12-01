@@ -1,5 +1,5 @@
 {
-    "cosmo_params" : {
+    "cosmo_params": {
         "H0": 67.66,
         "As": 2.105e-09,
         "ns": 0.9665,
@@ -7,10 +7,10 @@
         "omch2": 0.11933,
         "tau": 0.0561
     },
-    "nsims" : 100,
+    "nsims": 100,
     "narray": 100,
-    "npatches": 10,        
-    "nside":2048,
+    "npatches": 10,
+    "nside": 2048,
     "lmax": 2000,
     "lensing": false,
     "noise": true,

@@ -5,7 +5,6 @@
 # This can take days to run, but it will run in the background and you can check the status of the jobs with squeue
 #
 
-
 # list of the settings file to be used, will be ran in order
 # these must be in settings/ and have the .json extension
 SETTINGS=(
@@ -16,10 +15,10 @@ SETTINGS=(
   # "n512"
   # "n1024"
 
-  # these need to use high memory nodes, change sbatch/generator.sbatch to sbatch/generator-hm.sbatch in the main loop below 
+  # these need to use high memory nodes, change sbatch/generator.sbatch to sbatch/generator-hm.sbatch in the main loop below
   # "n2048"
   # "n4096"
-  
+
   # "elsner"
   # "planck"
 )
@@ -29,7 +28,7 @@ ARGS=(
   "--nsims" "100"
   # "--no-lensing"
   # "--no-noise"
-  # "--isotropic" 
+  # "--isotropic"
   "--pols" "T"
   # "--isotropic"
   "--fnl_range" "-100" "100"
@@ -74,10 +73,10 @@ submit_job() {
     arr_args=()
   fi
 
-  if [ -z "$job_id" ]; then # no job_id found, just run the job 
-      job_id=$(sbatch "${arr_args[@]}" "${SLURM_ARGS[@]}" "$sbatch" "${ARGS[@]}" "$settings" | awk '{print $4}')
+  if [ -z "$job_id" ]; then # no job_id found, just run the job
+    job_id=$(sbatch "${arr_args[@]}" "${SLURM_ARGS[@]}" "$sbatch" "${ARGS[@]}" "$settings" | awk '{print $4}')
   else # job_id found, run the job with a dependency on the previous job
-      job_id=$(sbatch "${arr_args[@]}" "${SLURM_ARGS[@]}" --dependency=afterok:"$job_id" "$sbatch" "${ARGS[@]}" "$settings" | awk '{print $4}')
+    job_id=$(sbatch "${arr_args[@]}" "${SLURM_ARGS[@]}" --dependency=afterok:"$job_id" "$sbatch" "${ARGS[@]}" "$settings" | awk '{print $4}')
   fi
 
   # acts as our return value
@@ -88,17 +87,17 @@ submit_job() {
 # each block submits a slurm job based on the settings files
 job_id=""
 for x in "${SETTINGS[@]}"; do
-    settings="settings/$x.json"
+  settings="settings/$x.json"
 
-    # comment out if you want to run all settings files as dependent on the previous
-    job_id=""
+  # comment out if you want to run all settings files as dependent on the previous
+  job_id=""
 
-    # Submit the generator job
-    job_id=$(submit_job "$job_id" "sbatch/generator.sbatch" "$settings" "true")
+  # Submit the generator job
+  job_id=$(submit_job "$job_id" "sbatch/generator.sbatch" "$settings" "true")
 
-    # Combine the data into a single file
-    job_id=$(submit_job "$job_id" "sbatch/combiner.sbatch" "$settings")
+  # Combine the data into a single file
+  job_id=$(submit_job "$job_id" "sbatch/combiner.sbatch" "$settings")
 
-    # Run the estimator on the combined data
-    job_id=$(submit_job "$job_id" "sbatch/estimator.sbatch" "$settings")
+  # Run the estimator on the combined data
+  job_id=$(submit_job "$job_id" "sbatch/estimator.sbatch" "$settings")
 done

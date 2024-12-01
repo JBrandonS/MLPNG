@@ -2,38 +2,29 @@
 #SBATCH --job-name=tuning
 #SBATCH --partition=batch
 #SBATCH --ntasks=1
-#SBATCH --mem=2000G
-#SBATCH --cpus-per-task=128
-#SBATCH --gpus-per-task=8
+#SBATCH --mem=500G
+#SBATCH --cpus-per-task=16
+#SBATCH --gpus-per-task=2
 #SBATCH --output=data/logs/tuning/%j.log
-#SBATCH --time=2-00:00:00
-#SBATCH --exclusive
-#SBATCH --account=jrmeyers_ml_cmb_0001 
+#SBATCH --time=1-00:00:00
+#SBATCH --account=jrmeyers_ml_cmb_0001
 
 # keras tuner / possibly cuda, has a bug that means memory is not cleaned correctly and you get OOM
 # this script therefore will loop through and retry the job until it completes successfully
 # runs for max time, or 30 crashes
 # note that keras tunes saves often so this is not a huge issue, but it is annoying
 
-# create the logging dir
 mkdir -p data/logs/tuning
 
-# copy the file to a runs dir so we can have many going at once
-# this is needed if you are running multiple tuning jobs at once
-# not working rn
-# mkdir -p data/tuning/runs
-# FILE=data/tuning/runs/"$SLURM_JOB_ID"-tuner.py
-# cp scripts/tuner.py "$FILE"
-
 module purge
-module load conda nvidia/nvhpc
-eval "$(conda shell.bash hook)"
-conda activate mlpng-gpu 
+module load spack conda gcc/13.2.0 cuda/12.4.1-vz7djzz hpc-x/2.17.1 openblas/0.3.26-sauswx6 amdlibflame/4.2-5lac6gu nccl/2.21.5-1-nnpmvmq cudnn/8.9.7.29-12-lo4uzx3
+
+conda activate deepsphere
 
 i=0
-command="srun python -m mlpng.tuner $*"
+command="srun python -m mlpng.tuner"
 echo "Running command: $command"
-while [ $i -lt 30 ]; do
+while [ $i -lt 3 ]; do
     if eval "$command"; then
         # If the exit status is 0, the command completed successfully, so break the loop
         break
@@ -42,7 +33,7 @@ while [ $i -lt 30 ]; do
         echo "Job failed, retrying in 3 seconds..."
         sleep 3
     fi
-    i=$((i+1))
+    i=$((i + 1))
 done
 # rm "$FILE"
 echo "Done!"

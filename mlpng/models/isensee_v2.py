@@ -1,7 +1,7 @@
-import tensorflow as tf
 import numpy as np
 
-from tensorflow.keras.layers import (
+import keras
+from keras.layers import (
     Layer,
     LeakyReLU,
     ReLU,
@@ -18,8 +18,8 @@ from tensorflow.keras.layers import (
     GroupNormalization,
 )
 
-from scripts.models import ModelCore, register_model
-from scripts.utils.tf.dataloaders import PatchLoader
+from mlpng.models import ModelCore, register_model
+from mlpng.utils.tf.dataloaders import PatchLoader
 
 
 class PeriodicPadding2D(Layer):
@@ -31,8 +31,8 @@ class PeriodicPadding2D(Layer):
         ).astype(np.int32)
 
     def call(self, x):
-        x = tf.gather(x, self.indices, axis=1)
-        x = tf.gather(x, self.indices, axis=2)
+        x = keras.ops.take(x, self.indices, axis=1)
+        x = keras.ops.take(x, self.indices, axis=2)
         return x
 
 
@@ -41,7 +41,7 @@ class ISENSEE_V2(ModelCore):
     """This is a clone of model taken from Thomas' UNET_fnl notebook, with modifications"""
 
     def init_dataset(self, *args, **kwargs):
-        self._dataset = PatchLoader(self.file_complete, *args, **kwargs)
+        self._dataset = PatchLoader(self.file, *args, **kwargs)
         return self._dataset
 
     def create_localization_module(self, input_layer, current_grid, n_filters):
@@ -107,11 +107,11 @@ class ISENSEE_V2(ModelCore):
             return activation()(layer)
 
     def _model(
-        self, 
-        inputs, 
-        depth=9, 
-        n_base_filters=8, 
-        dropout_rate=0.3, 
+        self,
+        inputs,
+        depth=9,
+        n_base_filters=8,
+        dropout_rate=0.3,
         n_base_labels=32,
     ):
         x = inputs

@@ -6,6 +6,7 @@ from .utils import (
     get_fisher,
     print_errors,
     trim_alms,
+    try_init_wandb,
 )
 from .plots import (
     plot_cl,
@@ -17,7 +18,10 @@ from .plots import (
     plot_mollview,
     plot_elsner_comp,
     pol_str,
+    plot_metrics,
+    plot_activations,
 )
+from .callbacks import WarmupLearningRate, AttentionSchedule
 
 __all__ = [
     "setup_logging",
@@ -27,6 +31,7 @@ __all__ = [
     "get_fisher",
     "print_errors",
     "trim_alms",
+    "try_init_wandb",
     "plot_cl",
     "plot_cl_alm",
     "plot_cl_map",
@@ -36,4 +41,10 @@ __all__ = [
     "plot_mollview",
     "plot_elsner_comp",
     "pol_str",
+    "plot_metrics",
+    "plot_activations",
+    "WarmupLearningRate",
+    "AttentionSchedule",
+    # "PatchLoader",
+    # "AlmLoader",
 ]

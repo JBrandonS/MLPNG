@@ -1,5 +1,5 @@
 {
-    "cosmo_params" : {
+    "cosmo_params": {
         "H0": 70.1,
         "As": 2.457e-09,
         "pivot_scalar": 0.002,
@@ -8,10 +8,13 @@
         "omch2": 0.1143,
         "tau": 0.084
     },
-    "nsims" : 100,
+    "nsims": 100,
     "narray": 100,
     "nside": 512,
-    "lmax": 1024,        
+    "lmax": 1024,
     "base_name": "elsner",
-    "fnl_range": [-100, 100]
+    "fnl_range": [
+        -100,
+        100
+    ]
 }

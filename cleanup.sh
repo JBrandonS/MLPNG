@@ -6,7 +6,7 @@ remove_tf=false
 remove_models=false
 remove_ksw=false
 
-print_help () {
+print_help() {
     echo "Usage: $0 [options]"
     echo ""
     echo "A possibly destructive cleaner which will remove the logs and optionally data files."
@@ -22,12 +22,12 @@ print_help () {
     echo ""
 }
 
-
 # Parse the CLI arguments
-if ! valid_args=$(getopt \
-    -o mdptkh \
-    --long models,data,plots,ksw,tf,all,help \
-    -- "$@"
+if ! valid_args=$(
+    getopt \
+        -o mdptkh \
+        --long models,data,plots,ksw,tf,all,help \
+        -- "$@"
 ); then
     # invalid arguments found, print usage and exit
     print_help
@@ -39,7 +39,7 @@ eval set -- "$valid_args"
 
 # Here we actually process the CLI arguments
 while [ $# -gt 0 ]; do
-  case "$1" in
+    case "$1" in
     -h | --help)
         print_help
         exit 0
@@ -76,7 +76,7 @@ while [ $# -gt 0 ]; do
         shift
         break
         ;;
-  esac
+    esac
 done
 
 # remove the jupyter server file if it is not running and exists

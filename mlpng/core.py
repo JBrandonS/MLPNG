@@ -4,9 +4,10 @@ import json
 import logging
 import os
 
-from attr import dataclass
 import healpy as hp
 import numpy as np
+
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -287,11 +288,15 @@ class Core:
         self.nside = self._get("nside", 1024)
         self.lensing = self._get("lensing", False)
         self.nsims = self._get("nsims", 100)
+        self.ndups = self._get("ndups", 10)
         self.narray = self._get("narray", 100)
         self.force_gen = self._get("force_generation", False)
         self.force_ksw = self._get("force_ksw", False)
-        self.num_estimates = self._get("num_estimates", self.nsims * self.narray)
+        self.num_estimates = self._get("num_estimates", 300)
         self.plot = self._get("plot", True)
+        
+        self.save_alms = self._get("save_alms", False)
+        self.save_patches = self._get("save_patches", False)
 
         # setup the lmax values
         self.lmin = self._get("lmin", 2)
@@ -344,7 +349,7 @@ class Core:
         logger.debug("Using %s precision, where possible", self.precision)
 
         # setup some derived parameters
-        self.total_sims = self.nsims * self.npols * self.narray
+        self.total_sims = self.ndups * self.nsims * self.npols * self.narray
 
         # setup some info parameters
         self.nell = self.lmax + 1
@@ -549,6 +554,8 @@ class Core:
         self.dirs["base"] = self._get("base_dir", "data")
         self.dirs["plot"] = join_paths(self._get("plot_dir", "plots"))
         self.dirs["data"] = join_paths(self._get("data_dir", "data"))
+        self.dirs["tb"] = join_paths(self._get("tb_dir", "tensorboard"))
+        self.dirs["model"] = join_paths(self._get("model_dir", "models"))
 
         self.file = os.path.join(self.dirs["data"], f"{self.name}{tstr}.hdf5")
         logger.debug("Using data file: %s", self.file)
@@ -683,6 +690,7 @@ class Slurm:
         array_index (int): The index of the array job. Default is 0.
         is_main (bool): Indicates if this is the main job. Default is False.
     """
+
     name: str = "unknown"
     job: int = 0
     task_count: int = 0

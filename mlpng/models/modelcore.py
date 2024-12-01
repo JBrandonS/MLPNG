@@ -2,10 +2,10 @@ import sys
 import argparse
 import logging
 
-from tensorflow.keras import Model, Input
+from keras import Model, Input
 
-from scripts import Core
-from scripts.utils.tf.dataloaders import PatchLoader
+from mlpng import Core
+from mlpng.utils.dataloaders import HDF5Dataset
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +67,9 @@ def AutoModel(args=None, default="isensee"):
 
     Args:
         args (list, optional): A list of command line arguments. If not provided,
-                               the function will use sys.argv by default.
-                               The "--model" argument specifies the model class to instantiate.
-                               The default model class is "isensee".
+                            the function will use sys.argv by default.
+                            The "--model" argument specifies the model class to instantiate.
+                            The default model class is "isensee".
 
     Returns:
         model (object): An instance of the specified model class
@@ -144,7 +144,7 @@ class ModelCore(Core):
         Returns:
         The initialized dataset.
         """
-        self._dataset = PatchLoader(self.file_complete, *args, **kwargs)
+        self._dataset = HDF5Dataset(self.file, *args, **kwargs)
         return self._dataset
 
     def make_model(self, name=None, **kwargs):

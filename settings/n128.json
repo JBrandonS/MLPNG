@@ -1,5 +1,5 @@
 {
-    "cosmo_params" : {
+    "cosmo_params": {
         "H0": 67.66,
         "As": 2.1056e-9,
         "ns": 0.9665,
@@ -9,8 +9,8 @@
         "pivot_scalar": 0.05
     },
     "As_old": 2.457e-09,
-    "nsims" : 100,
-    "narray": 100,                         
+    "nsims": 100,
+    "narray": 100,
     "nside": 128,
     "noise": true,
     "noise_tt": 50,

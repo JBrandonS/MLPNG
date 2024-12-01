@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --output=data/logs/combiner/%j.log
 #SBATCH --time=8:00:00
-#SBATCH --account=jrmeyers_ml_cmb_0001 
+#SBATCH --account=jrmeyers_ml_cmb_0001
 
 # create the logging dir
 mkdir -p data/logs/combiner

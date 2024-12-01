@@ -3,13 +3,14 @@
 import logging
 import os
 import sys
+from numba import none
 import psutil  # Add this import
 
 import healpy as hp
 import numpy as np
 from joblib import Parallel, delayed
 from scipy.interpolate import interp1d
-from tqdm.auto import trange
+from tqdm.auto import trange, tqdm
 
 import matplotlib.pyplot as plt
 
@@ -31,6 +32,7 @@ from .utils.plots import (
 
 logger = setup_logging("generator", level=logging.DEBUG)
 
+
 def log_memory_usage():
     """Logs the current memory usage."""
     process = psutil.Process(os.getpid())
@@ -38,6 +40,7 @@ def log_memory_usage():
     logger.debug(
         f"Memory usage: RSS={mem_info.rss / (1024 ** 2):.2f} MB, VMS={mem_info.vms / (1024 ** 2):.2f} MB"
     )
+
 
 def interpolator(func, ells_sparse, axis=1, kind="cubic", fill_value="extrapolate"):
     """
@@ -147,6 +150,7 @@ def trap_generator(generator, radii):
         y_prev = y_curr
 
     return integral
+
 
 def generate_alm_ng(core, alms):
     """
@@ -291,6 +295,62 @@ def make_alm_plots(core, alm_l, alm_ng, alms):
         ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}^{NG}$",
     )
     log_memory_usage()  # Log memory usage
+
+
+def lens_alms(core, alms_to_lens):
+    """ """
+    full_pol = core.npols + (1 if core.use_e and core.lensing else 0)
+
+    # make a copy of the alms for the lensing since they will modify them
+    alm = alms_to_lens.copy()
+    alm_lensed = np.zeros(
+        (core.nsims, core.ndup, full_pol, core.nelem), dtype=core.c_dtype
+    )
+
+    logger.debug("Getting lensing cl_phi and data")
+    if not core.use_t:
+        alm = np.concatenate(
+            (np.zeros((core.nsims, core.ndup, 1, core.nelem)), alm), axis=2
+        )
+    if core.use_e:
+        # need to add a zero for the spin-2 component
+        alm = np.concatenate(
+            (alm, np.zeros((core.nsims, core.ndup, 1, core.nelem))), axis=2
+        )
+
+    # PP PT PE
+    cl_phi = core.cosmo._camb_data.get_lens_potential_cls(core.lmax, "muK", True)
+    plm = utils_hp.synalm(cl_phi[:, 0], core.lmax, mmax=None)
+
+    # transform the lensing potential into spin-1 deflection field
+    fl = np.sqrt(np.arange(core.nell) * np.arange(1, core.nell + 1))
+    dlm = utils_hp.almxfl(plm, fl, mmax=None, inplace=False)
+
+    geom_info = ("healpix", {"nside": core.nside})
+    geom = lenspyx.get_geom(geom_info)
+
+    for sim, dup in tqdm(
+        zip(np.arange(core.nsims), np.arange(core.ndup)),
+        desc="Lensing",
+        total=core.nsims,
+    ):
+        lenmap = lenspyx.alm2lenmap(
+            alm[sim, dup], dlm, geometry=geom_info, nthreads=core.n_cpus
+        )
+        lenmap = np.ascontiguousarray(lenmap)  # convert from tuple to array
+
+        if core.use_t:
+            alm_lensed[sim, dup, 0] = geom.map2alm(
+                lenmap[0].copy(), core.lmax, core.lmax, nthreads=core.n_cpus
+            )
+
+        if core.use_e:
+            idx = 1 if core.use_t else 0
+            alm_lensed[sim, dup, idx:] = geom.map2alm_spin(
+                lenmap[1:].copy(), 2, core.lmax, core.lmax, nthreads=core.n_cpus
+            )
+
+    return alm_lensed
 
 
 def patch_and_lens(core, alms):
@@ -510,11 +570,11 @@ def main():
     alm_ng = generate_alm_ng(core, alm_l)
 
     # generate the fnls
-    fnls = core.rng.uniform(core.fnl_min, core.fnl_max, (core.nsims,))
+    fnls = core.rng.uniform(core.fnl_min, core.fnl_max, (core.nsims, core.ndups))
 
     # finally combine into the full alms and remove the monopole and dipole terms
-    alms = alm_l + fnls[:, None, None] * alm_ng
-    alms = remove_mono_dipole(alms, inplace=True)  # safety
+    alms = alm_l[None, ...] + fnls[..., None, None] * alm_ng[None, ...]
+    # alms = remove_mono_dipole(alms, inplace=True)  # safety
 
     logger.info("Completed Alm generation!")
 
@@ -522,16 +582,30 @@ def main():
         # lets make a few plots for the alms
         make_alm_plots(core, alm_l, alm_ng, alms)
 
-    logger.info("Starting lensing and patch generation")
-    patches, alm_lensed = patch_and_lens(core, alms)
+    alm_lensed = None
+    if core.lensing:
+        logger.info("Starting lensing")
+        alm_lensed = lens_alms(core, alms)
 
     logger.info("Saving data")
     sdata = {}
-    sdata["alm"] = alms
+    if core.save_alms:
+        sdata["alm"] = alms
+        sdata["alm_l"] = alm_l
+        sdata["alm_ng"] = alm_ng
+        if core.lensing:
+            sdata["alm_lensed"] = alm_lensed
+    # if core.save_patches:
+    #     sdata["patch"] = patches
+
     sdata["fnl"] = fnls
-    sdata["patch"] = patches
+    sdata["fnl_norm"] = 2 * ((fnls - core.fnl_min) / (core.fnl_max - core.fnl_min)) - 1
+
+    sdata["map"] = hp.reorder(hp.alm2map(alms, nside=core.nside, pol=False), r2n=True)
     if core.lensing:
-        sdata["alm_lensed"] = alm_lensed
+        sdata["map_lensed"] = hp.reorder(
+            hp.alm2map(alm_lensed, nside=core.nside, pol=False), r2n=True
+        )
     save_data(core.file, sdata, remove_if_exists=True)
 
     logger.info("Finished %s!", core.slurm.job)
