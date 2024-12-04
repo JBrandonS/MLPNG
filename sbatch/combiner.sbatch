@@ -2,7 +2,7 @@
 #SBATCH --job-name=combiner
 #SBATCH --partition=standard-s
 #SBATCH --ntasks=1
-#SBATCH --mem=20G
+#SBATCH --mem=500G
 #SBATCH --cpus-per-task=1
 #SBATCH --output=data/logs/combiner/%j.log
 #SBATCH --time=8:00:00

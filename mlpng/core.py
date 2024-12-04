@@ -1,3 +1,4 @@
+import math
 import sys
 import argparse
 import json
@@ -285,18 +286,18 @@ class Core:
         np.random.seed(self.seed)
 
         # main parameters
-        self.nside = self._get("nside", 1024)
-        self.lensing = self._get("lensing", False)
+        self.nside = self._get("nside", 128)
+        self.lensing = self._get("lensing", True)
         self.nsims = self._get("nsims", 100)
-        self.ndups = self._get("ndups", 10)
+        self.ndups = self._get("ndups", 25)
         self.narray = self._get("narray", 100)
         self.force_gen = self._get("force_generation", False)
         self.force_ksw = self._get("force_ksw", False)
-        self.num_estimates = self._get("num_estimates", 300)
+        self.num_estimates = self._get(
+            "num_estimates", min(self.nsims * self.narray, 300)
+        )
         self.plot = self._get("plot", True)
-        
-        self.save_alms = self._get("save_alms", False)
-        self.save_patches = self._get("save_patches", False)
+        self.save_alms = self._get("save_alms", True)
 
         # setup the lmax values
         self.lmin = self._get("lmin", 2)
@@ -306,10 +307,10 @@ class Core:
                 "lmax = %s, lmax < 300 not supported. Setting lmax to 300", self.lmax
             )
             self.lmax = 300
-        self.cosmo_params["lmax"] = self.lmax  # + self._get("lmax_buffer", 128)
+        self.cosmo_params["lmax"] = self.lmax + self._get("lmax_buffer", 128)
 
         # setup the fnl values
-        self.fnl_min, self.fnl_max = self._get("fnl_range", (-100, 100))
+        self.fnl_min, self.fnl_max = self._get("fnl_range", (-1000, 1000))
 
         # setup the polarization which should support --pols [T|E|TE]
         pols = self._get("pols", "T")
@@ -320,15 +321,16 @@ class Core:
         # we do not want to support B mode since it is so small, so lets remove anything with B in it.
         self.pols = tuple(c for p in pols for c in p if p != "B")
         self.npols = len(self.pols)
-        self.isotropic = self._get("isotropic", True)
 
         self.use_t = "T" in self.pols
         self.use_e = "E" in self.pols
         self.use_b = False  # "B" in self.pols
-        if not self.isotropic and self.use_t and self.use_e:
-            self.use_te = True
-        else:
+        self.isotropic = self._get("isotropic", not (self.use_t and self.use_e))
+        if self.isotropic:
             self.use_te = False
+        else:
+            self.use_te = True
+
         logger.debug(
             "Using polarizations T: %s, E: %s, TE: %s",
             self.use_t,
@@ -337,8 +339,7 @@ class Core:
         )
 
         # setup our precision types to be consistent
-        # some parts of the code which interface with cython will use float64, look into
-        if self._get("double_precision", True):
+        if self._get("double_precision", False):
             self.r_dtype = np.float64
             self.c_dtype = np.complex128
             self.precision = "double"
@@ -353,6 +354,7 @@ class Core:
 
         # setup some info parameters
         self.nell = self.lmax + 1
+        self.npix = hp.nside2npix(self.nside)
         self.nelem = hp.Alm.getsize(self.lmax)
         self.ells = np.arange(self.nell)
         self.alm_shape = (self.nsims, self.npols, self.nelem)
@@ -405,13 +407,7 @@ class Core:
 
         self.noise = self._get("noise", True)
         if self.noise:
-            # TODO beam_width and noises should be float, or 1d array with 1 (T), or 2 (t, pol) elements
-            # or 2d array with (npol, nfreq) elements which will be n_ell = 1 / sum (n_ell[freq])
-            # possibly also allow just providing a file with the noise and beam values
             fwhm = convert(self._get("beam_width", 1))
-            # sigma = fwhm / np.sqrt(8.0 * np.log(2.0))
-            # b_ell = np.exp(-1 / 2 * self.ells * (self.ells + 1) * sigma**2)
-            # b_ell = b_ell[None, ...]
             b_ell = hp.sphtfunc.gauss_beam(fwhm, self.lmax, True).T
 
             # T, E, B, TE
@@ -424,8 +420,8 @@ class Core:
             n_ell = np.full((4, self.nell), 1e-16, dtype=self.r_dtype)
             b_ell = np.ones((4, self.nell), dtype=self.r_dtype)
 
-        self.n_ell = n_ell[self.pol_idxs(keep_b=False, keep_te=True)]
-        self.b_ell = b_ell[self.pol_idxs(keep_b=False, keep_te=True)]
+        self.n_ell = n_ell[self.pol_idxs(keep_b=True, keep_te=True)]
+        self.b_ell = b_ell[self.pol_idxs(keep_b=True, keep_te=True)]
 
     def _radii(self):
         """
@@ -536,10 +532,6 @@ class Core:
         pol_str = "".join(self.pols)
         tstr = f"_{self.slurm.array_index}" if self.slurm.array_index > 0 else ""
 
-        # add an i for isotropic if needed
-        if self.isotropic and self.use_t and self.use_e:
-            pol_str = f"i{pol_str}"
-
         # simplify the fnl range string if abs(min) and max are the same
         if self.fnl_max == abs(self.fnl_min):
             fstr = f"{self.fnl_max}"
@@ -548,7 +540,7 @@ class Core:
 
         # finally we build our string
         name = self._get("base_name", f"l{self.lmax}_n{self.nside}")
-        self.name = f"{name}_{lens}_{nn}_{pol_str}x{csims}_f{fstr}"
+        self.name = f"{name}_{pol_str}_{csims}x{self.ndups}_f{fstr}"
 
         self.dirs = {}
         self.dirs["base"] = self._get("base_dir", "data")
@@ -560,13 +552,12 @@ class Core:
         self.file = os.path.join(self.dirs["data"], f"{self.name}{tstr}.hdf5")
         logger.debug("Using data file: %s", self.file)
 
-        if self.force_ksw:
-            self.dirs["mc"] = join_paths(self._get("mc_dir", "kswmc"))
-            self.mc_file = os.path.join(self.dirs["mc"], f"{self.name}.hdf5")
-            self.mc_steps = self._get("mc_steps", 100)
-            logger.debug(
-                "Using KSW MC file: %s, with nsteps %s", self.mc_file, self.mc_steps
-            )
+        self.dirs["mc"] = join_paths(self._get("mc_dir", "kswmc"))
+        self.mc_file = os.path.join(self.dirs["mc"], f"{self.name}.hdf5")
+        self.mc_steps = self._get("mc_steps", 100)
+        logger.debug(
+            "Using KSW MC file: %s, with nsteps %s", self.mc_file, self.mc_steps
+        )
 
     def init_estimator(self, verbose=False):
         """
@@ -601,20 +592,15 @@ class Core:
             logger.debug(camb.get_results(camb_params))
 
         self.cosmo: Cosmology = Cosmology(camb_params, verbose)
-        self.cosmo.compute_transfer(self.lmax, verbose)
+        self.cosmo.compute_transfer(self.lmax + 128, verbose)
         self.cosmo.compute_c_ell()
 
         if self.lensing:
-            c_ells = self.cosmo.c_ell["lensed_scalar"]["c_ell"].T
+            c_ell = self.cosmo.c_ell["lensed_scalar"]["c_ell"].T
         else:
-            c_ells = self.cosmo.c_ell["unlensed_scalar"]["c_ell"].T
-        self.c_ell = c_ells[self.pol_idxs()]
-
-        if self.noise:
-            self.s_ell = self.b_ell**2 * self.c_ell + self.n_ell
-            self.s_ell[:, : self.lmin] = 0.0  # remove the monopole and dipole terms
-        else:
-            self.s_ell = self.c_ell.copy()
+            c_ell = self.cosmo.c_ell["unlensed_scalar"]["c_ell"].T
+        self.c_ell = c_ell[self.pol_idxs(keep_b=True, keep_te=True), : self.nell]
+        self.c_ell = self.c_ell.astype(self.r_dtype)
 
         ns = self.cosmo_params["ns"]
         ps = self.cosmo_params["pivot_scalar"]
@@ -623,7 +609,7 @@ class Core:
 
         self.estimator: KSW = KSW(
             self.cosmo.red_bispectra,
-            None,  # lambda a: a,  # we will send the alms directly
+            lambda a: a,  # we will send the alms directly
             self.lmax,
             self.pols,
             self.precision,
@@ -640,8 +626,8 @@ class Core:
         """
         # TODO: Look into simplifying this method
         start = 0 if self.use_t else (0 if pretrimmed else 1)
-        num_to_take = 1 if self.use_t else 0
 
+        num_to_take = 1 if self.use_t else 0
         if self.use_e:
             num_to_take += 2 if keep_b else 1  # we also need B
         if keep_te and self.use_te:

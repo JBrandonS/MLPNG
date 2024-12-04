@@ -62,22 +62,31 @@ def main():
     theta_batch = int(np.floor(1.5 * core.lmax + 1)) // mpi_size
     logger.debug("Using theta_batch %s", theta_batch)
 
-    # since we are only doing full sky right now, we do not need to use MC methods
-    # TODO, check mc methods
-    if core.force_ksw:
+    # get our icov
+    pols = core.pol_idxs(keep_b=False, keep_te=False, pretrimmed=True)
+    ic_ell = np.zeros_like(core.c_ell)
+    ic_ell[pols, core.lmin :] = 1 / core.c_ell[pols, core.lmin :]
+    inoise = np.full(core.n_ell.shape, 1e-16)
+    inoise[pols, core.lmin :] = 1 / core.n_ell[pols, core.lmin :]
+    icov = get_itotcov_ell(ic_ell, inoise, core.b_ell)
+    icov = np.array([icov[i, i] for i in pols])
+
+    if core.isotropic:
+        logger.debug("Computing fisher")
+        fisher = core.estimator.compute_fisher_isotropic(icov, comm=mpi_comm)
+    else:
         if os.path.exists(core.mc_file):
             logger.info("Loading KSW state from %s", core.mc_file)
             core.estimator.start_from_read_state(core.mc_file, comm=mpi_comm)
         else:
             alm_steps = generate_alm(core, nsims=core.mc_steps)
-            logger.debug("Done")
 
             def step_loader(idx):
                 """for stepping the KSW estimator, we just generate new unique sims"""
                 logger.debug("Sending alm step %s", idx)
-                return alm_steps[idx, : core.npols]
+                return alm_steps[idx]
 
-            logger.info("Running KSW step, num steps: %s", 100)
+            logger.info("Running KSW step, num steps: %s", core.mc_steps)
             core.estimator.step_batch(
                 step_loader,
                 range(core.mc_steps),
@@ -86,47 +95,32 @@ def main():
             )
 
             # save the mc state if we are using the mc file
-            logger.info("Saving KSW state to %s", core.mc_file)
-            core.estimator.write_state(core.mc_file, comm=mpi_comm)
+            if core.slurm.is_main:
+                logger.info("Saving KSW state to %s", core.mc_file)
+                core.estimator.write_state(core.mc_file, comm=mpi_comm)
 
         fisher = core.estimator.compute_fisher()
-    else:
-        ic_ell = np.zeros_like(core.c_ell)
-        ic_ell[..., core.lmin :] = 1 / core.c_ell[..., core.lmin :]
-
-        inoise = np.full(core.n_ell.shape, 1e-16)
-        inoise[..., core.lmin :] = 1 / core.n_ell[..., core.lmin :]
-
-        icov = get_itotcov_ell(ic_ell, inoise, core.b_ell)
-
-        logger.debug("Computing Fisher")
-        fisher = core.estimator.compute_fisher_isotropic(icov, comm=mpi_comm)
     logger.info("Fisher: %s, standard deviation: %s", fisher, 1 / np.sqrt(fisher))
 
     # Finally we can get our estimates
     pol_idxs = core.pol_idxs(pretrimmed=True)
-    alms = data["alm_lensed"] if core.lensing else data["alm"]  # not in memory yet
-
-    # look into changing this but its working
-    cov = core.c_ell + core.n_ell / core.b_ell**2
-    icov = np.zeros_like(core.s_ell)
-    icov[..., core.lmin :] = 1 / cov[..., core.lmin :]
-    icov[..., : core.lmin] = 0
-    icov *= core.b_ell**2  # maybe could do this is cov to save some time
+    # alms = data["alm_lensed"] if core.lensing else
+    alms = data["alm"]  # not in memory yet
 
     estimates, _, _, _ = core.estimator.compute_estimate_batch(
-        lambda idx: icov_func(icov, alms[idx, pol_idxs]),
+        lambda idx: icov_func(icov, alms[idx, 0, pol_idxs]),
         range(core.num_estimates),
         comm=mpi_comm,
         fisher=fisher,
         theta_batch=theta_batch,
-        lin_term=0 if not core.force_ksw else None,
+        lin_term=0 if core.isotropic else None,
     )
 
     if mpi_root:
         logger.info("Saving data")
 
-        fnls = np.array(data["fnl"][:])
+        fnls = np.array(data["fnl"][: core.num_estimates])[:, 0].flatten()
+        logger.debug("estimates: %s, fnls: %s", estimates.shape, fnls.shape)
         plot_predictions(
             fnls, estimates, fisher=fisher, save_file=core.get_plot_file("preds")
         )

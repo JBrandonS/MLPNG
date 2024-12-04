@@ -129,9 +129,10 @@ def plot_cl(
             )
 
         if plot_full_camb:
+            s_ell = core.b_ell**2 * core.c_ell + core.n_ell
             plot_func(
                 ells,
-                scale * core.s_ell[pol, lmin : lmax + 1],
+                scale * s_ell[pol, lmin : lmax + 1],
                 label=r"camb + noise" + pstr,
                 linestyle="--",
             )

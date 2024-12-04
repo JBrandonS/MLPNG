@@ -3,9 +3,7 @@
 import logging
 import os
 import sys
-from numba import none
-import psutil  # Add this import
-
+from itertools import product
 import healpy as hp
 import numpy as np
 from joblib import Parallel, delayed
@@ -20,7 +18,7 @@ from pixell import curvedsky, enmap, reproject
 
 from ksw.radial_functional import radial_func
 
-from . import Core
+from . import Core, get_itotcov_ell
 from .utils import save_data, setup_logging, remove_mono_dipole
 from .utils.plots import (
     plot_cl_alm,
@@ -31,15 +29,6 @@ from .utils.plots import (
 )
 
 logger = setup_logging("generator", level=logging.DEBUG)
-
-
-def log_memory_usage():
-    """Logs the current memory usage."""
-    process = psutil.Process(os.getpid())
-    mem_info = process.memory_info()
-    logger.debug(
-        f"Memory usage: RSS={mem_info.rss / (1024 ** 2):.2f} MB, VMS={mem_info.vms / (1024 ** 2):.2f} MB"
-    )
 
 
 def interpolator(func, ells_sparse, axis=1, kind="cubic", fill_value="extrapolate"):
@@ -93,7 +82,13 @@ def generate_alm(core, nsims=None, cls=None):
         else:
             cls = core.c_ell.copy()
 
+    if core.use_e and not core.use_t:
+        empty = np.zeros((1, cls.shape[1]))
+        cls = np.concatenate((empty, cls, empty), axis=0)
+
+    print("cls dtype", cls.dtype, flush=True)
     sims = [hp.synalm(cls, lmax=core.lmax, new=True) for _ in range(nsims)]
+    print("sims dtype", sims[0].dtype, flush=True)
     return np.ascontiguousarray(sims)[:, core.pol_idxs()]
 
 
@@ -168,7 +163,9 @@ def generate_alm_ng(core, alms):
     tr_ells = core.cosmo.transfer["ells"]
     tr_k = core.cosmo.transfer["k"]
     # this is T, E, PHI
-    tr_ell_k = core.cosmo.transfer["tr_ell_k"][..., core.pol_idxs()]
+    tr_ell_k = core.cosmo.transfer["tr_ell_k"][
+        ..., core.pol_idxs(keep_b=False, keep_te=False)
+    ]
 
     # this will be the f(k) value to be placed in the radial function
     # first will be for alpha_ell, second will be beta_ell
@@ -185,10 +182,11 @@ def generate_alm_ng(core, alms):
     beta_ell = rad[..., 1]
     beta_l = interpolator(beta_ell, tr_ells)(core.ells)
 
-    # C_l here is the C_l = b_l^2 * C_l^T + N_l, see Komatsu 2005
-    icov = np.zeros_like(core.s_ell)
     s_ell = core.c_ell + core.n_ell / core.b_ell**2
-    icov[..., core.lmin :] = 1 / s_ell[..., core.lmin :]
+    s_ell = s_ell[core.pol_idxs(keep_b=False, keep_te=False, pretrimmed=True)]
+
+    icov = np.zeros_like(s_ell)
+    icov[:, core.lmin :] = 1 / s_ell[:, core.lmin :]
     bl_div_cl = np.zeros_like(beta_l)
     bl_div_cl[:, core.lmin :] = beta_l[:, core.lmin :] * icov.T[None, core.lmin :]
 
@@ -267,26 +265,21 @@ def make_alm_plots(core, alm_l, alm_ng, alms):
         elsner_pols=core.pol_idxs(),
     )
 
-    # lets plot the alms with camb for testing that side of things
-    cl_settings = {
-        "plot_camb": True,
-        "plot_noise": False,
-        "plot_full_camb": True,
-    }
-    # full alms
     plot_cl_alm(
         core,
         alms[sim],
         save_file=core.get_plot_file(f"{sim}_alm"),
         ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}",
-        **cl_settings,
+        plot_camb=True,
+        plot_full_camb=True,
     )
     plot_cl_alm(
         core,
         alm_l[sim],
         save_file=core.get_plot_file(f"{sim}_alm_l"),
         ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}^{L}$",
-        **cl_settings,
+        plot_camb=True,
+        plot_full_camb=True,
     )
     plot_cl_alm(
         core,
@@ -294,7 +287,6 @@ def make_alm_plots(core, alm_l, alm_ng, alms):
         save_file=core.get_plot_file(f"{sim}_alm_ng"),
         ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}^{NG}$",
     )
-    log_memory_usage()  # Log memory usage
 
 
 def lens_alms(core, alms_to_lens):
@@ -303,20 +295,16 @@ def lens_alms(core, alms_to_lens):
 
     # make a copy of the alms for the lensing since they will modify them
     alm = alms_to_lens.copy()
-    alm_lensed = np.zeros(
-        (core.nsims, core.ndup, full_pol, core.nelem), dtype=core.c_dtype
-    )
-
-    logger.debug("Getting lensing cl_phi and data")
     if not core.use_t:
         alm = np.concatenate(
-            (np.zeros((core.nsims, core.ndup, 1, core.nelem)), alm), axis=2
+            (np.zeros((core.nsims, core.ndups, 1, core.nelem)), alm), axis=2
         )
     if core.use_e:
         # need to add a zero for the spin-2 component
         alm = np.concatenate(
-            (alm, np.zeros((core.nsims, core.ndup, 1, core.nelem))), axis=2
+            (alm, np.zeros((core.nsims, core.ndups, 1, core.nelem))), axis=2
         )
+    alm_lensed = np.zeros_like(alm)
 
     # PP PT PE
     cl_phi = core.cosmo._camb_data.get_lens_potential_cls(core.lmax, "muK", True)
@@ -329,11 +317,7 @@ def lens_alms(core, alms_to_lens):
     geom_info = ("healpix", {"nside": core.nside})
     geom = lenspyx.get_geom(geom_info)
 
-    for sim, dup in tqdm(
-        zip(np.arange(core.nsims), np.arange(core.ndup)),
-        desc="Lensing",
-        total=core.nsims,
-    ):
+    for sim, dup in product(range(core.nsims), range(core.ndups)):
         lenmap = lenspyx.alm2lenmap(
             alm[sim, dup], dlm, geometry=geom_info, nthreads=core.n_cpus
         )
@@ -345,11 +329,13 @@ def lens_alms(core, alms_to_lens):
             )
 
         if core.use_e:
-            idx = 1 if core.use_t else 0
-            alm_lensed[sim, dup, idx:] = geom.map2alm_spin(
+            # print(
+            #     "alm_lensed", alm_lensed.shape, "lenmap", lenmap.shape, flush=True
+            # )
+            # idx = 1 if core.use_t else 0
+            alm_lensed[sim, dup, 1:] = geom.map2alm_spin(
                 lenmap[1:].copy(), 2, core.lmax, core.lmax, nthreads=core.n_cpus
             )
-
     return alm_lensed
 
 
@@ -522,8 +508,27 @@ def patch_and_lens(core, alms):
                 save_file=core.get_plot_file(f"{sim}{pstr}-patch.png"),
             )
 
-    log_memory_usage()  # Log memory usage
+    # log_memory_usage()  # Log memory usage
     return patches, alm_lensed
+
+
+def get_fisher_iso(core):
+    core.init_estimator()
+    pols = core.pol_idxs(keep_b=False, keep_te=False, pretrimmed=True)
+
+    ic_ell = np.zeros_like(core.c_ell)
+    ic_ell[pols, core.lmin :] = 1 / core.c_ell[pols, core.lmin :]
+
+    inoise = np.full(core.n_ell.shape, 1e-16)
+    inoise[pols, core.lmin :] = 1 / core.n_ell[pols, core.lmin :]
+
+    icov = get_itotcov_ell(ic_ell, inoise, core.b_ell)
+    pols = core.pol_idxs(keep_b=False, keep_te=False)
+    icov = icov[pols, pols]
+
+    fisher = core.estimator.compute_fisher_isotropic(icov, comm=None)
+    # it improves the saving to return a numpy array
+    return np.array([fisher])
 
 
 def main():
@@ -564,28 +569,60 @@ def main():
     core.init_estimator()
 
     alm_l = generate_alm(core)
+    logger.debug("alm_l shape: %s, dtype: %s", alm_l.shape, alm_l.dtype)
 
     # get the non-gaussian alms, this will take a long time
-    logger.debug("Starting non-gaussian Alm generation")
+    logger.debug("Starting non-gaussian alm generation")
     alm_ng = generate_alm_ng(core, alm_l)
+    logger.debug("alm_ng shape: %s, dtype:%s", alm_ng.shape, alm_ng.dtype)
 
     # generate the fnls
-    fnls = core.rng.uniform(core.fnl_min, core.fnl_max, (core.nsims, core.ndups))
+    fnls = core.rng.uniform(core.fnl_min, core.fnl_max, (core.nsims, core.ndups, 1, 1))
+    logger.debug("fnls shape: %s", fnls.shape)
+
+    # Add the duplicate dimension to the alms
+    alm_l = alm_l[:, None]
+    alm_ng = alm_ng[:, None]
 
     # finally combine into the full alms and remove the monopole and dipole terms
-    alms = alm_l[None, ...] + fnls[..., None, None] * alm_ng[None, ...]
-    # alms = remove_mono_dipole(alms, inplace=True)  # safety
+    alms = alm_l + fnls * alm_ng
+    alms = remove_mono_dipole(alms, inplace=True)  # safety
+    alms = np.ascontiguousarray(alms)
+    logger.debug("alms shape: %s", alms.shape)
 
-    logger.info("Completed Alm generation!")
+    logger.info("Completed alm generation!")
+
+    fisher_iso = None
+    if core.slurm.is_main:
+        logger.debug("Getting fisher iso")
+        fisher_iso = get_fisher_iso(core)
+
+    logger.info("Getting maps in nest ordering")
+    maps = np.zeros((core.nsims, core.ndups, core.npols, core.npix), dtype=core.r_dtype)
+    for sim, dup in product(range(core.nsims), range(core.ndups)):
+        rmap = hp.alm2map(alms[sim, dup], nside=core.nside, pol=False)
+        maps[sim, dup] = hp.reorder(rmap, r2n=True)
+    logger.debug("maps shape: %s", maps.shape)
 
     if core.plot and core.slurm.is_main:
         # lets make a few plots for the alms
-        make_alm_plots(core, alm_l, alm_ng, alms)
+        make_alm_plots(core, alm_l[:, 0], alm_ng[:, 0], alms[:, 0])
 
     alm_lensed = None
+    maps_lensed = None
     if core.lensing:
         logger.info("Starting lensing")
         alm_lensed = lens_alms(core, alms)
+
+        maps_lensed = np.zeros(
+            (core.nsims, core.ndups, 3, core.npix), dtype=core.r_dtype
+        )
+
+        logger.debug("Getting lensed maps in nest ordering")
+        for sim, dup in product(range(core.nsims), range(core.ndups)):
+            rmap = hp.alm2map(alm_lensed[sim, dup], nside=core.nside, pol=True)
+            maps_lensed[sim, dup] = hp.reorder(rmap, r2n=True)
+        logger.debug("lensed maps shape: %s", maps.shape)
 
     logger.info("Saving data")
     sdata = {}
@@ -595,21 +632,23 @@ def main():
         sdata["alm_ng"] = alm_ng
         if core.lensing:
             sdata["alm_lensed"] = alm_lensed
-    # if core.save_patches:
-    #     sdata["patch"] = patches
+    else:
+        logger.info("Not saving alms")
+
+    if core.slurm.is_main:
+        sdata["fisher_iso"] = fisher_iso
 
     sdata["fnl"] = fnls
     sdata["fnl_norm"] = 2 * ((fnls - core.fnl_min) / (core.fnl_max - core.fnl_min)) - 1
 
-    sdata["map"] = hp.reorder(hp.alm2map(alms, nside=core.nside, pol=False), r2n=True)
+    sdata["map"] = maps
     if core.lensing:
-        sdata["map_lensed"] = hp.reorder(
-            hp.alm2map(alm_lensed, nside=core.nside, pol=False), r2n=True
-        )
+        sdata["map_lensed"] = maps_lensed
+
+    logger.debug("Saving data to %s", core.file)
     save_data(core.file, sdata, remove_if_exists=True)
 
     logger.info("Finished %s!", core.slurm.job)
-    log_memory_usage()  # Log memory usage
 
 
 if __name__ == "__main__":

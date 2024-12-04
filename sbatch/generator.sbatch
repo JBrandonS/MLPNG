@@ -2,8 +2,8 @@
 #SBATCH --job-name=generator
 #SBATCH --partition=standard-s
 #SBATCH --ntasks=1
-#SBATCH --mem=32G
-#SBATCH --cpus-per-task=100
+#SBATCH --mem=500G
+#SBATCH --cpus-per-task=64
 #SBATCH --output=data/logs/generator/%A/%j.log
 #SBATCH --array=1-100
 #SBATCH --time=1-00:00:00

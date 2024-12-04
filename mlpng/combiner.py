@@ -2,14 +2,14 @@ import sys
 import glob
 import os
 import re
-
+import logging
 import h5py
 from tqdm.auto import tqdm
 
 from . import Core
 from .utils import setup_logging
 
-logger = setup_logging("combiner")
+logger = setup_logging("combiner", logging.DEBUG)
 
 
 def extract_number(filename):

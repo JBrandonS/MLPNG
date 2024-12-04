@@ -26,13 +26,9 @@ SETTINGS=(
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
 ARGS=(
   "--nsims" "100"
-  # "--no-lensing"
-  # "--no-noise"
   # "--isotropic"
-  "--pols" "T"
-  # "--isotropic"
-  "--fnl_range" "-100" "100"
-  "--narray" "10"
+  "--pols" "TE"
+  "--narray" "1"
 )
 
 # override the slurm array settings for narray, only used in data generation
