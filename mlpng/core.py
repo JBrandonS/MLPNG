@@ -439,7 +439,6 @@ class Core:
         r_min = int(self._get("r_min", 0))
         r_max = int(self._get("r_max", 50000))
         self.radii = np.array([r for r in radii if r_min <= r <= r_max])
-        logger.debug("Using radii %s", self.radii)
 
     def _slurm(self):
         """

@@ -100,7 +100,6 @@ def save_data(file_path, data_dict, mode="x", remove_if_exists=False):
                 # For other data types, create a dataset
                 logger.debug("Creating dataset for key %s of type %s", key, type(value))
                 hf.create_dataset(key, data=value)
-    logger.debug("Finished saving %s", file_path)
 
 
 def load_data(data_file, keys):

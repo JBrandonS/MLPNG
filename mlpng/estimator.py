@@ -85,7 +85,7 @@ def main():
 
             def step_loader(idx):
                 """for stepping the KSW estimator, we just generate new unique sims"""
-                logger.trace("Sending alm step %s", idx)
+                logger.debug("Sending alm step %s", idx)
                 return alm_steps[idx]
 
             logger.info("Initializing KSW with %s steps", core.mc_steps)
@@ -120,11 +120,11 @@ def main():
         theta_batch=theta_batch,
         lin_term=0 if core.isotropic else None,
     )
+
+    fnls = np.array(data["fnl"][: core.num_estimates])[:, 0].flatten()
     print_errors(fnls, estimates, fisher)
 
     if mpi_root:
-        fnls = np.array(data["fnl"][: core.num_estimates])[:, 0].flatten()
-
         # save the data, this will append to the alm_file
         # TODO fisher is fisher_iso if core.isotropic, does this matter?
         sdata = {}

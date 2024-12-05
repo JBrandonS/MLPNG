@@ -86,7 +86,7 @@ def generate_alm(core, nsims=None, cls=None):
         cls = np.concatenate((empty, cls, empty), axis=0)
 
     sims = [hp.synalm(cls, lmax=core.lmax, new=True) for _ in range(nsims)]
-    return np.ascontiguousarray(sims, dtype=core.c_dtype)[:, core.pol_idxs()]
+    return np.ascontiguousarray(sims)[:, core.pol_idxs()]
 
 
 def integrand(alm, alpha_l, bl_div_cl, lmax, nside, upscale=False):
