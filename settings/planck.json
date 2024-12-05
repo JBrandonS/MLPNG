@@ -9,11 +9,8 @@
     },
     "nsims": 100,
     "narray": 100,
-    "npatches": 10,
     "nside": 2048,
     "lmax": 2000,
-    "lensing": false,
-    "noise": true,
     "noise_tt": 29.336,
     "beam_width": 5,
     "base_name": "planck"

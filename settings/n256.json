@@ -7,8 +7,7 @@
         "omch2": 0.120,
         "tau": 0.054
     },
-    "nsims": 100,
-    "narray": 100,
-    "nside": 256,
-    "noise": false
+    "nsims": 1000,
+    "narray": 10,
+    "nside": 256
 }
