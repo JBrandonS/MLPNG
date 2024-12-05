@@ -9,8 +9,8 @@
 # these must be in settings/ and have the .json extension
 SETTINGS=(
   # "n32"
-  # "n64"
-  "n128"
+  "n64"
+  # "n128"
   # "n256"
   # "n512"
   # "n1024"
@@ -25,10 +25,9 @@ SETTINGS=(
 
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
 ARGS=(
-  "--nsims" "100"
-  # "--isotropic"
-  "--pols" "TE"
-  "--narray" "1"
+  "--nsims" "1000"
+  "--pols" "T"
+  "--narray" "10"
 )
 
 # override the slurm array settings for narray, only used in data generation
