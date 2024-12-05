@@ -12,10 +12,12 @@
 # create our logging dir, if needed
 mkdir -p data/logs/generator/"$SLURM_ARRAY_JOB_ID"/
 
+echo "Running generator on $(hostname) with cli $*"
+
 module purge
 module load conda
 module load gcc/11.2.0 intel-oneapi-mkl/2022.2.1-c4efjsy fftw/3.3.10-gz7qiki openmpi/4.1.6-a4ksrza
-
+module list
 eval "$(conda shell.bash hook)"
 conda activate mlpng
 

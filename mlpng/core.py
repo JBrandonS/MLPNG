@@ -50,7 +50,7 @@ class Core:
         slurm (Slurm): A data object containing some SLURM job settings for reference.
     """
 
-    # just typing info here
+    # just typing info here, good for using pylance
     lmin: int
     lmax: int
     nside: int
@@ -62,11 +62,11 @@ class Core:
     nsims: int
     narray: int
     total_sims: int
-    """Total simulations for the complete experiment."""
     fnl_min: float
     fnl_max: float
     nell: int
     nelem: int
+    npix: int
     ells: np.ndarray
     r_dtype: type
     c_dtype: type
@@ -76,9 +76,6 @@ class Core:
     c_ell: np.ndarray
     n_ell: np.ndarray
     b_ell: np.ndarray
-    s_ell: np.ndarray
-    # cosmo: Any
-    # estimator: Any
 
     def __init__(self, argv=None):
         """
@@ -170,7 +167,7 @@ class Core:
         # some standard arguments heres, we can add more as needed
         parser.add_argument("--nsims", type=int)
         parser.add_argument("--narray", type=int)
-        parser.add_argument("--npatches", type=int)
+        parser.add_argument("--ndups", type=int)
         parser.add_argument("--base_dir", type=str)
         parser.add_argument("--seed", type=int)
         parser.add_argument("--base_name", type=str)
@@ -290,7 +287,7 @@ class Core:
         self.lensing = self._get("lensing", True)
         self.nsims = self._get("nsims", 100)
         self.ndups = self._get("ndups", 25)
-        self.narray = self._get("narray", 100)
+        self.narray = self._get("narray", 1)
         self.force_gen = self._get("force_generation", False)
         self.force_ksw = self._get("force_ksw", False)
         self.num_estimates = self._get(
@@ -302,18 +299,19 @@ class Core:
         # setup the lmax values
         self.lmin = self._get("lmin", 2)
         self.lmax = self._get("lmax", 3 * self.nside - 1)
-        if self.lmax < 300:
-            logger.warning(
-                "lmax = %s, lmax < 300 not supported. Setting lmax to 300", self.lmax
-            )
-            self.lmax = 300
+        self.lmax_buffer = self._get("lmax_buffer", 128)
+        # if self.lmax < 300:
+        #     logger.warning(
+        #         "lmax = %s, lmax < 300 not supported. Setting lmax to 300", self.lmax
+        #     )
+        #     self.lmax = 300
         self.cosmo_params["lmax"] = self.lmax + self._get("lmax_buffer", 128)
 
         # setup the fnl values
         self.fnl_min, self.fnl_max = self._get("fnl_range", (-1000, 1000))
 
         # setup the polarization which should support --pols [T|E|TE]
-        pols = self._get("pols", "T")
+        pols = self._get("pols", "TE")
         if isinstance(pols, str):
             pols = tuple(pols)
         elif isinstance(pols, list):
@@ -321,10 +319,10 @@ class Core:
         # we do not want to support B mode since it is so small, so lets remove anything with B in it.
         self.pols = tuple(c for p in pols for c in p if p != "B")
         self.npols = len(self.pols)
-
         self.use_t = "T" in self.pols
         self.use_e = "E" in self.pols
         self.use_b = False  # "B" in self.pols
+        
         self.isotropic = self._get("isotropic", not (self.use_t and self.use_e))
         if self.isotropic:
             self.use_te = False
@@ -358,28 +356,12 @@ class Core:
         self.nelem = hp.Alm.getsize(self.lmax)
         self.ells = np.arange(self.nell)
         self.alm_shape = (self.nsims, self.npols, self.nelem)
-
-        # some patch settings
-        self.patch_side_deg = self._get("patch_side_deg", 10)
-        self.npatches = self._get("npatches", 10)
-        self.total_patches = self.npatches * self.total_sims
-        self.patch_shape = (
-            self.nsims,
-            self.npols,
-            self.npatches,
-            self.nside,
-            self.nside,
-        )
-
+        
         # here we just get the number of cpus, but read in from SLURM if available
         # os.sched_getaffinity(0) gets the number of usable CPUs available, this is different from
         # os.cpu_count() which gets the number of CPUs on the system
-        self.n_cpus = int(
-            os.getenv("SLURM_CPUS_PER_TASK", len(os.sched_getaffinity(0)))
-        )
-
-        # We need the number of patches to be even for the healpy code
-        assert self.npatches % 2 == 0, "Number of patches must be even"
+        cpus = len(os.sched_getaffinity(0))
+        self.n_cpus = int(os.getenv("SLURM_CPUS_PER_TASK", cpus))
 
     def _noise_beam(self):
         """
@@ -435,7 +417,7 @@ class Core:
         """
         #    start,  stop, resolution
         ranges = [
-            (1e-3, 9500, 150),
+            (1e-5, 9500, 150),
             (9500, 11000, 300),
             (11000, 13800, 150),
             (13800, 14600, 400),
@@ -491,7 +473,6 @@ class Core:
             )
 
         logger.debug("Running with slurm settings: %s", slurm)
-        logger.debug("Number of available CPUs: %s", self.n_cpus)
 
     def _paths(self):
         """
@@ -548,16 +529,15 @@ class Core:
         self.dirs["data"] = join_paths(self._get("data_dir", "data"))
         self.dirs["tb"] = join_paths(self._get("tb_dir", "tensorboard"))
         self.dirs["model"] = join_paths(self._get("model_dir", "models"))
+        self.dirs["mc"] = join_paths(self._get("mc_dir", "kswmc"))
 
         self.file = os.path.join(self.dirs["data"], f"{self.name}{tstr}.hdf5")
         logger.debug("Using data file: %s", self.file)
 
-        self.dirs["mc"] = join_paths(self._get("mc_dir", "kswmc"))
         self.mc_file = os.path.join(self.dirs["mc"], f"{self.name}.hdf5")
+        if os.path.exists(self.mc_file):
+            logger.debug("Will use KSW saved state from file '%s'", self.mc_file)
         self.mc_steps = self._get("mc_steps", 100)
-        logger.debug(
-            "Using KSW MC file: %s, with nsteps %s", self.mc_file, self.mc_steps
-        )
 
     def init_estimator(self, verbose=False):
         """
@@ -581,6 +561,7 @@ class Core:
         """
 
         # we do local imports since this will not work on the superpod due to mpi issues, but we dont need ksw there anyways
+        #TODO: Check install on MP due to module changes to see if this is fixed
         # pylint: disable=C0415
         import camb
         from ksw import Cosmology, Shape, KSW
@@ -592,7 +573,10 @@ class Core:
             logger.debug(camb.get_results(camb_params))
 
         self.cosmo: Cosmology = Cosmology(camb_params, verbose)
-        self.cosmo.compute_transfer(self.lmax + 128, verbose)
+
+        # we need at least lmax of 300 for this transfer code
+        camb_lmax = max(self.lmax + self.lmax_buffer, 300)
+        self.cosmo.compute_transfer(camb_lmax, verbose)
         self.cosmo.compute_c_ell()
 
         if self.lensing:
@@ -609,7 +593,7 @@ class Core:
 
         self.estimator: KSW = KSW(
             self.cosmo.red_bispectra,
-            lambda a: a,  # we will send the alms directly
+            lambda a: a,  # we will send the cov alms directly
             self.lmax,
             self.pols,
             self.precision,
@@ -695,6 +679,8 @@ def get_itotcov_ell(icov_signal_ell, icov_noise_ell=None, b_ell=None):
     Combine signal and noise power spectra into total inverse
     isotropic covariance: S^-1 (S^-1 + B N^-1 B)^-1 B N^-1 B
     = (S + B^-1 N B^-1)^-1.
+
+    Taken from Adri's KSW code
 
     Parameters
     ----------

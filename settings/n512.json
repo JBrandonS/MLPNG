@@ -9,6 +9,5 @@
     },
     "nsims": 100,
     "narray": 100,
-    "nside": 512,
-    "noise": false
+    "nside": 512
 }

@@ -28,7 +28,7 @@ from .utils.plots import (
     pol_str,
 )
 
-logger = setup_logging("generator", level=logging.DEBUG)
+logger = setup_logging("mlpng.generator", level=logging.DEBUG)
 
 
 def interpolator(func, ells_sparse, axis=1, kind="cubic", fill_value="extrapolate"):
@@ -55,7 +55,6 @@ def interpolator(func, ells_sparse, axis=1, kind="cubic", fill_value="extrapolat
     scipy.interpolate.interp1d
         An interpolation function that can be called with new points to obtain interpolated values.
     """
-
     return interp1d(
         ells_sparse, func, kind, axis, bounds_error=False, fill_value=fill_value
     )
@@ -86,9 +85,7 @@ def generate_alm(core, nsims=None, cls=None):
         empty = np.zeros((1, cls.shape[1]))
         cls = np.concatenate((empty, cls, empty), axis=0)
 
-    print("cls dtype", cls.dtype, flush=True)
     sims = [hp.synalm(cls, lmax=core.lmax, new=True) for _ in range(nsims)]
-    print("sims dtype", sims[0].dtype, flush=True)
     return np.ascontiguousarray(sims)[:, core.pol_idxs()]
 
 
@@ -120,6 +117,7 @@ def integrand(alm, alpha_l, bl_div_cl, lmax, nside, upscale=False):
     npols = alm.shape[0]
     Balm = [hp.almxfl(alm[p], bl_div_cl[..., p]) for p in range(npols)]
     B = hp.alm2map(Balm, nside, pol=False)
+    # TODO, should this be pol=True,
     inner = hp.map2alm(B**2, lmax, use_pixel_weights=True, pol=False)
     inner = np.array(inner, ndmin=2)
     return np.array([hp.almxfl(inner[p], alpha_l[..., p]) for p in range(npols)])
@@ -338,180 +336,6 @@ def lens_alms(core, alms_to_lens):
             )
     return alm_lensed
 
-
-def patch_and_lens(core, alms):
-    """
-    Generate patches and optionally lens the input alms.
-    Parameters:
-        core (object): Core configuration object containing various parameters.
-            - patch_side_deg (float): Side length of the patch in degrees.
-            - nside (int): Number of sides for the patch.
-            - npols (int): Number of polarization states.
-            - use_e (bool): Flag to indicate if E modes are used.
-            - lensing (bool): Flag to indicate if lensing is applied.
-            - nsims (int): Number of simulations.
-            - nelem (int): Number of elements.
-            - lmax (int): Maximum multipole moment.
-            - cosmo (object): Cosmology object with lensing potential data.
-            - nell (int): Number of ell values.
-            - r_dtype (dtype): Data type for real numbers.
-            - c_dtype (dtype): Data type for complex numbers.
-            - n_cpus (int): Number of CPUs to use.
-            - plot (bool): Flag to indicate if plots should be generated.
-            - slurm (object): Slurm object for job management.
-            - rng (object): Random number generator.
-        alms (ndarray): Input alms array.
-    Returns:
-        tuple: A tuple containing:
-            - patches (ndarray): Generated patches.
-            - alm_lensed (ndarray or None): Lensed alms if lensing is applied, otherwise None.
-    """
-
-    logger.debug("Generating patch geometry")
-    ps_rad = np.deg2rad(core.patch_side_deg)
-    res = ps_rad / core.nside
-
-    fs_shape, fs_wcs = enmap.fullsky_geometry(res, proj="car")
-    # need to add a B mode dim if we are using E modes, this is used for some lensing
-    full_pol = core.npols + (1 if core.use_e and core.lensing else 0)
-    fs_shape = (full_pol,) + fs_shape
-    fs_map = enmap.zeros(fs_shape, fs_wcs)
-
-    shapes = []
-    wcss = []
-    for counter in range(core.npatches // 2):
-        # [[dec_min,ra_min],[dec_max,ra_max]]
-        top = [[0, ps_rad * counter], [ps_rad, ps_rad * (counter + 1)]]
-        gs, w = enmap.geometry(pos=top, res=res, proj="car")
-        shapes.append(gs)
-        wcss.append(w)
-
-        bottom = [[-ps_rad, ps_rad * counter], [0, ps_rad * (counter + 1)]]
-        gs, w = enmap.geometry(pos=bottom, res=res, proj="car")
-        shapes.append(gs)
-        wcss.append(w)
-
-    patches = None
-    alm_lensed = None
-
-    # make a copy of the alms for the lensing since they will modify them
-    maps = alms.copy()
-
-    # now lets do the actual lensing and patching
-    if core.lensing:
-        logger.debug("Getting lensing cl_phi and data")
-        if not core.use_t:
-            maps = np.concatenate((np.zeros((core.nsims, 1, core.nelem)), maps), axis=1)
-        if core.use_e:
-            # need to add a zero for the spin-2 component
-            maps = np.concatenate((maps, np.zeros((core.nsims, 1, core.nelem))), axis=1)
-        # PP PT PE
-        cl_phi = core.cosmo._camb_data.get_lens_potential_cls(core.lmax, "muK", True)
-        plm = utils_hp.synalm(cl_phi[:, 0], core.lmax, mmax=None)
-
-        # transform the lensing potential into spin-1 deflection field
-        fl = np.sqrt(np.arange(core.nell) * np.arange(1, core.nell + 1))
-        dlm = utils_hp.almxfl(plm, fl, mmax=None, inplace=False)
-
-        geom_info = ("healpix", {"nside": core.nside})
-        geom = lenspyx.get_geom(geom_info)
-
-        patches = np.zeros(
-            (core.nsims, core.npatches, full_pol, core.nside, core.nside),
-            dtype=core.r_dtype,
-        )
-        alm_lensed = np.zeros((core.nsims, full_pol, core.nelem), dtype=core.c_dtype)
-
-        # actually lens the alms and cut the patches
-        for sim in trange(core.nsims, desc="Lensing and Patching", total=core.nsims):
-            lenmap = lenspyx.alm2lenmap(
-                maps[sim], dlm, geometry=geom_info, nthreads=core.n_cpus
-            )
-            lenmap = np.ascontiguousarray(lenmap)  # convert from tuple to array
-
-            if core.use_t:
-                alm_lensed[sim, 0] = geom.map2alm(
-                    lenmap[0].copy(), core.lmax, core.lmax, nthreads=core.n_cpus
-                )
-
-            if core.use_e:
-                idx = 1 if core.use_t else 0
-                alm_lensed[sim, idx:] = geom.map2alm_spin(
-                    lenmap[1:].copy(), 2, core.lmax, core.lmax, nthreads=core.n_cpus
-                )
-
-            # cut the patches
-            pixell_map = reproject.healpix2map(
-                lenmap[core.pol_idxs(keep_b=True)],
-                fs_shape,
-                fs_wcs,
-                core.lmax,
-                spin=np.array([0, 2])[core.pol_idxs()],
-            )
-            for i in range(core.npatches):
-                patches[sim, i] = pixell_map.project(shapes[i], wcss[i])  # type: ignore
-
-            if core.plot and core.slurm.is_main:
-                sim = core.rng.integers(core.nsims)
-                lenmap = lenspyx.alm2lenmap(
-                    alms[sim], dlm, geom_info, nthreads=core.n_cpus
-                )
-                plot_mollview(
-                    lenmap,
-                    f"Lensed view for {sim}",
-                    save_file=core.get_plot_file(f"{sim}-moll"),
-                )
-    else:
-        logger.debug("Getting patches")
-        patches = np.zeros(
-            (core.nsims, core.npatches, core.npols, core.nside, core.nside),
-            dtype=core.r_dtype,
-        )
-
-        for sim in trange(core.nsims, desc="Patching", total=core.nsims):
-            car_map = curvedsky.alm2map(
-                maps[sim],
-                fs_map,
-                spin=np.array([0, 0])[core.pol_idxs()],
-                copy=True,
-                nthread=core.n_cpus,
-            )
-
-            for i in range(core.npatches):
-                patches[sim, i] = car_map.project(shapes[i], wcss[i])[: core.npols]  # type: ignore
-
-        # lets make a few plots of patches and mollview
-        if core.plot and core.slurm.is_main:
-            sim = core.rng.integers(core.nsims)
-
-            lenmap = curvedsky.alm2map_healpix(
-                alms[sim],
-                nside=core.nside,
-                spin=np.array([0, 0])[core.pol_idxs()],
-                copy=True,
-                nthread=core.n_cpus,
-            )
-            plot_mollview(
-                lenmap,
-                f"Unlensed view for {sim}",
-                save_file=core.get_plot_file(f"{sim}-moll"),
-            )
-
-    # make some plots here
-    if core.plot and core.slurm.is_main:
-        sim = core.rng.integers(core.nsims)
-        for pol in range(core.npols):
-            pstr = pol_str(core.pol_idxs()[pol])
-            plot_patches(
-                patches[sim, :, pol],
-                title=f"Patches for sim: {sim}, pol: {pstr}",
-                save_file=core.get_plot_file(f"{sim}{pstr}-patch.png"),
-            )
-
-    # log_memory_usage()  # Log memory usage
-    return patches, alm_lensed
-
-
 def get_fisher_iso(core):
     core.init_estimator()
     pols = core.pol_idxs(keep_b=False, keep_te=False, pretrimmed=True)
@@ -574,11 +398,11 @@ def main():
     # get the non-gaussian alms, this will take a long time
     logger.debug("Starting non-gaussian alm generation")
     alm_ng = generate_alm_ng(core, alm_l)
-    logger.debug("alm_ng shape: %s, dtype:%s", alm_ng.shape, alm_ng.dtype)
+    logger.debug("alm_ng shape: %s, dtype: %s", alm_ng.shape, alm_ng.dtype)
 
     # generate the fnls
     fnls = core.rng.uniform(core.fnl_min, core.fnl_max, (core.nsims, core.ndups, 1, 1))
-    logger.debug("fnls shape: %s", fnls.shape)
+    logger.debug("fnls shape: %s, dtype: %s", fnls.shape, fnls.dtype)
 
     # Add the duplicate dimension to the alms
     alm_l = alm_l[:, None]
@@ -588,21 +412,16 @@ def main():
     alms = alm_l + fnls * alm_ng
     alms = remove_mono_dipole(alms, inplace=True)  # safety
     alms = np.ascontiguousarray(alms)
-    logger.debug("alms shape: %s", alms.shape)
+    logger.debug("alms shape: %s, dtype: %s", alms.shape, alms.dtype)
 
     logger.info("Completed alm generation!")
-
-    fisher_iso = None
-    if core.slurm.is_main:
-        logger.debug("Getting fisher iso")
-        fisher_iso = get_fisher_iso(core)
 
     logger.info("Getting maps in nest ordering")
     maps = np.zeros((core.nsims, core.ndups, core.npols, core.npix), dtype=core.r_dtype)
     for sim, dup in product(range(core.nsims), range(core.ndups)):
-        rmap = hp.alm2map(alms[sim, dup], nside=core.nside, pol=False)
+        rmap = hp.alm2map(alms[sim, dup], nside=core.nside, pol=core.npols == 3)
         maps[sim, dup] = hp.reorder(rmap, r2n=True)
-    logger.debug("maps shape: %s", maps.shape)
+    logger.debug("maps shape: %s, dtype: %s", maps.shape, maps.dtype)
 
     if core.plot and core.slurm.is_main:
         # lets make a few plots for the alms
@@ -620,32 +439,41 @@ def main():
 
         logger.debug("Getting lensed maps in nest ordering")
         for sim, dup in product(range(core.nsims), range(core.ndups)):
-            rmap = hp.alm2map(alm_lensed[sim, dup], nside=core.nside, pol=True)
+            rmap = hp.alm2map(
+                alm_lensed[sim, dup], nside=core.nside, pol=core.npols == 3
+            )
             maps_lensed[sim, dup] = hp.reorder(rmap, r2n=True)
-        logger.debug("lensed maps shape: %s", maps.shape)
+        logger.debug(
+            "lensed maps shape: %s, dtype: %s", maps_lensed.shape, maps_lensed.dtype
+        )
 
-    logger.info("Saving data")
+    # note: we save as requested dtype but do calculations in complex128 since healpy needs it for alm2map
+    logger.debug("Collecting save data")
     sdata = {}
     if core.save_alms:
-        sdata["alm"] = alms
-        sdata["alm_l"] = alm_l
-        sdata["alm_ng"] = alm_ng
+        sdata["alm"] = alms.astype(core.c_dtype)
+        sdata["alm_l"] = alm_l.astype(core.c_dtype)
+        sdata["alm_ng"] = alm_ng.astype(core.c_dtype)
         if core.lensing:
-            sdata["alm_lensed"] = alm_lensed
+            sdata["alm_lensed"] = alm_lensed.astype(core.c_dtype)
     else:
-        logger.info("Not saving alms")
+        logger.debug("Not saving alms...")
 
     if core.slurm.is_main:
-        sdata["fisher_iso"] = fisher_iso
+        # only want one copy of this so only do it on the main thread
+        logger.debug("Getting fisher iso")
+        sdata["fisher_iso"] = get_fisher_iso(core)
 
     sdata["fnl"] = fnls
-    sdata["fnl_norm"] = 2 * ((fnls - core.fnl_min) / (core.fnl_max - core.fnl_min)) - 1
+    # it could possibly be useful to have a normalized range for fnls so they vary between (-1,1)
+    fnl_norm = 2 * ((fnls - core.fnl_min) / (core.fnl_max - core.fnl_min)) - 1
+    sdata["fnl_norm"] = fnl_norm.astype(core.r_dtype)
 
-    sdata["map"] = maps
+    sdata["map"] = maps.astype(core.r_dtype)
     if core.lensing:
-        sdata["map_lensed"] = maps_lensed
+        sdata["map_lensed"] = maps_lensed.astype(core.r_dtype)
 
-    logger.debug("Saving data to %s", core.file)
+    logger.info("Saving data to %s", core.file)
     save_data(core.file, sdata, remove_if_exists=True)
 
     logger.info("Finished %s!", core.slurm.job)
