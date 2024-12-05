@@ -138,7 +138,7 @@ def load_data(data_file, keys):
     return data
 
 
-def get_fisher(file):
+def get_fisher(file, name="fisher"):
     """
     Load the fisher matrix from an HDF5 file.
 
@@ -150,7 +150,7 @@ def get_fisher(file):
     """
     try:
         with h5py.File(file, "r", swmr=True, locking=False) as hdf:
-            fisher = float(hdf.get("fisher", [None])[()])  # type: ignore
+            fisher = float(hdf.get(name, [None])[()])  # type: ignore
             logger.info(
                 "Loaded fisher: %s, with error: %s", fisher, np.sqrt(1 / fisher)
             )
