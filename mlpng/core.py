@@ -131,10 +131,10 @@ class Core:
         logger.info("Running with settings: \n%s", json.dumps(settings, indent=2))
 
         # init our core object, split for readability
+        self._slurm()
         self._init()
         self._noise_beam()
         self._radii()
-        self._slurm()
         self._paths()
 
         # save a copy of the settings file iff --save-settings is set
@@ -167,6 +167,7 @@ class Core:
         # some standard arguments heres, we can add more as needed
         parser.add_argument("--nsims", type=int)
         parser.add_argument("--narray", type=int)
+        parser.add_argument("--nside", type=int)
         parser.add_argument("--ndups", type=int)
         parser.add_argument("--base_dir", type=str)
         parser.add_argument("--seed", type=int)
@@ -287,28 +288,29 @@ class Core:
         self.lensing = self._get("lensing", True)
         self.nsims = self._get("nsims", 100)
         self.ndups = self._get("ndups", 25)
-        self.narray = self._get("narray", 1)
-        self.force_gen = self._get("force_generation", False)
+        self.narray = self._get("narray", self.slurm.task_count)
+        self.force_gen = self._get("force_generation", True)
         self.force_ksw = self._get("force_ksw", False)
         self.num_estimates = self._get(
-            "num_estimates", min(self.nsims * self.narray, 300)
+            "num_estimates", min(self.nsims * self.narray, 1000)
         )
         self.plot = self._get("plot", True)
         self.save_alms = self._get("save_alms", True)
+
+        if self.slurm.task_count > 0 and self.slurm.task_count != self.narray:
+            raise ValueError(
+                f"SLURM_ARRAY_TASK_COUNT {self.slurm.task_count} does not match narray value {self.narray}. "
+                "Make sure to update the sbatch scripts when changing narray."
+            )
 
         # setup the lmax values
         self.lmin = self._get("lmin", 2)
         self.lmax = self._get("lmax", 3 * self.nside - 1)
         self.lmax_buffer = self._get("lmax_buffer", 128)
-        # if self.lmax < 300:
-        #     logger.warning(
-        #         "lmax = %s, lmax < 300 not supported. Setting lmax to 300", self.lmax
-        #     )
-        #     self.lmax = 300
-        self.cosmo_params["lmax"] = self.lmax + self._get("lmax_buffer", 128)
+        self.cosmo_params["lmax"] = self.lmax  # + self.lmax_buffer
 
         # setup the fnl values
-        self.fnl_min, self.fnl_max = self._get("fnl_range", (-1000, 1000))
+        self.fnl_min, self.fnl_max = self._get("fnl_range", (-100, 100))
 
         # setup the polarization which should support --pols [T|E|TE]
         pols = self._get("pols", "TE")
@@ -322,7 +324,7 @@ class Core:
         self.use_t = "T" in self.pols
         self.use_e = "E" in self.pols
         self.use_b = False  # "B" in self.pols
-        
+
         self.isotropic = self._get("isotropic", not (self.use_t and self.use_e))
         if self.isotropic:
             self.use_te = False
@@ -356,7 +358,7 @@ class Core:
         self.nelem = hp.Alm.getsize(self.lmax)
         self.ells = np.arange(self.nell)
         self.alm_shape = (self.nsims, self.npols, self.nelem)
-        
+
         # here we just get the number of cpus, but read in from SLURM if available
         # os.sched_getaffinity(0) gets the number of usable CPUs available, this is different from
         # os.cpu_count() which gets the number of CPUs on the system
@@ -395,7 +397,7 @@ class Core:
             # T, E, B, TE
             n_ell = np.ones((4, self.nell), dtype=self.r_dtype)
             n_ell[0] = convert(self._get("noise_tt", 5)) ** 2
-            n_ell[1] = convert(self._get("noise_ee", 5)) ** 2
+            n_ell[1] = convert(self._get("noise_ee", 10)) ** 2
             n_ell[2] = 0  # B is always 0
             n_ell[3] = convert(self._get("noise_te", 25)) ** 2
         else:
@@ -417,7 +419,7 @@ class Core:
         """
         #    start,  stop, resolution
         ranges = [
-            (1e-5, 9500, 150),
+            (1e-3, 9500, 150),
             (9500, 11000, 300),
             (11000, 13800, 150),
             (13800, 14600, 400),
@@ -465,14 +467,7 @@ class Core:
             array_index=array_index,
             is_main=array_index in {1, -1},
         )
-
-        if slurm.task_count > 0 and slurm.task_count != self.narray:
-            raise ValueError(
-                f"SLURM_ARRAY_TASK_COUNT {slurm.task_count} does not match narray value {self.narray}. "
-                "Make sure to update the sbatch scripts when changing narray."
-            )
-
-        logger.debug("Running with slurm settings: %s", slurm)
+        logger.debug("Slurm settings: %s", slurm)
 
     def _paths(self):
         """
@@ -508,8 +503,6 @@ class Core:
 
         # generate some base strings the files based on settings
         csims = self.nsims * self.narray  # get the number of simulations
-        lens = "l" if self.lensing else "ul"
-        nn = "nn" if not self.noise else "n"
         pol_str = "".join(self.pols)
         tstr = f"_{self.slurm.array_index}" if self.slurm.array_index > 0 else ""
 
@@ -561,7 +554,7 @@ class Core:
         """
 
         # we do local imports since this will not work on the superpod due to mpi issues, but we dont need ksw there anyways
-        #TODO: Check install on MP due to module changes to see if this is fixed
+        # TODO: Check install on MP due to module changes to see if this is fixed
         # pylint: disable=C0415
         import camb
         from ksw import Cosmology, Shape, KSW
@@ -579,18 +572,28 @@ class Core:
         self.cosmo.compute_transfer(camb_lmax, verbose)
         self.cosmo.compute_c_ell()
 
+        pols = self.pol_idxs(keep_b=True, keep_te=True)
         if self.lensing:
-            c_ell = self.cosmo.c_ell["lensed_scalar"]["c_ell"].T
-        else:
-            c_ell = self.cosmo.c_ell["unlensed_scalar"]["c_ell"].T
-        self.c_ell = c_ell[self.pol_idxs(keep_b=True, keep_te=True), : self.nell]
+            c_ell_lensed = self.cosmo.c_ell["lensed_scalar"]["c_ell"].T
+            self.c_ell_lensed = c_ell_lensed[pols, : self.nell]
+            self.c_ell_lensed = self.c_ell_lensed.astype(self.r_dtype)
+
+        c_ell = self.cosmo.c_ell["unlensed_scalar"]["c_ell"].T
+        self.c_ell = c_ell[pols, : self.nell]
         self.c_ell = self.c_ell.astype(self.r_dtype)
 
         ns = self.cosmo_params["ns"]
         ps = self.cosmo_params["pivot_scalar"]
         shape = Shape.prim_local(ns, pivot=ps)
+
         self.cosmo.add_prim_reduced_bispectrum(shape, self.radii)
 
+        # icov should be  x^icov = S^{-1} (S^{-1} + P^H N^{-1} P)^{-1} P^H N^{-1} P s,
+        # where data = P s + n, where s are the spherical harmonic coefficients
+        # of the signal. P = M Y B, where B is the beam, Y is spherical harmonic
+        # synthesis (alm2map) and M is the pixel mask and any custom filters.
+        # N^{-1} and S^{-1} are the inverse noise and signal covariance matrices,
+        # respectively. ^H denotes the Hermitian transpose.
         self.estimator: KSW = KSW(
             self.cosmo.red_bispectra,
             lambda a: a,  # we will send the cov alms directly

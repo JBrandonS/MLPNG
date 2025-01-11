@@ -8,13 +8,7 @@
         "omch2": 0.1143,
         "tau": 0.084
     },
-    "nsims": 100,
-    "narray": 100,
-    "nside": 512,
-    "lmax": 1024,
-    "base_name": "elsner",
-    "fnl_range": [
-        -100,
-        100
-    ]
+    "nsims": 1000,
+    "nside": 128,
+    "base_name": "elsner"
 }

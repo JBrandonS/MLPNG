@@ -1,4 +1,5 @@
 """..."""
+
 import gc
 import logging
 import os
@@ -41,6 +42,11 @@ def generate_alm(core, nsims=None, cls=None):
             cls = core.b_ell**2 * core.c_ell + core.n_ell
         else:
             cls = core.c_ell.copy()
+    else:
+        # TODO FIX
+        empty = np.zeros((1, cls.shape[1]))
+        cls = np.concatenate((cls[:-1], empty, cls[-1:]), axis=0)
+        core.c_ell = cls[:, : core.nell]
 
     if core.use_e and not core.use_t:
         empty = np.zeros((1, cls.shape[1]))
@@ -314,7 +320,13 @@ def main():
     logger.info("Starting data generation")
     core.init_estimator()
 
-    alm_l = generate_alm(core)
+    if core.nsims > 1000:
+        raise ValueError("nsims > 1000 is not supported for elsner simulations")
+
+    els_cl_file = os.path.join(core.dirs["base"], "elsner", "cl_wmap5_bao_sn.dat")
+    elsner_cls = np.loadtxt(els_cl_file).T[1:]
+    elsner_cls *= (core.cosmo.camb_params.TCMB * 1e6) ** 2
+    alm_l = generate_alm(core, cls=elsner_cls)
     logger.debug("alm_l shape: %s, dtype: %s", alm_l.shape, alm_l.dtype)
 
     # get the non-gaussian alms, this will take a long time

@@ -47,15 +47,14 @@ def setup_logging(
     return log
 
 
-def save_data(file_path, data_dict, mode="x", remove_if_exists=False):
+def save_data(file_path, data_dict, mode="a"):
     """
     Save data to an HDF5 file.
 
     Args:
         file_path (str): The path to the HDF5 file.
         data_dict (dict): A dictionary containing the data to be saved.
-        mode (str, optional): The file mode to use when opening the HDF5 file. Defaults to "x".
-        remove_if_exists (bool, optional): If True, the file will be removed if it already exists. Defaults to False.
+        mode (str, optional): The file mode to use when opening the HDF5 file. Defaults to "x"
 
     Raises:
         None
@@ -63,11 +62,7 @@ def save_data(file_path, data_dict, mode="x", remove_if_exists=False):
     Returns:
         None
     """
-    logger.info("Saving data to %s", file_path)
-    if remove_if_exists and os.path.isfile(file_path):
-        logger.info("Removing existing file %s prior to saving", file_path)
-        os.remove(file_path)
-
+    logger.debug("Saving data to %s", file_path)
     with h5py.File(file_path, mode) as hf:
         for key, value in data_dict.items():
             logger.debug("%s: Processing key", key)

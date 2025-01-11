@@ -112,6 +112,7 @@ def plot_cl(
     for pol in range(npols):
         plot_func(ells, scale * cls[pol], label=labels[pol], linestyle=":")
 
+        # cpol = core.pol_idxs(keep_b=True)[pol]
         pstr = "" if npols == 1 else f", {pol_str(pol)}"
         if plot_camb:
             plot_func(
@@ -454,6 +455,80 @@ def plot_elsner_comp(
     plt.suptitle(title)
     kwargs.pop("plot_func", None)
     finalize_plot(**kwargs)
+
+
+def make_alm_plots(core, alm_l=None, alm_ng=None, alms=None, lensed=False):
+    """
+    Generate and save various alm plots for comparison and testing.
+
+    Parameters:
+        core (object): Core object containing necessary methods and attributes for plotting.
+        alm_l (array): Array of linear alm values.
+        alm_ng (array): Array of non-Gaussian alm values.
+        alms (array): Array of full alm values.
+    """
+    logger.debug("Generating alm plots")
+    sim = core.rng.integers(core.nsims)  # get random sim idx
+    lstr = f"_lensed" if lensed else ""
+
+    # plot a few comparison with different functions to get views
+    idx = core.rng.integers(1, 1001)
+    if alm_l is not None and alm_ng is not None:
+        plot_elsner_comp(
+            core,
+            alm_l[sim],
+            alm_ng[sim],
+            index=idx,
+            save_file=core.get_plot_file(f"ecomp{lstr}"),
+            plot_func=plt.plot,
+            elsner_pols=core.pol_idxs(),
+        )
+        plot_elsner_comp(
+            core,
+            alm_l[sim],
+            alm_ng[sim],
+            index=idx,
+            save_file=core.get_plot_file(f"ecomp_log{lstr}"),
+            plot_func=plt.loglog,
+            elsner_pols=core.pol_idxs(),
+        )
+        plot_elsner_comp(
+            core,
+            alm_l[sim],
+            alm_ng[sim],
+            index=idx,
+            save_file=core.get_plot_file(f"ecomp_semilogy{lstr}"),
+            plot_func=plt.semilogy,
+            elsner_pols=core.pol_idxs(),
+        )
+
+    if alms is not None:
+        plot_cl_alm(
+            core,
+            alms[sim],
+            save_file=core.get_plot_file(f"{sim}_alm{lstr}"),
+            ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}",
+            plot_camb=True,
+            plot_full_camb=True,
+        )
+
+    if alm_l is not None:
+        plot_cl_alm(
+            core,
+            alm_l[sim],
+            save_file=core.get_plot_file(f"{sim}_alm_l{lstr}"),
+            ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}^{L}$",
+            plot_camb=True,
+            plot_full_camb=True,
+        )
+
+    if alm_ng is not None:
+        plot_cl_alm(
+            core,
+            alm_ng[sim],
+            save_file=core.get_plot_file(f"{sim}_alm_ng{lstr}"),
+            ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}^{NG}$",
+        )
 
 
 def plot_metrics(history, save_file=None, metrics=["loss"]):
