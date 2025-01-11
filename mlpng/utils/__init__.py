@@ -20,6 +20,7 @@ from .plots import (
     pol_str,
     plot_metrics,
     plot_activations,
+    make_alm_plots,
 )
 
 __all__ = [
@@ -42,4 +43,5 @@ __all__ = [
     "pol_str",
     "plot_metrics",
     "plot_activations",
+    "make_alm_plots",
 ]

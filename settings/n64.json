@@ -8,6 +8,5 @@
         "tau": 0.054
     },
     "nsims": 1000,
-    "narray": 10,
     "nside": 64
 }

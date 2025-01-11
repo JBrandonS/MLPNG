@@ -8,7 +8,6 @@
         "tau": 0.0561
     },
     "nsims": 100,
-    "narray": 100,
     "nside": 2048,
     "lmax": 2000,
     "noise_tt": 29.336,

@@ -9,9 +9,7 @@
         "pivot_scalar": 0.05
     },
     "nsims": 1000,
-    "narray": 10,
     "nside": 128,
-    "noise": true,
     "noise_tt": 50,
     "beam_width": 10
 }
