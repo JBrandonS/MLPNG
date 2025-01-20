@@ -13,6 +13,7 @@ from tensorflow.keras.layers import (  # type: ignore
     Dropout,
     Flatten,
     LeakyReLU,
+    Permute,
 )
 from tensorflow.keras.callbacks import (  # type: ignore
     EarlyStopping,
@@ -57,45 +58,38 @@ def rotate_ds(inputs, y):
         rotator = hp.Rotator(rot=[lat_angle, lon_angle], deg=True, inv=True)
         x = hp.reorder(inputs, n2r=True)
 
-        # TODO: use_pixel_weights was givening an error with finding the data on astropy servers
-        # should look into this as it could be an accuracy improvement
-        x = rotator.rotate_map_alms(x, use_pixel_weights=False)
+        # I have had issues in the past with the pixel weights not being downloaded due to server errors
+        # disable here if you get an error with the file not being found on astropy's servers
+        x = rotator.rotate_map_alms(x, use_pixel_weights=True)
         return hp.reorder(x, r2n=True)
 
     x = tf.map_fn(rotate_map, inputs)
     x.set_shape(inputs.shape)  # type: ignore
-    x = tf.transpose(x)
     return x, y
 
 
-def to_tf(ds, core, batch_size=BATCH_SIZE, prerotate=True, reshuffle=True):
+def to_tf(ds, core, batch_size=BATCH_SIZE, prerotate=False, reshuffle=True):
     npix = hp.nside2npix(core.nside)
     dataset = tf.data.Dataset.from_generator(
         lambda: ds,
         output_signature=(
             tf.TensorSpec(shape=(core.ndups, core.npols, npix), dtype=tf.float32),  # type: ignore
+            # tf.TensorSpec(shape=(core.ndups, npix, core.npols), dtype=tf.float32),  # type: ignore
             tf.TensorSpec(shape=(core.ndups,), dtype=tf.float32),  # type: ignore
         ),
     )
 
-    # help fix a issue with TF not knowing the number of batches per epoch
-    # dataset = dataset.apply(tf.data.experimental.assert_cardinality(len(ds)))
-
     # takes us from 1 element of (ndups, npols, npix) to ndup elements of (npols, npix)
     dataset = dataset.apply(tf.data.Dataset.unbatch)
 
-    # if prerotate:
-    #     # apply rotations, do this before cache because its slow
-    #     dataset = dataset.map(rotate_ds, num_parallel_calls=tf.data.AUTOTUNE)
+    if prerotate:
+        # apply rotations, do this before cache because its slow
+        dataset = dataset.map(rotate_ds, num_parallel_calls=tf.data.AUTOTUNE)
 
-    dataset = dataset.map(
-        lambda x, y: (tf.transpose(x), y), num_parallel_calls=tf.data.AUTOTUNE
-    )
     dataset = dataset.cache()
 
-    # if not prerotate:
-    #     # apply rotations, do this before cache because its slow
-    #     dataset = dataset.map(rotate_ds, num_parallel_calls=tf.data.AUTOTUNE)
+    if not prerotate:
+        dataset = dataset.map(rotate_ds, num_parallel_calls=tf.data.AUTOTUNE)
 
     dataset = dataset.shuffle(buffer_size=1024, reshuffle_each_iteration=reshuffle)
     dataset = dataset.batch(
@@ -108,9 +102,12 @@ def to_tf(ds, core, batch_size=BATCH_SIZE, prerotate=True, reshuffle=True):
 
 
 def get_model(input_shape):
-    nside = hp.npix2nside(input_shape[-2])
-    indices = np.arange(input_shape[-2])
+    nside = hp.npix2nside(input_shape[2])
+    indices = np.arange(input_shape[2])
     layers = []
+
+    # chebyshev wants pols last
+    layers.append(Permute((2, 1)))
 
     n_layers = math.floor(math.log(nside, 2))
     for i in range(n_layers):
@@ -138,9 +135,10 @@ def get_model(input_shape):
         indices=indices,
         layers=layers,
         max_batch_size=BATCH_SIZE,
-        initial_Fin=input_shape[-1],
+        initial_Fin=input_shape[1],
         n_neighbors=8,
     )
+
     model.build(input_shape)
     return model
 
@@ -150,11 +148,8 @@ def main():
     fisher = get_fisher(core.file, "fisher_iso")
     npix = hp.nside2npix(core.nside)
 
-    reg_file = f"{core.dirs['model']}/{core.name}-{core.slurm.job}-jorik.keras"
-    strategy = tf.distribute.MirroredStrategy()
-
     f = 1
-    ds = HDF5Dataset(core.file, x_name="map_lensed", y_name="fnl", verbose=True)
+    ds = HDF5Dataset(core.file, x_name="map", y_name="fnl", verbose=True)
     train_ds, val_ds, test_ds = ds.split(0.8 / f, 0.1 / f, 0.1 / f)
     train_tf = to_tf(train_ds, core)
     val_tf = to_tf(val_ds, core)
@@ -162,10 +157,10 @@ def main():
 
     decay_steps = len(train_ds) // BATCH_SIZE  # once per epoch
 
-    with strategy.scope():
+    with tf.distribute.MirroredStrategy().scope():
         learning_rate = ExponentialDecay(1e-2, decay_steps, 0.95, staircase=True)
 
-        model = get_model((BATCH_SIZE, npix, core.npols))
+        model = get_model((BATCH_SIZE, core.npols, npix))
         model.compile(
             optimizer=AdamW(learning_rate, weight_decay=0.1),  # type: ignore
             loss="mse",
@@ -190,31 +185,26 @@ def main():
         callbacks=callbacks,
         verbose=2,
     )
-    model.evaluate(test_tf, verbose=2)  # type: ignore
-    model.save(reg_file)
+    model.save(f"{core.dirs['model']}/{core.name}-{core.slurm.job}-jorik.keras")
 
     ###########################################################
 
-    preds = model.predict(test_tf, verbose=2)  # type: ignore
+    logger.debug("Getting final plots")
     truth = np.concatenate([y for _, y in test_tf])  # type: ignore
-    print("preds", preds.shape, "truth", truth.shape)
-    rmse = np.sqrt(np.mean((truth - preds) ** 2))
-    print("rmse: ", rmse)
-
-    name = f"{core.name}-{core.slurm.job}-jorik"
-    save_base = f"{core.dirs['plot']}/{core.name}"
-    os.makedirs(save_base, exist_ok=True)
+    preds = model.predict(test_tf, verbose=0)
+    # using evaluate to get the rmse since manually calculating it was giving a different value
+    rmse = model.evaluate(test_tf, verbose=0)[1]
 
     print_errors(truth, preds, fisher)
-    plot_metrics(history, metrics=["loss"], save_file=f"{save_base}/{name}-loss.png")
+    plot_metrics(history, metrics=["loss"], save_file=core.get_plot_file("jorik-loss"))
     plot_predictions(
         truth,
         preds,
         fisher=fisher,
         title=f"RMSE: {rmse:.3f}",
-        save_file=f"{save_base}/{name}-preds.png",
+        save_file=core.get_plot_file("preds"),
     )
-    plot_histogram(truth, preds, save_file=f"{save_base}/{name}-hist.png")
+    plot_histogram(truth, preds, save_file=core.get_plot_file("jorik-hist"))
 
 
 if __name__ == "__main__":

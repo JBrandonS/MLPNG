@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=training
+#SBATCH --job-name=trainer
 #SBATCH --partition=batch
 #SBATCH --ntasks=1
-#SBATCH --mem=1024G
-#SBATCH --cpus-per-task=32
-#SBATCH --gpus-per-task=4
-#SBATCH --output=data/logs/training/%j.log
-#SBATCH --time=24:00:00
+#SBATCH --mem=256G
+#SBATCH --cpus-per-task=16
+#SBATCH --gpus-per-task=1
+#SBATCH --output=data/logs/trainer/%j.log
+#SBATCH --time=04:00:00
 #SBATCH --account=jrmeyers_ml_cmb_0001
 
-# create the logging dir
-mkdir -p data/logs/training
+module="mlpng.${1:-scn-jorik}"
+shift # remove the first argument from $@
+
+mkdir -p data/logs/trainer
+
+echo "Running trainer with module $module on $(hostname)"
 
 module purge
-module load conda nvidia/nvhpc
+module load spack conda gcc/13.2.0 cuda/12.4.1-vz7djzz hpc-x/2.17.1 openblas/0.3.26-sauswx6 amdlibflame/4.2-5lac6gu nccl/2.21.5-1-nnpmvmq cudnn/8.9.7.29-12-lo4uzx3
+module list
+conda activate deepsphere
 
-eval "$(conda shell.bash hook)"
-conda activate mlpng-gpu
-
-time srun python -m mlpng.trainer "$@"
+time srun python -m "$module" "$@"

@@ -6,14 +6,14 @@ import numpy as np
 
 # os.environ["KERAS_BACKEND"] = "tensorflow"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
-# os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 
 import matplotlib.pyplot as plt
 from scipy import rand
 import tensorflow as tf
-from tensorflow.keras import layers
-from tensorflow.keras.layers import (
-    Layer,
+from tensorflow import keras  # type: ignore
+from tensorflow.keras import layers  # type: ignore
+from tensorflow.keras.layers import (  # type: ignore
     Conv1D,
     Dense,
     Dropout,
@@ -27,21 +27,18 @@ from tensorflow.keras.callbacks import (
     TensorBoard,
     ModelCheckpoint,
 )
-from tensorflow.keras.optimizers import AdamW, Adam
-from tensorflow.keras.optimizers.schedules import ExponentialDecay, LearningRateSchedule
-from tensorflow.keras.metrics import RootMeanSquaredError
+from tensorflow.keras.optimizers import AdamW, Adam  # type: ignore
+from tensorflow.keras.optimizers.schedules import ExponentialDecay, LearningRateSchedule  # type: ignore
+from tensorflow.keras.metrics import RootMeanSquaredError  # type: ignore
 
 from mlpng import Core
 from mlpng.utils import (
     setup_logging,
-    load_data,
     get_fisher,
     plot_predictions,
     plot_histogram,
     print_errors,
     plot_metrics,
-    WarmupLearningRate,
-    AttentionSchedule,
     try_init_wandb,
 )
 from mlpng.utils.dataloaders import HDF5Dataset
@@ -62,50 +59,69 @@ logger = setup_logging(__name__, level=logging.DEBUG)
 MAX_EPOCHS = 100
 
 
-def to_tf(
-    ds,
-    npix,
-    batch_size,
-    for_unet=False,
-    norm_y=False,
-):
-    gen = tf.data.Dataset.from_generator(
+def rotate_ds(inputs, y):
+    @tf.py_function(Tout=tf.float32)  # type: ignore
+    def rotate_map(inputs):
+        lat_angle = tf.random.uniform([1], -90.0, 90.0)  # type: ignore
+        lon_angle = tf.random.uniform([1], -180.0, 180.0)  # type: ignore
+        rotator = hp.Rotator(rot=[lat_angle, lon_angle], deg=True, inv=True)
+        x = hp.reorder(inputs, n2r=True)
+        x = rotator.rotate_map_alms(x, use_pixel_weights=False)
+        return hp.reorder(x, r2n=True)
+
+    x = tf.map_fn(rotate_map, inputs)
+    x.set_shape(inputs.shape)  # type: ignore
+    x = tf.transpose(x)
+    return x, y
+
+
+def to_tf(ds, core, batch_size=16, prerotate=True, for_unet=False):
+    npix = hp.nside2npix(core.nside)
+    dataset = tf.data.Dataset.from_generator(
         lambda: ds,
         output_signature=(
-            tf.TensorSpec(shape=(npix, 1), dtype=tf.float32),  # type: ignore
-            tf.TensorSpec(shape=(), dtype=tf.float32),  # type: ignore
+            tf.TensorSpec(shape=(core.ndups, core.npols, npix), dtype=tf.float32),  # type: ignore
+            tf.TensorSpec(shape=(core.ndups,), dtype=tf.float32),  # type: ignore
         ),
     )
 
-    if norm_y:
-        gen = gen.map(lambda x, y: (x, y / 100), tf.data.AUTOTUNE)
+    # help fix a issue with TF not knowing the number of batches per epoch
+    dataset = dataset.apply(tf.data.experimental.assert_cardinality(len(ds)))
+
+    # takes us from 1 element of (ndups, npols, npix) to ndup elements of (npols, npix)
+    dataset = dataset.apply(tf.data.Dataset.unbatch)
+
+    # dataset = dataset.map(lambda x, y: (tf.transpose(x), y))
+    if prerotate:
+        # apply rotations, do this before cache because its slow
+        dataset = dataset.map(rotate_ds, num_parallel_calls=tf.data.AUTOTUNE)
+
+    dataset = dataset.cache()
+
+    if not prerotate:
+        # apply rotations, do this before cache because its slow
+        dataset = dataset.map(rotate_ds, num_parallel_calls=tf.data.AUTOTUNE)
 
     if for_unet:
-        gen = gen.map(lambda x, y: (x, x), tf.data.AUTOTUNE)  # for unet
+        dataset = dataset.map(lambda x, y: (x, x))
 
-    return (
-        gen.apply(tf.data.experimental.assert_cardinality(len(ds)))
-        .cache()
-        .shuffle(buffer_size=1024, reshuffle_each_iteration=True)
-        .batch(
-            batch_size,
-            drop_remainder=True,
-            num_parallel_calls=tf.data.AUTOTUNE,
-            deterministic=False,
-        )
-        .prefetch(tf.data.AUTOTUNE)
+    dataset = dataset.shuffle(buffer_size=1024, reshuffle_each_iteration=True)
+    dataset = dataset.batch(
+        batch_size,
+        drop_remainder=True,
+        num_parallel_calls=tf.data.AUTOTUNE,
+        deterministic=False,
     )
+    return dataset.prefetch(tf.data.AUTOTUNE)
 
 
-@tf.keras.saving.register_keras_serializable()
-class LinearWarmup(tf.keras.optimizers.schedules.LearningRateSchedule):
+@keras.saving.register_keras_serializable()
+class LinearWarmup(keras.optimizers.schedules.LearningRateSchedule):
     """Linear warmup schedule."""
 
     def __init__(
         self,
-        after_warmup_lr_sched: (
-            tf.keras.optimizers.schedules.LearningRateSchedule | float
-        ),
+        after_warmup_lr_sched: keras.optimizers.schedules.LearningRateSchedule | float,
         warmup_steps: int,
         warmup_learning_rate: float,
         name: str | None = None,
@@ -122,7 +138,7 @@ class LinearWarmup(tf.keras.optimizers.schedules.LearningRateSchedule):
         steps.
 
         Args:
-          after_warmup_lr_sched: tf.keras.optimizers.schedules .LearningRateSchedule
+          after_warmup_lr_sched: keras.optimizers.schedules .LearningRateSchedule
             or a constant.
           warmup_steps: Number of the warmup steps.
           warmup_learning_rate: Initial learning rate for the warmup.
@@ -134,7 +150,7 @@ class LinearWarmup(tf.keras.optimizers.schedules.LearningRateSchedule):
         self._warmup_steps = warmup_steps
         self._init_warmup_lr = warmup_learning_rate
         if isinstance(
-            after_warmup_lr_sched, tf.keras.optimizers.schedules.LearningRateSchedule
+            after_warmup_lr_sched, keras.optimizers.schedules.LearningRateSchedule
         ):
             self._final_warmup_lr = after_warmup_lr_sched(warmup_steps)
         else:
@@ -151,7 +167,7 @@ class LinearWarmup(tf.keras.optimizers.schedules.LearningRateSchedule):
 
         if isinstance(
             self._after_warmup_lr_sched,
-            tf.keras.optimizers.schedules.LearningRateSchedule,
+            keras.optimizers.schedules.LearningRateSchedule,
         ):
             after_warmup_lr = self._after_warmup_lr_sched(step)
         else:
@@ -167,7 +183,7 @@ class LinearWarmup(tf.keras.optimizers.schedules.LearningRateSchedule):
     def get_config(self):
         if isinstance(
             self._after_warmup_lr_sched,
-            tf.keras.optimizers.schedules.LearningRateSchedule,
+            keras.optimizers.schedules.LearningRateSchedule,
         ):
             config = {
                 "after_warmup_lr_sched": self._after_warmup_lr_sched.get_config()
@@ -187,22 +203,22 @@ class LinearWarmup(tf.keras.optimizers.schedules.LearningRateSchedule):
         return config
 
 
-@tf.keras.saving.register_keras_serializable()
-class SCNBlock(tf.keras.Model):
+@keras.saving.register_keras_serializable()  # type: ignore
+class SCNBlock(keras.Model):  # type: ignore
 
     def __init__(
         self,
         filters,
         n_mid=None,
         n_out=None,
-        n_neighbors=20,
-        cheb_degree=11,
+        n_neighbors=8,
+        cheb_degree=7,
         cheb_init=None,
         cheb_act=None,
         cheb_bias=True,
         cheb_batch=True,
         batch_size=None,
-        activation="gelu",
+        activation="relu",
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -223,12 +239,7 @@ class SCNBlock(tf.keras.Model):
         self.activation = activation
 
         self.res_conv_1d = Conv1D(self.filters, kernel_size=1)
-
-    def build(self, input_shape):
-        nside = hp.npix2nside(input_shape[1])
-        self.res_conv_1d.build(input_shape)
-
-        cheb = HealpyChebyshev(
+        self.cheb = HealpyChebyshev(
             K=self.cheb_degree,
             initializer=self.cheb_init,
             activation=self.cheb_act,
@@ -237,11 +248,15 @@ class SCNBlock(tf.keras.Model):
             depth_wise=True,
         )
 
+    def build(self, input_shape):
+        nside = hp.npix2nside(input_shape[1])
+        self.res_conv_1d.build(input_shape)
+
         self.gcnn = HealpyGCNN(
             int(nside),
             np.arange(input_shape[1]),
             layers=[
-                cheb,
+                self.cheb,
                 # LayerNormalization(),
                 Conv1D(self.n_mid, kernel_size=1),
                 LayerNormalization(),
@@ -269,26 +284,26 @@ class SCNBlock(tf.keras.Model):
         return output
 
 
-@tf.keras.saving.register_keras_serializable()
+@keras.saving.register_keras_serializable()
 def SCNUNet(
     input_shape,
-    base_channels=32,
-    n_neighbors=20,
-    blocks=[1, 1, 3, 1],
-    pools=[1, 1, 1, 1],
+    base_channels=8,
+    n_neighbors=8,
+    blocks=[1, 1, 1, 1, 1, 1, 1],
+    pools=[1, 1, 1, 1, 1, 1, 1],
     cheb_degree=7,
     cheb_init=None,
     cheb_act=None,
     cheb_bias=True,
-    cheb_batch=False,
-    max_batch_size=256,
-    n_bottleneck=1,
+    cheb_batch=True,
+    max_batch_size=64,
+    n_bottleneck=0,
     token_dim=256,
     channel_dim=2048,
     name="SCNUNet",
-    scn_act="gelu",
+    scn_act="relu",
 ):
-    inputs = tf.keras.Input(shape=input_shape)
+    inputs = keras.Input(shape=input_shape)
     channels = [base_channels * 2**p for p in range(len(blocks))]
     skips = []
 
@@ -307,7 +322,7 @@ def SCNUNet(
                 activation=scn_act,
             )(x)
         skips.append(x)
-        x = HealpyPool(p=pools[block], pool_type="MAX")(x)
+        x = HealpyPool(p=pools[block], pool_type="AVG")(x)
 
     # bottleneck
     for i in range(n_bottleneck):
@@ -332,10 +347,10 @@ def SCNUNet(
             )(x)
 
     x = Conv1D(input_shape[-1], 1)(x)
-    return tf.keras.Model(inputs=inputs, outputs=x, name=name)
+    return keras.Model(inputs=inputs, outputs=x, name=name)  # type: ignore
 
 
-@tf.keras.saving.register_keras_serializable()
+@keras.saving.register_keras_serializable()  # type: ignore
 class mlp_block(layers.Layer):
     def __init__(self, hidden_dim=512, activation="gelu", name="MLPBlock"):
         super().__init__(name=name)
@@ -358,7 +373,7 @@ class mlp_block(layers.Layer):
         }
 
 
-@tf.keras.saving.register_keras_serializable()
+@keras.saving.register_keras_serializable()  # type: ignore
 class mixer_block(layers.Layer):
     def __init__(
         self,
@@ -402,7 +417,7 @@ class mixer_block(layers.Layer):
 
 def get_model(
     full_model,
-    n_layers=3,
+    ff_layers=3,
     token_dim=256,
     channel_dim=2048,
     activation="relu",
@@ -411,21 +426,21 @@ def get_model(
     encoder_input = full_model.input
     encoder_output = None
     for layer in full_model.layers:
-        if "Bottleneck_0" == layer.name:
+        if "healpy_pool_6" == layer.name:
             encoder_output = layer.output
             break
-    encoder_model = tf.keras.Model(inputs=encoder_input, outputs=encoder_output)
+    encoder_model = keras.Model(inputs=encoder_input, outputs=encoder_output)  # type: ignore
     encoder_model.trainable = False
 
     x = encoder_model.output
-    for i in range(n_layers):
+    for i in range(ff_layers):
         x = mixer_block(
             token_dim, channel_dim, activation=activation, name=f"MLPMixerBlock_{i}"
         )(x)
     x = layers.GlobalAveragePooling1D()(x)
     x = Dense(1, kernel_initializer="zeros")(x)
 
-    return tf.keras.Model(inputs=encoder_input, outputs=x, name=name)
+    return keras.Model(inputs=encoder_input, outputs=x, name=name)  # type: ignore
 
 
 def plot_weights(model, save_dir):
@@ -466,8 +481,8 @@ def unet_plots(model, ds, core, name):
     cl = hp.anafast(hp.reorder(test_map, n2r=True), lmax=core.lmax)
     ells = np.arange(len(cl))
     plt.figure()
-    plt.plot(ells, ells * (ells + 1) * cl, label="pred")
-    plt.plot(ells, ells * (ells + 1) * sim_cl, "--", label="sim")
+    plt.plot(ells, ells * (ells + 1) * cl, label="pred")  # type: ignore
+    plt.plot(ells, ells * (ells + 1) * sim_cl, "--", label="sim")  # type: ignore
     plt.legend()
     plt.savefig(f"{core.dirs['plot']}/{core.name}/{name}-cl.png")
     plt.close()
@@ -498,17 +513,14 @@ def main():
     args = [
         "settings/n128.json",
         "--nsims",
-        "100",
-        "--narray",
         "1000",
+        "--narray",
+        "1",
         "--pols",
         "T",
-        "--fnl_range",
-        "-100",
-        "100",
     ]
     core = Core(args)
-    fisher = get_fisher(core.file)
+    fisher = get_fisher(core.file, "fisher_iso")
     npix = hp.nside2npix(core.nside)
 
     model_file = f"{core.dirs['model']}/{core.name}-{core.slurm.job}-unet-small.keras"
@@ -519,12 +531,13 @@ def main():
     if not os.path.exists(model_file):
         BATCH_SIZE = 8
 
-        f = 100
+        f = 10
         ds = HDF5Dataset(core.file, x_name="alm", y_name="fnl")
-        train_ds, test_ds, val_ds = ds.split(0.7 / f, 0.2 / f, 0.1 / f, verbose=True)
+        train_ds, test_ds, val_ds = ds.split(0.7 / f, 0.2 / f, 0.1 / f)
         decay_steps = len(train_ds) // BATCH_SIZE  # once per epoch
         train_tf, test_tf, val_tf = (
-            to_tf(x, npix, BATCH_SIZE, True) for x in [train_ds, test_ds, val_ds]
+            to_tf(x, core, BATCH_SIZE, True, for_unet=True)
+            for x in [train_ds, test_ds, val_ds]
         )
 
         with strategy.scope():
@@ -565,7 +578,7 @@ def main():
     else:
         print("Loading model from file", model_file, flush=True)
         with strategy.scope():
-            unet = tf.keras.saving.load_model(
+            unet = keras.saving.load_model(  # type: ignore
                 model_file,
                 custom_objects={
                     "SCNBlock": SCNBlock,
@@ -580,24 +593,22 @@ def main():
 
     f = 1
     ds = HDF5Dataset(core.file, x_name="alm", y_name="fnl")
-    train_ds, test_ds, val_ds = ds.split(0.9 / f, 0.05 / f, 0.05 / f, verbose=True)
+    train_ds, test_ds, val_ds = ds.split(0.9 / f, 0.05 / f, 0.05 / f)
     train_tf, test_tf, val_tf = (
-        to_tf(x, npix, BATCH_SIZE, for_unet=False, norm_y=True)
-        for x in [train_ds, test_ds, val_ds]
+        to_tf(x, core, BATCH_SIZE) for x in [train_ds, test_ds, val_ds]
     )
     decay_steps = len(train_ds) // BATCH_SIZE  # once per epoch
 
     with strategy.scope():
         learning_rate = ExponentialDecay(4e-3, decay_steps * 3, 0.95, staircase=False)
         learning_rate = LinearWarmup(learning_rate, decay_steps * 10, 1e-8)
-        hloss = tf.keras.losses.Huber(delta=1 / np.sqrt(fisher) / 100)
 
         model = get_model(unet)
         model.build((BATCH_SIZE, npix, 1))
         model.compile(
             optimizer=AdamW(learning_rate, global_clipnorm=1),  # type: ignore
-            loss=hloss,
-            metrics=["mse"],  # type: ignore
+            loss="mse",
+            metrics=[],  # type: ignore
         )
 
     model.summary()
