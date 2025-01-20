@@ -9,7 +9,7 @@ from tqdm.auto import tqdm
 from . import Core
 from .utils import setup_logging
 
-logger = setup_logging("mlpng.combiner", logging.DEBUG)
+logger = setup_logging("mlpng.combiner", logging.INFO)
 
 
 def extract_number(filename):
