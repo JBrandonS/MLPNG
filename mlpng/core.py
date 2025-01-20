@@ -287,7 +287,7 @@ class Core:
         self.lensing = self._get("lensing", True)
         self.nsims = self._get("nsims", 100)
         self.ndups = self._get("ndups", 25)
-        self.narray = self._get("narray", self.slurm.task_count)
+        self.narray = self._get("narray", self.slurm.task_count or 1)
         self.force_gen = self._get("force_generation", True)
         self.force_ksw = self._get("force_ksw", False)
         self.num_estimates = self._get(

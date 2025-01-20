@@ -544,4 +544,4 @@ def plot_metrics(history, save_file=None, metrics=["loss"], **kwargs):
         axs[i].set_xlabel("Epoch")
         axs[i].legend(["Train", "Validation"], loc="upper right")
 
-    finalize_plot(save_file=save_file, **kwargs)
+    finalize_plot(save_file=save_file, legend=False, **kwargs)

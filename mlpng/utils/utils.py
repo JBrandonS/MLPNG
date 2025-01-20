@@ -144,7 +144,7 @@ def get_fisher(file, name="fisher"):
     """
     try:
         with h5py.File(file, "r", swmr=True, locking=False) as hdf:
-            fisher = float(hdf.get(name, [None])[()])  # type: ignore
+            fisher = float(hdf.get(name, [None])[0])  # type: ignore
             logger.info(
                 "Loaded fisher: %s, with error: %s", fisher, np.sqrt(1 / fisher)
             )

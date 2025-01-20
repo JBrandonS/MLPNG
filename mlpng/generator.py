@@ -411,8 +411,8 @@ def main():
     sdata["fnl_norm"] = fnl_norm.astype(core.r_dtype)
 
     if core.lensing:
-        sdata["alm_lensed"] = alm_lensed.astype(core.c_dtype)
-        sdata["map_lensed"] = maps_lensed.astype(core.r_dtype)
+        sdata["alm_lensed"] = alm_lensed[:, :, core.pol_idxs()].astype(core.c_dtype)
+        sdata["map_lensed"] = maps_lensed[:, :, core.pol_idxs()].astype(core.r_dtype)
         sdata["phi_map"] = phi_map.astype(core.r_dtype)
 
     save_data(core.file, sdata)

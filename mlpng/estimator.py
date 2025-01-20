@@ -81,7 +81,6 @@ def main():
     logger.info("Fisher: %s, standard deviation: %s", fisher, 1 / np.sqrt(fisher))
 
     # Finally we can get our estimates
-    # alms = data["alm_lensed"] if core.lensing else data["alm"]  # not in memory yet
     alms = data["alm"]
 
     logger.debug("Computing estimates with alms of shape %s, dtype: %s", alms.shape, alms.dtype)
@@ -100,7 +99,6 @@ def main():
         print_errors(fnls, estimates, fisher)
 
         # save the data, this will append to the alm_file
-        # TODO fisher is fisher_iso if core.isotropic, does this matter?
         sdata = {}
         sdata["fisher"] = fisher
         sdata["estimate"] = estimates
@@ -114,9 +112,57 @@ def main():
 
         if core.plot:
             plot_predictions(
-                fnls, estimates, fisher=fisher, save_file=core.get_plot_file("preds")
+                fnls,
+                estimates,
+                fisher=fisher,
+                save_file=core.get_plot_file("ksw_preds"),
             )
-            plot_histogram(fnls, estimates, save_file=core.get_plot_file("hist"))
+            plot_histogram(fnls, estimates, save_file=core.get_plot_file("ksw_hist"))
+
+    if core.lensing:
+        # We need to open the data file again to get the lensed alms
+        data = h5py.File(core.file, "r", swmr=True, locking=False)
+        alms = data["alm_lensed"]
+
+        logger.debug(
+            "Computing lensed estimates with alms of shape %s, dtype: %s",
+            alms.shape,
+            alms.dtype,
+        )
+        estimates, _, _, _ = core.estimator.compute_estimate_batch(
+            lambda idx: core.icov_func(alms[idx, 0]),
+            range(core.num_estimates),
+            comm=mpi_comm,
+            fisher=fisher,
+            theta_batch=theta_batch,
+            lin_term=0 if core.isotropic else None,
+        )
+
+        if mpi_root:
+            fnls = np.array(data["fnl"][: core.num_estimates])[:, 0].flatten()
+            print_errors(fnls, estimates, fisher)
+
+            # save the data, this will append to the alm_file
+            sdata = {}
+            sdata["estimate_lensed"] = estimates
+            sdata["error_lensed"] = (estimates - fnls) * np.sqrt(fisher)
+
+            # We need to close the data file before we can write to it as it is opened in read-only
+            data.close()
+
+            logger.info("Appending estimator data to %s", core.file)
+            save_data(core.file, sdata, mode="a")
+
+            if core.plot:
+                plot_predictions(
+                    fnls,
+                    estimates,
+                    fisher=fisher,
+                    save_file=core.get_plot_file("ksw_lensed_preds"),
+                )
+                plot_histogram(
+                    fnls, estimates, save_file=core.get_plot_file("ksw_lensed_hist")
+                )
 
     logger.info("Finished %s!", mpi_rank)
 
