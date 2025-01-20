@@ -62,7 +62,7 @@ def save_data(file_path, data_dict, mode="a"):
     Returns:
         None
     """
-    logger.debug("Saving data to %s", file_path)
+    logger.info("Saving data to '%s'", file_path)
     with h5py.File(file_path, mode) as hf:
         for key, value in data_dict.items():
             logger.debug("%s: Processing key", key)
@@ -111,7 +111,7 @@ def load_data(data_file, keys):
     Raises:
         ValueError: If any of the provided keys are not found in the HDF5 file.
     """
-    logger.info("Loading data %s from %s", keys, data_file)
+    logger.info("Loading data '%s' from '%s'", keys, data_file)
 
     if isinstance(keys, str):
         keys = [keys]
@@ -189,7 +189,8 @@ def print_errors(truth, preds, fisher, n_sigma=5):
     diff = preds - truth
     std_dev = np.sqrt(1 / fisher)
     sem = std_dev / np.sqrt(len(diff))
-    logger.info("Standard deviation: %s, SEM: %s", std_dev, sem)
+    logger.info("Standard deviation from fisher: %s, SEM: %s", std_dev, sem)
+    logger.info("Mean error: %s, Median error: %s", np.mean(diff), np.median(diff))
     for i in range(n_sigma):
         within = np.sum(np.abs(diff) < ((i + 1) * std_dev))
         m_error = np.sum(np.abs(diff) < ((i + 1) * (std_dev - sem)))

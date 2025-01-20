@@ -13,16 +13,6 @@ from .utils import trim_alms
 
 logger = logging.getLogger(__name__)
 
-
-def pol_str(pol: int, double: bool = False):
-    """
-    Converts the polarization number, {0, 1, 2} to a string {T, E, B} or {TT, EE, TE} if double is True
-    """
-    if double:
-        return ["TT", "EE", "TE"][pol]
-    return ["T", "E", "B"][pol]
-
-
 def finalize_plot(
     title: str | None = None,
     tight_layout: bool = True,
@@ -44,34 +34,12 @@ def finalize_plot(
     if tight_layout:
         plt.tight_layout()
     if save_file is not None:
+        logger.debug("Saving plot to '%s'", save_file)
         plt.savefig(save_file)
     if show:
         plt.show()
     if close:
         plt.close()
-
-
-def plot_patches(patches, n_plots: int = 8, title: str = "Patches", **kwargs):
-    n_plots = min(n_plots, patches.shape[0])
-    nrows = int(np.ceil(n_plots / 4))
-    ncols = min(n_plots, 4)
-    idxs = range(min(patches.shape[0], n_plots, nrows * ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(16, 12))
-    axes = axes.flatten()  # Flatten the axes array for easier indexing
-
-    for idx, patch in enumerate(patches[idxs]):
-        ax = axes[idx]
-        ax.imshow(patch)
-        ax.axis("off")
-
-    for idx in range(n_plots, nrows * ncols):
-        fig.delaxes(axes[idx])
-
-    plt.subplots_adjust(wspace=0, hspace=0)
-    plt.suptitle(title)
-
-    kwargs["legend"] = False
-    finalize_plot(**kwargs)
 
 
 def plot_cl(
@@ -98,43 +66,46 @@ def plot_cl(
     ells = np.arange(lmin, lmax + 1)
     scale = (ells * (ells + 1) / 2 / np.pi) if scale else 1
     cls = np.atleast_2d(cls)[:, lmin : lmax + 1]
-    npols = cls.shape[0]
 
     if labels is not None:
         if isinstance(labels, str):
             labels = [labels]
 
-        if len(labels) != npols:
-            raise ValueError("Number of labels must match number of Cl arrays.")
+        if len(labels) != core.npols:
+            raise ValueError(
+                f"Number of labels must match number of Cl arrays. Got {len(labels)} labels and {core.npols} Cl arrays of shape {np.shape(cls)}."
+            )
     else:
-        labels = ["data"] if npols == 1 else [f"data {i}" for i in range(npols)]
+        labels = [f"{core.pols[i]}" for i in range(core.npols)]
 
-    for pol in range(npols):
-        plot_func(ells, scale * cls[pol], label=labels[pol], linestyle=":")
+    for pol in range(core.npols):
+        plot_func(ells, scale * cls[pol, :], label=labels[pol], linestyle=":")
 
-        # cpol = core.pol_idxs(keep_b=True)[pol]
-        pstr = "" if npols == 1 else f", {pol_str(pol)}"
+        # we need to get the correct pol for the camb and noise
+        cpol = core.pol_idxs()[pol]
         if plot_camb:
+            c_ell = core.cosmo.c_ell["unlensed_scalar"]["c_ell"][: core.nell].T
             plot_func(
                 ells,
-                scale * core.c_ell[pol, lmin : lmax + 1],
-                label="camb" + pstr,
+                scale * c_ell[cpol, lmin : lmax + 1],
+                label=f"camb {core.pols[pol]}",
             )
 
         if plot_noise:
             plot_func(
                 ells,
-                core.n_ell[pol, lmin : lmax + 1],
-                label=r"noise" + pstr,
+                core.n_ell[cpol, lmin : lmax + 1],
+                label=f"noise {core.pols[pol]}",
                 linestyle="--",
             )
 
         if plot_full_camb:
-            s_ell = core.b_ell**2 * core.c_ell + core.n_ell
+            c_ell = core.cosmo.c_ell["unlensed_scalar"]["c_ell"][: core.nell].T
+            s_ell = core.b_ell**2 * c_ell + core.n_ell
             plot_func(
                 ells,
-                scale * s_ell[pol, lmin : lmax + 1],
-                label=r"camb + noise" + pstr,
+                scale * s_ell[cpol, lmin : lmax + 1],
+                label=f"camb + noise, {core.pols[pol]}",
                 linestyle="--",
             )
 
@@ -168,13 +139,13 @@ def plot_cl_alm(
         for single_alm in alm:
             cls.append(curvedsky.alm2cl(single_alm))
     else:
-        cls = [curvedsky.alm2cl(alm)]
+        cls = np.array([curvedsky.alm2cl(alm)])
     plot_cl(core, cls, lmax=lmax, title=title, **kwargs)
 
 
 def plot_cl_map(
     core,
-    map: np.ndarray,
+    maps: np.ndarray,
     wcs,
     lmax: int,
     title: str = "Angular power spectrum from map",
@@ -193,16 +164,17 @@ def plot_cl_map(
     Returns:
         None
     """
-    if len(np.shape(map)) > 1:
+    if len(np.shape(maps)) > 1:
         cls = []
-        for single_map in map:
+        for single_map in maps:
             tmap = enmap.ndmap(single_map, wcs)
             alm = curvedsky.map2alm(tmap, lmax=lmax, copy=True)
             cls.append(curvedsky.alm2cl(alm))
     else:
-        tmap = enmap.ndmap(map, wcs)
+        tmap = enmap.ndmap(maps, wcs)
         alm = curvedsky.map2alm(tmap, lmax=lmax, copy=True)
         cls = [curvedsky.alm2cl(alm)]
+
     plot_cl(core, cls, lmax=lmax, title=title, **kwargs)
 
 
@@ -280,7 +252,7 @@ def plot_histogram(truth: np.ndarray, preds: np.ndarray, **kwargs):
     preds = preds.flatten()
 
     # Create a figure with two subplots
-    fig, axs = plt.subplots(2, figsize=(16, 12))
+    _, axs = plt.subplots(2, figsize=(16, 12))
 
     # Plot the predictions on the first subplot
     mean_pred = np.mean(preds)
@@ -335,12 +307,12 @@ def plot_elsner_comp(
     core,
     alm_l,
     alm_nl,
-    TCMB: float = 2.7255,
     index: int | None = None,
     average: int = 0,
     title: str = "Elsner comparison",
     elsner_dir: str = "data/elsner",
-    elsner_pols=[0, 1, 2],
+    scale_elsner: bool = True,
+    plot_func=plt.plot,
     **kwargs,
 ):
     """Plot comparison between simulated and Elsner alms.
@@ -369,6 +341,7 @@ def plot_elsner_comp(
     inner_kwargs = kwargs.copy()
     inner_kwargs["close"] = False
     inner_kwargs["show"] = False
+    inner_kwargs["save_file"] = None
 
     # get our elsner sims
     if average > 0:
@@ -393,13 +366,14 @@ def plot_elsner_comp(
             hp.read_alm(f"{elsner_dir}/alm_nl_{idx}_v3.fits", hdu=(1, 2, 3))
         )
 
-    # we should scale the elsner alms to match the simulations
-    t_scale = TCMB * 1e6
-    elsner_l *= t_scale
-    elsner_nl *= t_scale
+    if scale_elsner:
+        # we should scale the elsner alms to match the simulations
+        t_scale = core.cosmo.camb_params.TCMB * 1e6
+        elsner_l *= t_scale
+        elsner_nl *= t_scale
 
-    elsner_l = elsner_l[elsner_pols]
-    elsner_nl = elsner_nl[elsner_pols]
+    elsner_l = elsner_l[core.pol_idxs()]
+    elsner_nl = elsner_nl[core.pol_idxs()]
 
     # we need to reshape either the alms or the elsner to match the same lmax to plot
     if alm_l.shape[-1] > elsner_l.shape[-1]:
@@ -417,44 +391,71 @@ def plot_elsner_comp(
         # fix for single pol
         axes = axes[:, np.newaxis]
 
-    for pol in range(npols):
-        ylabel = r"$\ell(\ell+1)/2\pi\;C_{\ell}" + f"^{pol_str(pol)}$"
+    for data in [(alm_l, alm_nl, "alm"), (elsner_l, elsner_nl, "elsner")]:
+        for pol in range(data[0].shape[0]):
+            ratio = np.ma.mean(np.ma.abs(data[0][pol]) / np.ma.abs(data[1][pol]))
+            logger.info("Mean ratio of %s %s: %s", data[2], core.pols[pol], ratio)
+
+    for pol in range(core.npols):
         plt.sca(axes[0, pol])
-        plot_cl_alm(
+        plot_elsner_vs(
             core,
-            [elsner_l[pol], alm_l[pol]],
+            alm_l[pol],
+            elsner_l[pol],
             lmax,
-            labels=["elsner", "sim"],
-            title=f"linear, pol: {pol_str(pol)}",
-            ylabel=ylabel,
-            **inner_kwargs,
+            plot_func=plot_func,
         )
+        finalize_plot(**inner_kwargs)
 
         plt.sca(axes[1, pol])
-        plot_cl_alm(
+        plot_elsner_vs(
             core,
-            [elsner_nl[pol], alm_nl[pol]],
+            alm_nl[pol],
+            elsner_nl[pol],
             lmax,
-            labels=["elsner", "sim"],
-            title=f"non-linear alms, pol: {pol_str(pol)}",
-            ylabel=ylabel,
-            **inner_kwargs,
+            plot_func=plot_func,
         )
+        finalize_plot(**inner_kwargs)
 
         plt.sca(axes[2, pol])
-        plot_cl_alm(
+        plot_elsner_vs(
             core,
-            [elsner_l[pol] + elsner_nl[pol], alm_l[pol] + alm_nl[pol]],
+            alm_l[pol] + alm_nl[pol],
+            elsner_l[pol] + elsner_nl[pol],
             lmax,
-            labels=["elsner", "sim"],
-            title=f"full alms, fnl: 1, pol: {pol_str(pol)}",
-            ylabel=ylabel,
-            **inner_kwargs,
+            plot_func=plot_func,
         )
+        finalize_plot(**inner_kwargs)
 
     plt.suptitle(title)
     kwargs.pop("plot_func", None)
     finalize_plot(**kwargs)
+
+
+def plot_elsner_vs(
+    core,
+    alm: np.ndarray | list[np.ndarray],
+    elsner: np.ndarray | list[np.ndarray],
+    lmax: int | None = None,
+    lmin: int | None = None,
+    scale=True,
+    plot_func=plt.semilogy,
+):
+    lmin = lmin if lmin else core.lmin
+    lmax = lmax if lmax else hp.Alm.getlmax(np.shape(alm)[-1])
+    ells = np.arange(lmin, lmax + 1)
+    scale = (ells * (ells + 1) / 2 / np.pi) if scale else 1
+    alm_cl = curvedsky.alm2cl(alm)[lmin : lmax + 1]
+    elsner_cl = curvedsky.alm2cl(elsner)[lmin : lmax + 1]
+
+    if np.shape(alm) != np.shape(elsner):
+        raise ValueError(
+            f"Number of alms must match number of elsner alms. Got {np.shape(alm)} alms and {np.shape(elsner)} elsner alms."
+        )
+
+    plot_func(ells, scale * alm_cl, label="alm", linestyle=":")
+    plot_func(ells, scale * elsner_cl, label="elsner", linestyle=":")
+    plt.legend()
 
 
 def make_alm_plots(core, alm_l=None, alm_ng=None, alms=None, lensed=False):
@@ -469,7 +470,7 @@ def make_alm_plots(core, alm_l=None, alm_ng=None, alms=None, lensed=False):
     """
     logger.debug("Generating alm plots")
     sim = core.rng.integers(core.nsims)  # get random sim idx
-    lstr = f"_lensed" if lensed else ""
+    lstr = "_lensed" if lensed else ""
 
     # plot a few comparison with different functions to get views
     idx = core.rng.integers(1, 1001)
@@ -481,7 +482,6 @@ def make_alm_plots(core, alm_l=None, alm_ng=None, alms=None, lensed=False):
             index=idx,
             save_file=core.get_plot_file(f"ecomp{lstr}"),
             plot_func=plt.plot,
-            elsner_pols=core.pol_idxs(),
         )
         plot_elsner_comp(
             core,
@@ -490,7 +490,6 @@ def make_alm_plots(core, alm_l=None, alm_ng=None, alms=None, lensed=False):
             index=idx,
             save_file=core.get_plot_file(f"ecomp_log{lstr}"),
             plot_func=plt.loglog,
-            elsner_pols=core.pol_idxs(),
         )
         plot_elsner_comp(
             core,
@@ -499,7 +498,6 @@ def make_alm_plots(core, alm_l=None, alm_ng=None, alms=None, lensed=False):
             index=idx,
             save_file=core.get_plot_file(f"ecomp_semilogy{lstr}"),
             plot_func=plt.semilogy,
-            elsner_pols=core.pol_idxs(),
         )
 
     if alms is not None:
@@ -507,7 +505,7 @@ def make_alm_plots(core, alm_l=None, alm_ng=None, alms=None, lensed=False):
             core,
             alms[sim],
             save_file=core.get_plot_file(f"{sim}_alm{lstr}"),
-            ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}",
+            ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}$",
             plot_camb=True,
             plot_full_camb=True,
         )
@@ -531,9 +529,9 @@ def make_alm_plots(core, alm_l=None, alm_ng=None, alms=None, lensed=False):
         )
 
 
-def plot_metrics(history, save_file=None, metrics=["loss"]):
+def plot_metrics(history, save_file=None, metrics=["loss"], **kwargs):
     num_metrics = len(metrics)
-    fig, axs = plt.subplots(num_metrics, figsize=(15, 6 * num_metrics))
+    _, axs = plt.subplots(num_metrics, figsize=(15, 6 * num_metrics))
 
     if num_metrics == 1:
         axs = [axs]
@@ -546,26 +544,4 @@ def plot_metrics(history, save_file=None, metrics=["loss"]):
         axs[i].set_xlabel("Epoch")
         axs[i].legend(["Train", "Validation"], loc="upper right")
 
-    plt.tight_layout()
-    if save_file is not None:
-        plt.savefig(save_file)
-
-
-def plot_activations(plot_dir, model, data, name, layers=None):
-    import keract  # pip install keract for this to work
-
-    first_batch = next(iter(data.take(1)))
-    images, _ = first_batch
-    img = images[0][None, :, :, :]  # need to add back in the batch dim
-
-    activations = keract.get_activations(model, img, auto_compile=True)
-
-    if layers is not None:
-        activations = activations.get(layers)
-
-    keract.display_activations(
-        activations,
-        save=True,
-        directory=os.path.join(plot_dir, name),
-        data_format="channels_last",
-    )
+    finalize_plot(save_file=save_file, **kwargs)

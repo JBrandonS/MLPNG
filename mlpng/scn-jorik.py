@@ -143,7 +143,6 @@ class LinearWarmup(tf.keras.optimizers.schedules.LearningRateSchedule):
     def __call__(self, step: int):
 
         global_step = tf.cast(step, dtype=tf.float32)
-        # print("Global step", global_step, flush=True)
 
         linear_warmup_lr = self._init_warmup_lr + global_step / self._warmup_steps * (
             self._final_warmup_lr - self._init_warmup_lr
@@ -429,7 +428,6 @@ def get_model(
 
 
 def plot_weights(model, save_dir):
-    print("Plotting weights to directory", save_dir, flush=True)
     os.makedirs(save_dir, exist_ok=True)
     for layer in model.layers:
         weights = layer.get_weights()
@@ -437,7 +435,6 @@ def plot_weights(model, save_dir):
             filename = os.path.join(save_dir, f"{layer.name}.png")
             plt.figure()
             for i, weight in enumerate(weights):
-                print(weight.shape, flush=True)
                 # Plot each weight map
                 for j in range(weight.shape[-1]):
                     test_map = weight[..., j]
