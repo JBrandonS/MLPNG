@@ -1,4 +1,3 @@
-import math
 import sys
 import argparse
 import json
@@ -307,12 +306,12 @@ class Core:
         self.lmin = self._get("lmin", 2)
         self.lmax = self._get("lmax", 3 * self.nside - 1)
         self.lmax_buffer = self._get("lmax_buffer", 128)
-        self.cosmo_params["lmax"] = self.lmax  # + self.lmax_buffer
+        self.cosmo_params["lmax"] = self.lmax
 
         # setup the fnl values
         self.fnl_min, self.fnl_max = self._get("fnl_range", (-100, 100))
 
-        # setup the polarization which should support --pols [T|E|TE]
+        # setup the polarization which should support --pols [T|TE]
         pols = self._get("pols", "TE")
         if isinstance(pols, str):
             pols = tuple(pols)
@@ -324,19 +323,9 @@ class Core:
         self.use_t = "T" in self.pols
         self.use_e = "E" in self.pols
         self.use_b = False  # "B" in self.pols
+        self.isotropic = self._get("isotropic", True)
 
-        self.isotropic = self._get("isotropic", not (self.use_t and self.use_e))
-        if self.isotropic:
-            self.use_te = False
-        else:
-            self.use_te = True
-
-        logger.debug(
-            "Using polarizations T: %s, E: %s, TE: %s",
-            self.use_t,
-            self.use_e,
-            self.use_te,
-        )
+        logger.debug("Using polarizations T: %s, E: %s", self.use_t, self.use_e)
 
         # setup our precision types to be consistent
         if self._get("double_precision", False):
@@ -396,16 +385,16 @@ class Core:
 
             # T, E, B, TE
             n_ell = np.ones((4, self.nell), dtype=self.r_dtype)
-            n_ell[0] = convert(self._get("noise_tt", 5)) ** 2
-            n_ell[1] = convert(self._get("noise_ee", 10)) ** 2
+            n_ell[0] = convert(self._get("noise_tt", 1)) ** 2
+            n_ell[1] = convert(self._get("noise_ee", 5)) ** 2
             n_ell[2] = 0  # B is always 0
-            n_ell[3] = convert(self._get("noise_te", 25)) ** 2
+            n_ell[3] = convert(self._get("noise_te", 10)) ** 2
         else:
             n_ell = np.full((4, self.nell), 1e-16, dtype=self.r_dtype)
             b_ell = np.ones((4, self.nell), dtype=self.r_dtype)
 
-        self.n_ell = n_ell[self.pol_idxs(keep_b=True, keep_te=True)]
-        self.b_ell = b_ell[self.pol_idxs(keep_b=True, keep_te=True)]
+        self.n_ell = n_ell
+        self.b_ell = b_ell
 
     def _radii(self):
         """
@@ -572,21 +561,34 @@ class Core:
         self.cosmo.compute_transfer(camb_lmax, verbose)
         self.cosmo.compute_c_ell()
 
-        pols = self.pol_idxs(keep_b=True, keep_te=True)
         if self.lensing:
-            c_ell_lensed = self.cosmo.c_ell["lensed_scalar"]["c_ell"].T
-            self.c_ell_lensed = c_ell_lensed[pols, : self.nell]
-            self.c_ell_lensed = self.c_ell_lensed.astype(self.r_dtype)
+            c_ell_lensed = self.cosmo.c_ell["lensed_scalar"]["c_ell"][: self.nell].T
+            self.c_ell_lensed = c_ell_lensed.astype(self.r_dtype)
 
-        c_ell = self.cosmo.c_ell["unlensed_scalar"]["c_ell"].T
-        self.c_ell = c_ell[pols, : self.nell]
-        self.c_ell = self.c_ell.astype(self.r_dtype)
+        c_ell = self.cosmo.c_ell["unlensed_scalar"]["c_ell"][: self.nell].T
+        self.c_ell = c_ell.astype(self.r_dtype)
 
         ns = self.cosmo_params["ns"]
         ps = self.cosmo_params["pivot_scalar"]
         shape = Shape.prim_local(ns, pivot=ps)
 
         self.cosmo.add_prim_reduced_bispectrum(shape, self.radii)
+
+        pols = self.pol_idxs()
+        self.cov = cov = self.b_ell**2 * self.c_ell + self.n_ell
+        # self.cov = cov = self.c_ell
+
+        inoise = np.full(self.n_ell.shape, 1e-16)
+        inoise[pols, self.lmin :] = 1 / self.n_ell[pols, self.lmin :]
+
+        icov = np.zeros_like(cov)
+        icov[pols, self.lmin :] = 1 / self.c_ell[pols, self.lmin :]
+        icov = get_itotcov_ell(icov, inoise, self.b_ell)
+        self.icov = icov[pols, pols]
+
+        self.icov2 = np.zeros_like(cov)
+        self.icov2[pols, self.lmin :] = 1 / cov[pols, self.lmin :]
+        self.icov2 = self.icov2[pols]
 
         # icov should be  x^icov = S^{-1} (S^{-1} + P^H N^{-1} P)^{-1} P^H N^{-1} P s,
         # where data = P s + n, where s are the spherical harmonic coefficients
@@ -596,11 +598,17 @@ class Core:
         # respectively. ^H denotes the Hermitian transpose.
         self.estimator: KSW = KSW(
             self.cosmo.red_bispectra,
-            lambda a: a,  # we will send the cov alms directly
+            self.icov_func,
             self.lmax,
             self.pols,
             self.precision,
         )
+
+    def icov_func(self, alm):
+        ret = np.zeros_like(alm)
+        for pol in range(ret.shape[0]):
+            ret[pol] = hp.almxfl(alm[pol], self.icov[pol])
+        return ret
 
     def pol_idxs(self, keep_b=False, keep_te=False, pretrimmed=False):
         """
@@ -611,16 +619,16 @@ class Core:
             keep_te (bool): Whether to keep the TE-mode polarization. Default is False.
             pretrimmed (bool): Whether the alms are pretrimmed, i.e. have we removed the t-modes. Default is False.
         """
-        # TODO: Look into simplifying this method
-        start = 0 if self.use_t else (0 if pretrimmed else 1)
-
-        num_to_take = 1 if self.use_t else 0
-        if self.use_e:
-            num_to_take += 2 if keep_b else 1  # we also need B
-        if keep_te and self.use_te:
-            num_to_take += 1
-
-        return np.array(range(start, start + num_to_take))
+        conditions = [
+            self.use_t,
+            self.use_e,
+            keep_b and self.use_e,
+            keep_te and (self.use_t and self.use_e and not self.isotropic),
+        ]
+        idxs = np.array([i for i, v in enumerate(conditions) if v])
+        if pretrimmed and not self.use_t:
+            idxs -= 1
+        return idxs
 
     def get_plot_file(self, name, base_dir=None, extension=".png", create_dir=True):
         """
