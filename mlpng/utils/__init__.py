@@ -13,13 +13,10 @@ from .plots import (
     plot_cl_alm,
     plot_cl_map,
     plot_histogram,
-    plot_patches,
     plot_predictions,
     plot_mollview,
     plot_elsner_comp,
-    pol_str,
     plot_metrics,
-    plot_activations,
     make_alm_plots,
 )
 
@@ -36,12 +33,9 @@ __all__ = [
     "plot_cl_alm",
     "plot_cl_map",
     "plot_histogram",
-    "plot_patches",
     "plot_predictions",
     "plot_mollview",
     "plot_elsner_comp",
-    "pol_str",
     "plot_metrics",
-    "plot_activations",
     "make_alm_plots",
 ]

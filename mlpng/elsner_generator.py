@@ -86,8 +86,8 @@ def integrand(alm, alpha_l, bl_div_cl, lmax, nside, upscale=False):
     if Balm.shape[0] == 2:
         Balm = np.vstack([Balm, np.zeros_like(Balm[0])])
 
-    B = hp.alm2map(Balm, nside, pol=npols == 3)
-    inner = hp.map2alm(B**2, lmax, use_pixel_weights=True, pol=npols == 3)
+    B = hp.alm2map(Balm, nside, pol=False)
+    inner = hp.map2alm(B**2, lmax, use_pixel_weights=True, pol=False)
     inner = np.array(inner, ndmin=2)
     return np.array([hp.almxfl(inner[p], alpha_l[..., p]) for p in range(npols)])
 
@@ -130,14 +130,14 @@ def generate_alm_nl(core, alms):
     tr_ells = core.cosmo.transfer["ells"]
     tr_k = core.cosmo.transfer["k"]
     # this is T, E, PHI
-    tr_ell_k = core.cosmo.transfer["tr_ell_k"][..., core.pol_idxs()]
+    tr_ell_k = core.cosmo.transfer["tr_ell_k"][..., core.pol_idxs()] * 5 / 3
 
     # this will be the f(k) value to be placed in the radial function
     # first will be for alpha_ell, second will be beta_ell
     # see komatsu 2003 eq 5 and 6
     f_k = np.ones((len(tr_k), 2), dtype=core.r_dtype)
     Pk = core.cosmo.camb_params.primordial_power(tr_k, 0)
-    f_k[:, 1] = 2 * np.pi**2 * Pk / (tr_k) ** (3)
+    f_k[:, 1] = 2 * np.pi**2 * Pk / (tr_k) ** (3) * (3 / 5) ** 2
 
     rad = radial_func(f_k, tr_ell_k, tr_k, core.radii, tr_ells)
 
@@ -148,7 +148,7 @@ def generate_alm_nl(core, alms):
         "cubic",
         1,
         bounds_error=False,
-        fill_value="extrapolate",  # type: ignore
+        fill_value=0,  # type: ignore
     )(core.ells)
 
     beta_ell = rad[..., 1]
@@ -158,19 +158,15 @@ def generate_alm_nl(core, alms):
         "cubic",
         1,
         bounds_error=False,
-        fill_value="extrapolate",  # type: ignore
+        fill_value=0,  # type: ignore
     )(core.ells)
-
-    # komatsu, first year, 3 and 4
-    # bl = core.b_ell.T[None, :, core.pol_idxs(pretrimmed=True)]
-    # alpha_l *= bl
-    # beta_l *= bl
 
     s_ell = core.b_ell**2 * core.c_ell + core.n_ell
     # s_ell = core.c_ell + core.n_ell / core.b_ell**2
-    s_ell = s_ell[core.pol_idxs(keep_b=False, keep_te=False, pretrimmed=True)]
+    s_ell = s_ell[core.pol_idxs()]
     icov = np.zeros_like(s_ell)
     icov[:, core.lmin :] = 1 / s_ell[:, core.lmin :]
+
     bl_div_cl = np.zeros_like(beta_l)
     bl_div_cl[:, core.lmin :] = beta_l[:, core.lmin :] * icov.T[None, core.lmin :]
 
@@ -323,10 +319,37 @@ def main():
     if core.nsims > 1000:
         raise ValueError("nsims > 1000 is not supported for elsner simulations")
 
-    els_cl_file = os.path.join(core.dirs["base"], "elsner", "cl_wmap5_bao_sn.dat")
-    elsner_cls = np.loadtxt(els_cl_file).T[1:]
-    elsner_cls *= (core.cosmo.camb_params.TCMB * 1e6) ** 2
-    alm_l = generate_alm(core, cls=elsner_cls)
+    elsner_cl_file = os.path.join(core.dirs["base"], "elsner", "cl_wmap5_bao_sn.dat")
+    data = np.loadtxt(elsner_cl_file)
+
+    # want to add the mono and dipole terms to match other code
+    data = np.vstack([[0, 0, 0, 0], [1, 0, 0, 0], data])
+
+    ells = data[:, 0]
+    c_ell_tt = data[:, 1]
+    c_ell_ee = data[:, 2]
+    c_ell_te = data[:, 3]
+    c_ells = np.array([c_ell_tt, c_ell_ee, np.zeros_like(c_ell_tt), c_ell_te])
+
+    # scale = ells * (ells + 1) / (2 * np.pi)
+    # c_ells *= scale
+    c_ells *= (core.cosmo.camb_params.TCMB * 1e6) ** 2
+
+    # update the core to use the new cls, hacky
+    pols = core.pol_idxs()
+    core.c_ell = c_ells[:, : core.nell]
+
+    core.cov = cov = core.b_ell**2 * core.c_ell + core.n_ell
+    inoise = np.full(core.n_ell.shape, 1e-16)
+    inoise[pols, core.lmin :] = 1 / core.n_ell[pols, core.lmin :]
+
+    icov = np.zeros_like(cov)
+    icov[pols, core.lmin :] = 1 / cov[pols, core.lmin :]
+    icov = get_itotcov_ell(icov, inoise, core.b_ell)
+    icov = icov[pols, pols]
+    core.icov = np.array(icov[:, : core.nell])
+
+    alm_l = generate_alm(core)
     logger.debug("alm_l shape: %s, dtype: %s", alm_l.shape, alm_l.dtype)
 
     # get the non-gaussian alms, this will take a long time
@@ -334,17 +357,18 @@ def main():
     alm_nl = generate_alm_nl(core, alm_l)
     logger.debug("alm_nl shape: %s, dtype: %s", alm_nl.shape, alm_nl.dtype)
 
+    # save the data for jorik and daan
+    data = {}
+    data["alm_l"] = alm_l[:, pols].astype(core.c_dtype)
+    data["alm_nl"] = alm_nl.astype(core.c_dtype)
+    tstr = f"_{core.slurm.array_index}" if core.slurm.array_index > 0 else ""
+    file = os.path.join(core.dirs["data"], f"alm-{core.name}{tstr}.hdf5")
+    save_data(file, data)
+    print("done saving for jorik")
+
     # generate the fnls
     fnls = core.rng.uniform(core.fnl_min, core.fnl_max, (core.nsims, core.ndups, 1, 1))
-    logger.debug("fnls shape: %s, dtype: %s", fnls.shape, fnls.dtype)
-
-    # Add the duplicate dimension to the alms
-    alm_l = alm_l[:, None]
-    alm_nl = alm_nl[:, None]
-
-    # finally combine into the full alms and remove the monopole and dipole terms
-    alms = alm_l + fnls * alm_nl
-    alms = remove_mono_dipole(alms, inplace=True)  # safety
+    alms = alm_l[:, None, core.pol_idxs()] + fnls * alm_nl[:, None]
     alms = np.ascontiguousarray(alms)
     logger.debug("alms shape: %s, dtype: %s", alms.shape, alms.dtype)
 
@@ -368,7 +392,16 @@ def main():
 
     if core.slurm.is_main and core.plot:
         # lets make a few plots for the alms
-        make_alm_plots(core, alm_l[:, 0], alm_nl[:, 0], alms[:, 0])
+        print(
+            "alm_l shape",
+            alm_l.shape,
+            "alm nl shape",
+            alm_nl.shape,
+            "alms shape",
+            alms.shape,
+            flush=True,
+        )
+        make_alm_plots(core, alm_l, alm_nl, alms[:, 0])
 
     # once again save the maps to free up memory
     save_data(core.file, {"map": maps.astype(core.r_dtype)})
