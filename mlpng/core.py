@@ -61,8 +61,8 @@ class Core:
     nsims: int
     narray: int
     total_sims: int
-    fnl_min: float
-    fnl_max: float
+    fnl_min: int
+    fnl_max: int
     nell: int
     nelem: int
     npix: int
@@ -174,7 +174,7 @@ class Core:
         parser.add_argument("--lmin", type=int)
         parser.add_argument("--lmax", type=int)
         parser.add_argument("--lmax_buffer", type=int)
-        parser.add_argument("--fnl_range", type=float, nargs=2)
+        parser.add_argument("--fnl_range", type=int, nargs=2)
         parser.add_argument("--num_estimates", type=int)
         parser.add_argument("--pols", type=str, nargs="+")
 
@@ -312,7 +312,7 @@ class Core:
         self.fnl_min, self.fnl_max = self._get("fnl_range", (-100, 100))
 
         # setup the polarization which should support --pols [T|TE]
-        pols = self._get("pols", "TE")
+        pols = self._get("pols", "T")
         if isinstance(pols, str):
             pols = tuple(pols)
         elif isinstance(pols, list):
@@ -657,6 +657,25 @@ class Core:
                 raise ValueError(f"Directory {base_dir} does not exist")
 
         return os.path.join(base_dir, f"{self.name}_{self.slurm.job}_{name}{extension}")
+
+    def check_existing_data_file(self):
+        if os.path.exists(self.file):
+            if self.force_gen:
+                logger.info("Removing existing data file")
+                os.remove(self.file)
+            else:
+                logger.info("Data file exists, exiting")
+                sys.exit(0)
+
+        # we also should check for the full file
+        full_file = os.path.join(self.dirs["data"], f"{self.name}.hdf5")
+        if os.path.exists(full_file):
+            if self.force_gen:
+                logger.info("Removing existing full data file")
+                os.remove(full_file)
+            else:
+                logger.info("Found full data file, exiting")
+                sys.exit(0)
 
 
 @dataclass
