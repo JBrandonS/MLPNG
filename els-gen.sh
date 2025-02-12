@@ -8,31 +8,16 @@
 # list of the settings file to be used, will be ran in order
 # these must be in settings/ and have the .json extension
 SETTINGS=(
-  # "n32"
-  # "n64"
-  "n128"
-  # "n256"
-  
-  # "n512"
-  # "n1024"
-
-  # these need to use high memory nodes, change sbatch/generator.sbatch to sbatch/generator-hm.sbatch in the main loop below
-  # "n2048"
-  # "n4096"
-
-  # "elsner"
-  # "planck"
+  "elsner"
 )
 
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
 ARGS=(
   "--nsims" "1000"
   "--pols" "T"
-  "--base_name" "+_ps1"
+  "--base_name" "jorik"
   "--fnl_range" "-1000" "1000"
-  "--no-save_alms"
-  "--phi_scale" "1"
-  "--narray" "100"
+  "--narray" "10"
 )
 
 # override the slurm array settings for narray, only used in data generation
@@ -93,11 +78,11 @@ for x in "${SETTINGS[@]}"; do
   job_id=""
 
   # Submit the generator job
-  job_id=$(submit_job "$job_id" "sbatch/generator.sbatch" "$settings" "true")
+  # job_id=$(submit_job "$job_id" "sbatch/els-gen.sbatch" "$settings" "true")
 
   # Combine the data into a single file
   job_id=$(submit_job "$job_id" "sbatch/combiner.sbatch" "$settings")
 
   # Run the estimator on the combined data
-  job_id=$(submit_job "$job_id" "sbatch/estimator.sbatch" "$settings")
+  # job_id=$(submit_job "$job_id" "sbatch/estimator.sbatch" "$settings")
 done

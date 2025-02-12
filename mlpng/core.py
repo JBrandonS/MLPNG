@@ -61,8 +61,8 @@ class Core:
     nsims: int
     narray: int
     total_sims: int
-    fnl_min: float
-    fnl_max: float
+    fnl_min: int
+    fnl_max: int
     nell: int
     nelem: int
     npix: int
@@ -177,6 +177,7 @@ class Core:
         parser.add_argument("--fnl_range", type=int, nargs=2)
         parser.add_argument("--num_estimates", type=int)
         parser.add_argument("--pols", type=str, nargs="+")
+        parser.add_argument("--phi_scale", type=float)
 
         parser.add_argument("--data_fraction", type=float)
 
@@ -189,6 +190,8 @@ class Core:
         parser.add_argument("--double_precision", action=argparse.BooleanOptionalAction)
         parser.add_argument("--plot", action=argparse.BooleanOptionalAction)
         parser.add_argument("--isotropic", action=argparse.BooleanOptionalAction)
+
+        parser.add_argument("--save_alms", action=argparse.BooleanOptionalAction)
 
         parser.add_argument("--wandb", action=argparse.BooleanOptionalAction)
         parser.add_argument("--tensorboard", action=argparse.BooleanOptionalAction)
@@ -318,7 +321,7 @@ class Core:
         self.fnl_min, self.fnl_max = int(fmin), int(fmax)
 
         # setup the polarization which should support --pols [T|TE]
-        pols = self._get("pols", "TE")
+        pols = self._get("pols", "T")
         if isinstance(pols, str):
             pols = tuple(pols)
         elif isinstance(pols, list):
@@ -360,6 +363,8 @@ class Core:
         cpus = len(os.sched_getaffinity(0))
         self.n_cpus = int(os.getenv("SLURM_CPUS_PER_TASK", cpus))
 
+        self.phi_scale = self._get("phi_scale", 1)
+
         self.use_wandb = self._get("wandb", False)
         self.use_tb = self._get("tensorboard", False)
         self.data_fraction = self._get("data_fraction", 1.0)
@@ -398,7 +403,7 @@ class Core:
             n_ell[0] = convert(self._get("noise_tt", 1)) ** 2
             n_ell[1] = convert(self._get("noise_ee", 5)) ** 2
             n_ell[2] = 0  # B is always 0
-            n_ell[3] = convert(self._get("noise_te", 10)) ** 2
+            n_ell[3] = 0 # no TE noise
         else:
             n_ell = np.full((4, self.nell), 1e-16, dtype=self.r_dtype)
             b_ell = np.ones((4, self.nell), dtype=self.r_dtype)
@@ -512,7 +517,13 @@ class Core:
             fstr = f"{self.fnl_min}-{self.fnl_max}"
 
         # finally we build our string
-        name = self._get("base_name", f"l{self.lmax}_n{self.nside}")
+        base_name = f"l{self.lmax}_n{self.nside}"
+        name = self._get("base_name", None)
+        if name is not None:
+            if name.startswith("+"):
+                name = f"{base_name}{name[1:]}"
+        else:
+            name =  base_name
         self.name = f"{name}_{pol_str}_{csims}x{self.ndups}_f{fstr}"
 
         self.dirs = {}
@@ -585,8 +596,8 @@ class Core:
         self.cosmo.add_prim_reduced_bispectrum(shape, self.radii)
 
         pols = self.pol_idxs()
-        self.cov = cov = self.b_ell**2 * self.c_ell + self.n_ell
-        # self.cov = cov = self.c_ell
+        # self.cov = cov = self.b_ell**2 * self.c_ell + self.n_ell
+        self.cov = cov = self.c_ell
 
         inoise = np.full(self.n_ell.shape, 1e-16)
         inoise[pols, self.lmin :] = 1 / self.n_ell[pols, self.lmin :]
@@ -596,6 +607,7 @@ class Core:
         icov = get_itotcov_ell(icov, inoise, self.b_ell)
         self.icov = icov[pols, pols]
 
+        cov = self.b_ell**2 * self.c_ell + self.n_ell
         self.icov2 = np.zeros_like(cov)
         self.icov2[pols, self.lmin :] = 1 / cov[pols, self.lmin :]
         self.icov2 = self.icov2[pols]
@@ -666,7 +678,26 @@ class Core:
             else:
                 raise ValueError(f"Directory {base_dir} does not exist")
 
-        return os.path.join(base_dir, f"{self.name}_{self.slurm.job}_{name}{extension}")
+        return os.path.join(base_dir, f"{self.slurm.job}_{name}{extension}")
+
+    def check_existing_data_file(self):
+        if os.path.exists(self.file):
+            if self.force_gen:
+                logger.info("Removing existing data file")
+                os.remove(self.file)
+            else:
+                logger.info("Data file exists, exiting")
+                sys.exit(0)
+
+        # we also should check for the full file
+        full_file = os.path.join(self.dirs["data"], f"{self.name}.hdf5")
+        if os.path.exists(full_file):
+            if self.force_gen:
+                logger.info("Removing existing full data file")
+                os.remove(full_file)
+            else:
+                logger.info("Found full data file, exiting")
+                sys.exit(0)
 
 
 @dataclass

@@ -402,6 +402,7 @@ def plot_elsner_comp(
             core,
             alm_l[pol],
             elsner_l[pol],
+            core.pols[pol],
             lmax,
             plot_func=plot_func,
         )
@@ -412,6 +413,7 @@ def plot_elsner_comp(
             core,
             alm_nl[pol],
             elsner_nl[pol],
+            core.pols[pol],
             lmax,
             plot_func=plot_func,
         )
@@ -422,6 +424,7 @@ def plot_elsner_comp(
             core,
             alm_l[pol] + alm_nl[pol],
             elsner_l[pol] + elsner_nl[pol],
+            core.pols[pol],
             lmax,
             plot_func=plot_func,
         )
@@ -436,6 +439,7 @@ def plot_elsner_vs(
     core,
     alm: np.ndarray | list[np.ndarray],
     elsner: np.ndarray | list[np.ndarray],
+    pol: str,
     lmax: int | None = None,
     lmin: int | None = None,
     scale=True,
@@ -453,8 +457,8 @@ def plot_elsner_vs(
             f"Number of alms must match number of elsner alms. Got {np.shape(alm)} alms and {np.shape(elsner)} elsner alms."
         )
 
-    plot_func(ells, scale * alm_cl, label="alm", linestyle=":")
-    plot_func(ells, scale * elsner_cl, label="elsner", linestyle=":")
+    plot_func(ells, scale * alm_cl, label=f"alm {pol}", linestyle=":")
+    plot_func(ells, scale * elsner_cl, label=f"elsner {pol}", linestyle=":")
     plt.legend()
 
 

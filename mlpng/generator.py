@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 from itertools import product
+from tkinter import S
 import healpy as hp
 import numpy as np
 from joblib import Parallel, delayed
@@ -16,7 +17,7 @@ from lenspyx import utils_hp
 from ksw.radial_functional import radial_func
 
 from . import Core
-from .utils import save_data, setup_logging, make_alm_plots
+from .utils import save_data, setup_logging, make_alm_plots, remove_mono_dipole
 
 logger = setup_logging("mlpng.generator", level=logging.DEBUG)
 
@@ -70,16 +71,6 @@ def integrand(alm, alpha_l, bl_div_cl, lmax, nside, upscale=False):
         nside = nsides[nsides > nside][0]
 
     Balm = np.array([hp.almxfl(alm[p], bl_div_cl[..., p]) for p in range(alm.shape[0])])
-    # B = np.array(
-    #     [hp.alm2map(Balm[i], nside, pol=False) for i in range(len(Balm))]
-    # )  # TQU
-    # inner = np.array(
-    #     [
-    #         hp.map2alm(B[i] ** 2, lmax, use_pixel_weights=True, pol=False)
-    #         for i in range(len(B))
-    #     ]
-    # )  # TEB
-
     B = hp.alm2map(Balm, nside, pol=False)
     inner = np.array(hp.map2alm(B**2, lmax, use_pixel_weights=True, pol=False), ndmin=2)
     solution = [hp.almxfl(inner[p], alpha_l[..., p]) for p in range(alpha_l.shape[-1])]
@@ -146,12 +137,14 @@ def generate_alm_nl(core, alms):
     # Planck defines A as <phi_k1 phi_k2> = (2pi)^3 delta(k12) A / k^3.
     # CAMB defines As as <zeta_k2 zeta_k2> = (2pi)^3 delta(k12) 2 * pi^2 As / k^3.
     # So A = (3/5)^2 * 2 * pi^2 As.
-    As = core.cosmo.camb_params.InitPower.As
-    ns = core.cosmo.camb_params.InitPower.ns
+    # As = core.cosmo.camb_params.InitPower.As
+    # ns = core.cosmo.camb_params.InitPower.ns
     # ks = core.cosmo.camb_params.InitPower.pivot_scalar
-    # Pk = core.cosmo.camb_params.primordial_power(tr_k, 0)
-    delta_phi = 2 * np.pi**2 * As * (3 / 5) ** 2
-    f_k[:, 1] = delta_phi * tr_k ** (ns - 4)
+    Pk = core.cosmo.camb_params.primordial_power(tr_k, 0)
+    # delta_phi = 2 * np.pi**2 * As * (3 / 5) ** 2
+    # f_k[:, 1] = delta_phi * tr_k ** (ns - 4)
+    delta_phi = 2 * np.pi**2 * Pk * (3 / 5) ** 2
+    f_k[:, 1] = delta_phi * tr_k ** (-3)
     rad = radial_func(f_k, tr_ell_k, tr_k, core.radii, tr_ells)
 
     alpha_ell = rad[..., 0]
@@ -212,7 +205,6 @@ def generate_alm_nl(core, alms):
 def lens_alms(core, alms_to_lens):
     # make a copy of the alms for the lensing since they will modify them
     alm = alms_to_lens.copy()
-    logger.debug("lens alms shape: %s", alm.shape)
 
     if not core.use_t:
         alm = np.concatenate(
@@ -227,6 +219,7 @@ def lens_alms(core, alms_to_lens):
 
     # PP PT PE
     cl_phi = core.cosmo._camb_data.get_lens_potential_cls(core.lmax, "muK", True)
+    cl_phi *= core.phi_scale
     plm = utils_hp.synalm(cl_phi[:, 0], core.lmax, mmax=None)
 
     phi_map = hp.alm2map(plm, nside=core.nside, pol=False)
@@ -276,27 +269,6 @@ def get_fisher_iso(core, lensed=False):
     return np.array([fisher]).astype(core.r_dtype)
 
 
-def check_existing_data_file(core):
-    """TODO move this to some utils file"""
-    if os.path.exists(core.file):
-        if core.force_gen:
-            logger.info("Removing existing data file")
-            os.remove(core.file)
-        else:
-            logger.info("Data file exists, exiting")
-            sys.exit(0)
-
-    # we also should check for the full file
-    full_file = os.path.join(core.dirs["data"], f"{core.name}.hdf5")
-    if os.path.exists(full_file):
-        if core.force_gen:
-            logger.info("Removing existing full data file")
-            os.remove(full_file)
-        else:
-            logger.info("Found full data file, exiting")
-            sys.exit(0)
-
-
 def main():
     r"""
     This code generates the alms
@@ -319,22 +291,22 @@ def main():
     It then will optionally lens the alms and finally it will cut them into patches
     """
     core = Core()
-    check_existing_data_file(core)
+    core.check_existing_data_file()
 
     logger.info("Starting data generation")
     core.init_estimator()
 
     alm_l = generate_alm(core)
-    logger.debug("alm_l shape: %s, dtype: %s", alm_l.shape, alm_l.dtype)
+    # logger.debug("alm_l shape: %s, dtype: %s", alm_l.shape, alm_l.dtype)
 
     # get the non-gaussian alms, this will take a long time
     logger.debug("Starting non-gaussian alm generation")
     alm_nl = generate_alm_nl(core, alm_l)
-    logger.debug("alm_nl shape: %s, dtype: %s", alm_nl.shape, alm_nl.dtype)
+    # logger.debug("alm_nl shape: %s, dtype: %s", alm_nl.shape, alm_nl.dtype)
 
     # generate the fnls
     fnls = core.rng.uniform(core.fnl_min, core.fnl_max, (core.nsims, core.ndups, 1, 1))
-    logger.debug("fnls shape: %s, dtype: %s", fnls.shape, fnls.dtype)
+    # logger.debug("fnls shape: %s, dtype: %s", fnls.shape, fnls.dtype)
 
     # Add the duplicate dimension to the alms
     alm_l = alm_l[:, None, core.pol_idxs()]
@@ -342,7 +314,7 @@ def main():
 
     # finally combine into the full alms and remove the monopole and dipole terms
     alms = alm_l + fnls * alm_nl
-    # alms = remove_mono_dipole(alms, inplace=True)  # safety
+    alms = remove_mono_dipole(alms, inplace=True)
     alms = np.ascontiguousarray(alms)
     logger.debug("alms shape: %s, dtype: %s", alms.shape, alms.dtype)
 
@@ -362,17 +334,17 @@ def main():
     for sim, dup in product(range(core.nsims), range(core.ndups)):
         rmap = hp.alm2map(alms[sim, dup].copy(), nside=core.nside, pol=core.npols == 3)
         maps[sim, dup] = hp.reorder(rmap, r2n=True)
-    logger.debug("maps shape: %s, dtype: %s", maps.shape, maps.dtype)
 
     if core.slurm.is_main and core.plot:
         # lets make a few plots for the alms
         make_alm_plots(core, alm_l[:, 0], alm_nl[:, 0], alms[:, 0])
 
     # once again save the maps to free up memory
-    save_data(core.file, {"map": maps.astype(core.r_dtype)})
+    smap = np.transpose(maps, (0, 1, 3, 2)).astype(core.r_dtype)
+    save_data(core.file, {"map": smap})
 
     # and actually force the garbage collection, although it should be done automatically
-    del maps, alm_l, alm_nl
+    del smap, maps, alm_l, alm_nl
     gc.collect()
 
     alm_lensed = maps_lensed = phi_map = None
@@ -390,9 +362,6 @@ def main():
                 alm_lensed[sim, dup], nside=core.nside, pol=core.npols == 3
             )
             maps_lensed[sim, dup] = hp.reorder(rmap, r2n=True)
-        logger.debug(
-            "lensed maps shape: %s, dtype: %s", maps_lensed.shape, maps_lensed.dtype
-        )
 
         if core.slurm.is_main and core.plot:
             make_alm_plots(core, alms=alm_lensed[:, 0, core.pol_idxs()], lensed=True)
@@ -405,15 +374,24 @@ def main():
         if core.lensing:
             sdata["fisher_iso_lensed"] = get_fisher_iso(core, True)
 
-    sdata["fnl"] = fnls
+    sdata["fnl"] = fnls.reshape((core.nsims, core.ndups, 1)).astype(core.r_dtype)
     # it could possibly be useful to have a normalized range for fnls so they vary between (-1,1)
-    fnl_norm = 2 * ((fnls - core.fnl_min) / (core.fnl_max - core.fnl_min)) - 1
-    sdata["fnl_norm"] = fnl_norm.astype(core.r_dtype)
+    # fnl_norm = 2 * ((fnls - core.fnl_min) / (core.fnl_max - core.fnl_min)) - 1
+    # sdata["fnl_norm"] = fnl_norm.astype(core.r_dtype)
 
     if core.lensing:
-        sdata["alm_lensed"] = alm_lensed[:, :, core.pol_idxs()].astype(core.c_dtype)
-        sdata["map_lensed"] = maps_lensed[:, :, core.pol_idxs()].astype(core.r_dtype)
-        sdata["phi_map"] = phi_map.astype(core.r_dtype)
+        if core.save_alms:
+            logger.debug(
+                "lensed alm shape: %s, dtype: %s", alm_lensed.shape, alm_lensed.dtype
+            )
+            sdata["alm_lensed"] = alm_lensed[:, :, core.pol_idxs()].astype(core.c_dtype)
+        smap = maps_lensed[:, :, core.pol_idxs()]
+        smap = np.transpose(smap, (0, 1, 3, 2)).astype(core.r_dtype)
+        logger.debug(
+            "lensed maps shape: %s, dtype: %s", smap.shape, smap.dtype
+        )
+        sdata["map_lensed"] = smap
+        # sdata["phi_map"] = phi_map.astype(core.r_dtype)
 
     save_data(core.file, sdata)
     logger.info("Finished %s!", core.slurm.job)

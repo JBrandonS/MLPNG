@@ -15,12 +15,10 @@ mkdir -p data/logs/generator/"$SLURM_ARRAY_JOB_ID"/
 echo "Running generator on $(hostname) with cli $*"
 
 module purge
-module load conda gcc/11.2.0 intel-oneapi-mkl/2022.2.1-c4efjsy fftw/3.3.10-gz7qiki openmpi/4.1.6-a4ksrza
+module load conda
+module load gcc/11.2.0 intel-oneapi-mkl/2022.2.1-c4efjsy fftw/3.3.10-gz7qiki openmpi/4.1.6-a4ksrza
 module list
-# eval "$(conda shell.bash hook)"
+eval "$(conda shell.bash hook)"
 conda activate mlpng
 
-# mkdir -p data/profiles/generator
-# time srun python -m cProfile -o data/profiles/generator/$SLURM_JOB_ID.prof -m mlpng.generator "$@"
-time srun python -m mlpng.generator "$@"
-# time srun python -m mlpng.elsner_generator "$@"
+time srun python -m mlpng.elsner_generator "$@"
