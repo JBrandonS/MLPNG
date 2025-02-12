@@ -7,10 +7,9 @@ import os
 import healpy as hp
 import numpy as np
 
-from dataclasses import dataclass
+from .utils import Slurm
 
 logger = logging.getLogger(__name__)
-
 
 class Core:
     """
@@ -76,6 +75,8 @@ class Core:
     n_ell: np.ndarray
     b_ell: np.ndarray
 
+    _cosmo_defaults = {"As": 2.13e-09, "ns": 0.9624, "pivot_scalar": 0.05}
+
     def __init__(self, argv=None):
         """
         Initializes a new instance of the `Core` class.
@@ -85,71 +86,15 @@ class Core:
             If None, sys.argv will be used.
         """
 
-        # handle the CLI args first
-        args = self.parse_args(argv)
-
-        # We start by loading in the settings from the provided file
-        # From there we store the settings in the settings dict attribute
-        # We then override the settings with the command line arguments
-        # We then set the cosmological parameters to the defaults and override them with the settings
-        logger.info("Loading settings from file '%s'", args.settings_file)
-        with open(args.settings_file, "r", encoding="utf-8") as f:
-            settings = self.settings = json.load(f)
-
-        # replace the settings with the command line arguments
-        for key, value in vars(args).items():
-            # we do not want to save the settings_file or save_settings options, so ignore those
-            if value is not None and key not in ["settings_file", "save_settings"]:
-                logger.debug("Forcing setting '%s' to %s due to CLI", key, value)
-                settings[key] = value
-
-        # set the cosmological parameters defaults, and update based on cosmo_params
-        cosmo_params = self._get("cosmo_params", cosmo_defaults())
-        self.cosmo_params = settings["cosmo_params"] = {
-            **cosmo_defaults(),
-            **cosmo_params,
-        }
-
-        # This just logs any changes to the defaults, but only if in debug mode
-        # Not really needed, but good logs can be helpful
-        if logger.isEnabledFor(logging.DEBUG):
-            overridden_params = {
-                key: (value, cosmo_params[key])
-                for key, value in cosmo_defaults().items()
-                if key in cosmo_params and value != cosmo_params[key]
-            }
-
-            for key, (default_value, overridden_value) in overridden_params.items():
-                logger.debug(
-                    "Overriding cosmo param '%s' from %s to %s",
-                    key,
-                    default_value,
-                    overridden_value,
-                )
-
-        logger.info("Running with settings: \n%s", json.dumps(settings, indent=2))
-
         # init our core object, split for readability
-        self._slurm()
+        self.slurm = Slurm()
+        self._process_settings(argv)
         self._init()
         self._noise_beam()
         self._radii()
         self._paths()
 
-        # save a copy of the settings file iff --save-settings is set
-        if args.save_settings:
-            base_dir = os.path.join(self.dirs["base"], "settings")
-            file = os.path.join(base_dir, f"{self.slurm.job}_{self.name}.json")
-            os.makedirs(base_dir, exist_ok=True)
-
-            if not os.path.exists(file):
-                logger.info("Saving run settings to file: '%s'", file)
-                with open(file, "w", encoding="utf-8") as f:
-                    json.dump(self.settings, f, indent=2)
-            else:
-                logger.warning("Settings already exists: '%s', not overwriting", file)
-
-    def parse_args(self, args=None):
+    def _parse_args(self, args=None):
         """
         Parse command line arguments.
 
@@ -161,6 +106,7 @@ class Core:
         """
         parser = argparse.ArgumentParser()
 
+        # only required argument is the settings file
         parser.add_argument("settings_file")
 
         # some standard arguments heres, we can add more as needed
@@ -188,8 +134,12 @@ class Core:
         parser.add_argument("--double_precision", action=argparse.BooleanOptionalAction)
         parser.add_argument("--plot", action=argparse.BooleanOptionalAction)
         parser.add_argument("--isotropic", action=argparse.BooleanOptionalAction)
-
         parser.add_argument("--save_alms", action=argparse.BooleanOptionalAction)
+
+        # ML trainer settings
+        parser.add_argument("--data_fraction", type=float)
+        parser.add_argument("--wandb", action=argparse.BooleanOptionalAction)
+        parser.add_argument("--tensorboard", action=argparse.BooleanOptionalAction)
 
         # this allows us to save a copy of the final settings used for the run
         # only really useful for debugging, must be provided by the CLI and not in the settings file
@@ -231,6 +181,63 @@ class Core:
         else:
             logger.debug("Found default value for '%s': %s", name, repr(val))
         return val
+
+    def _process_settings(self, argv):
+        args = self._parse_args(argv)
+        
+        # We start by loading in the settings from the provided file
+        # From there we store the settings in the settings dict attribute
+        # We then override the settings with the command line arguments
+        # We then set the cosmological parameters to the defaults and override them with the settings
+        logger.info("Loading settings from file '%s'", args.settings_file)
+        with open(args.settings_file, "r", encoding="utf-8") as f:
+            settings = self.settings = json.load(f)
+
+        # replace the settings with the command line arguments
+        for key, value in vars(args).items():
+            # we do not want to save the settings_file or save_settings options, so ignore those
+            if value is not None and key not in ["settings_file", "save_settings"]:
+                logger.debug("Forcing setting '%s' to %s due to CLI", key, value)
+                settings[key] = value
+
+        # set the cosmological parameters defaults, and update based on cosmo_params
+        cosmo_params = self._get("cosmo_params", self._cosmo_defaults)
+        self.cosmo_params = settings["cosmo_params"] = {
+            **self._cosmo_defaults,
+            **cosmo_params,
+        }
+
+        # This just logs any changes to the defaults, but only if in debug mode
+        # Not really needed, but good logs can be helpful
+        if logger.isEnabledFor(logging.DEBUG):
+            overridden_params = {
+                key: (value, cosmo_params[key])
+                for key, value in self._cosmo_defaults.items()
+                if key in cosmo_params and value != cosmo_params[key]
+            }
+
+            for key, (default_value, overridden_value) in overridden_params.items():
+                logger.debug(
+                    "Overriding cosmo param '%s' from %s to %s",
+                    key,
+                    default_value,
+                    overridden_value,
+                )
+
+        # save a copy of the settings file iff --save_settings is set
+        if args.save_settings:
+            base_dir = os.path.join(self.dirs["base"], "settings")
+            file = os.path.join(base_dir, f"{self.slurm.job}_{self.name}.json")
+            os.makedirs(base_dir, exist_ok=True)
+
+            if not os.path.exists(file):
+                logger.info("Saving run settings to file: '%s'", file)
+                with open(file, "w", encoding="utf-8") as f:
+                    json.dump(self.settings, f, indent=2)
+            else:
+                logger.warning("Settings already exists: '%s', not overwriting", file)
+
+        logger.info("Running with settings: \n%s", json.dumps(settings, indent=2))
 
     def _init(self):
         """
@@ -278,9 +285,6 @@ class Core:
             AssertionError: If the number of patches is not even.
         """
 
-        # we setup a RNG here for reproducibility
-        # TODO: needs more implementation, and testing of reproducibility, need to setup tensorflow seed and probably others
-        # overall, dont expect reproducibility, not a high priority
         self.seed = self._get("seed", np.random.default_rng().integers(0, 2**32 - 1))
         self.rng = np.random.default_rng(self.seed)
         np.random.seed(self.seed)
@@ -291,6 +295,10 @@ class Core:
         self.nsims = self._get("nsims", 100)
         self.ndups = self._get("ndups", 25)
         self.narray = self._get("narray", self.slurm.task_count or 1)
+        self.fnl_min, self.fnl_max = self._get("fnl_range", (-100, 100))
+
+        self.phi_scale = self._get("phi_scale", 1)
+
         self.force_gen = self._get("force_generation", True)
         self.force_ksw = self._get("force_ksw", False)
         self.num_estimates = self._get(
@@ -310,25 +318,18 @@ class Core:
         self.lmax = self._get("lmax", 3 * self.nside - 1)
         self.lmax_buffer = self._get("lmax_buffer", 128)
         self.cosmo_params["lmax"] = self.lmax
-
-        # setup the fnl values
-        self.fnl_min, self.fnl_max = self._get("fnl_range", (-100, 100))
+        self.nell = self.lmax + 1
+        self.ells = np.arange(self.nell)
 
         # setup the polarization which should support --pols [T|TE]
-        pols = self._get("pols", "T")
-        if isinstance(pols, str):
-            pols = tuple(pols)
-        elif isinstance(pols, list):
-            pols = tuple(pols)
-        # we do not want to support B mode since it is so small, so lets remove anything with B in it.
-        self.pols = tuple(c for p in pols for c in p if p != "B")
+        self.pols = tuple(self._get("pols", ["T"]))
         self.npols = len(self.pols)
         self.use_t = "T" in self.pols
         self.use_e = "E" in self.pols
         self.use_b = False  # "B" in self.pols
+        self.use_pols = self.pols == 3 #used for hp commands
+        
         self.isotropic = self._get("isotropic", True)
-
-        logger.debug("Using polarizations T: %s, E: %s", self.use_t, self.use_e)
 
         # setup our precision types to be consistent
         if self._get("double_precision", False):
@@ -339,25 +340,15 @@ class Core:
             self.r_dtype = np.float32
             self.c_dtype = np.complex64
             self.precision = "single"
-        logger.debug("Using %s precision, where possible", self.precision)
 
         # setup some derived parameters
         self.total_sims = self.ndups * self.nsims * self.npols * self.narray
 
         # setup some info parameters
-        self.nell = self.lmax + 1
         self.npix = hp.nside2npix(self.nside)
         self.nelem = hp.Alm.getsize(self.lmax)
-        self.ells = np.arange(self.nell)
-        self.alm_shape = (self.nsims, self.npols, self.nelem)
-
-        # here we just get the number of cpus, but read in from SLURM if available
-        # os.sched_getaffinity(0) gets the number of usable CPUs available, this is different from
-        # os.cpu_count() which gets the number of CPUs on the system
-        cpus = len(os.sched_getaffinity(0))
-        self.n_cpus = int(os.getenv("SLURM_CPUS_PER_TASK", cpus))
-
-        self.phi_scale = self._get("phi_scale", 1)
+        self.alm_shape = (self.nsims, self.ndups, self.npols, self.nelem)
+        self.map_shape = (self.nsims, self.ndups, self.npols, self.npix)
 
     def _noise_beam(self):
         """
@@ -436,33 +427,6 @@ class Core:
         r_max = int(self._get("r_max", 50000))
         self.radii = np.array([r for r in radii if r_min <= r <= r_max])
 
-    def _slurm(self):
-        """
-        Reads in some important slurm variables into the slurm dictionary.
-
-        Attributes:
-            slurm (dict): A dictionary containing the SLURM job settings.
-                name (str): The name of the SLURM job.
-                job (str): The SLURM job ID.
-                task_count (str): The SLURM array task count.
-                array (str): The SLURM array job ID.
-                array_index (int): The SLURM array task ID.
-                is_main (bool): Whether the current job is the main job.
-
-        Raises:
-            ValueError: If the SLURM_ARRAY_TASK_COUNT does not match the narray value.
-        """
-        array_index = int(os.getenv("SLURM_ARRAY_TASK_ID", default="-1"))
-        self.slurm = slurm = Slurm(
-            name=os.getenv("SLURM_JOB_NAME", "unknown"),
-            job=int(os.getenv("SLURM_JOB_ID", "0")),
-            task_count=int(os.getenv("SLURM_ARRAY_TASK_COUNT", "0")),
-            array=int(os.getenv("SLURM_ARRAY_JOB_ID", "0")),
-            array_index=array_index,
-            is_main=array_index in {1, -1},
-        )
-        logger.debug("Slurm settings: %s", slurm)
-
     def _paths(self):
         """
         Generates and sets up directory paths and filenames based on the object's attributes.
@@ -496,7 +460,7 @@ class Core:
             return path
 
         # generate some base strings the files based on settings
-        csims = self.nsims * self.narray  # get the number of simulations
+        total_sims = self.nsims * self.narray  # get the number of simulations
         pol_str = "".join(self.pols)
         tstr = f"_{self.slurm.array_index}" if self.slurm.array_index > 0 else ""
 
@@ -508,13 +472,10 @@ class Core:
 
         # finally we build our string
         base_name = f"l{self.lmax}_n{self.nside}"
-        name = self._get("base_name", None)
-        if name is not None:
-            if name.startswith("+"):
-                name = f"{base_name}{name[1:]}"
-        else:
-            name =  base_name
-        self.name = f"{name}_{pol_str}_{csims}x{self.ndups}_f{fstr}"
+        base = self._get("base_name", base_name)
+        if base.startswith("+"):
+            base = f"{base_name}{base[1:]}"
+        self.name = f"{base}_{pol_str}_{total_sims}x{self.ndups}_f{fstr}"
 
         self.dirs = {}
         self.dirs["base"] = self._get("base_dir", "data")
@@ -525,102 +486,102 @@ class Core:
         self.dirs["mc"] = join_paths(self._get("mc_dir", "kswmc"))
 
         self.file = os.path.join(self.dirs["data"], f"{self.name}{tstr}.hdf5")
-        logger.debug("Using data file: %s", self.file)
-
         self.mc_file = os.path.join(self.dirs["mc"], f"{self.name}.hdf5")
-        if os.path.exists(self.mc_file):
-            logger.debug("Will use KSW saved state from file '%s'", self.mc_file)
         self.mc_steps = self._get("mc_steps", 100)
 
-    def init_estimator(self, verbose=False):
-        """
-        Initializes the estimator for cosmological parameter estimation.
-        This method sets up the cosmological parameters, computes the transfer functions,
-        and initializes the KSW estimator for bispectrum analysis.
-        Parameters:
-        -----------
-            verbose : bool, optional
-                If True, enables verbose logging for debugging purposes. Default is False.
-        Attributes:
-        -----------
-            cosmo : Cosmology
-                An instance of the Cosmology class initialized with the given parameters.
-            c_ell : ndarray
-                The computed C_ell values, either lensed or unlensed, based on the configuration.
-            s_ell : ndarray
-                The signal C_ell values with noise added and monopole/dipole terms removed.
-            estimator : KSW
-                An instance of the KSW estimator initialized with the computed bispectra.
-        """
+        logger.debug("Using data file: %s", self.file)
+        if os.path.exists(self.mc_file):
+            logger.debug("Will use KSW saved state from file '%s'", self.mc_file)
 
-        # we do local imports since this will not work on the superpod due to mpi issues, but we dont need ksw there anyways
-        # TODO: Check install on MP due to module changes to see if this is fixed
-        # pylint: disable=C0415
-        import camb
-        from ksw import Cosmology, Shape, KSW
+    # def init_estimator(self, verbose=False):
+    #     """
+    #     Initializes the estimator for cosmological parameter estimation.
+    #     This method sets up the cosmological parameters, computes the transfer functions,
+    #     and initializes the KSW estimator for bispectrum analysis.
+    #     Parameters:
+    #     -----------
+    #         verbose : bool, optional
+    #             If True, enables verbose logging for debugging purposes. Default is False.
+    #     Attributes:
+    #     -----------
+    #         cosmo : Cosmology
+    #             An instance of the Cosmology class initialized with the given parameters.
+    #         c_ell : ndarray
+    #             The computed C_ell values, either lensed or unlensed, based on the configuration.
+    #         s_ell : ndarray
+    #             The signal C_ell values with noise added and monopole/dipole terms removed.
+    #         estimator : KSW
+    #             An instance of the KSW estimator initialized with the computed bispectra.
+    #     """
 
-        camb_params = camb.set_params(**self.cosmo_params, verbose=verbose)
+    #     # we do local imports since this will not work on the superpod due to mpi issues, but we dont need ksw there anyways
+    #     # TODO: Check install on MP due to module changes to see if this is fixed
+    #     # pylint: disable=C0415
+    #     import camb
+    #     from ksw import Cosmology, Shape, KSW
 
-        if verbose:
-            logger.debug(camb_params)
-            logger.debug(camb.get_results(camb_params))
+    #     camb_params = camb.set_params(**self.cosmo_params, verbose=verbose)
 
-        self.cosmo: Cosmology = Cosmology(camb_params, verbose)
+    #     if verbose:
+    #         logger.debug(camb_params)
+    #         logger.debug(camb.get_results(camb_params))
 
-        # we need at least lmax of 300 for this transfer code
-        camb_lmax = max(self.lmax + self.lmax_buffer, 300)
-        self.cosmo.compute_transfer(camb_lmax, verbose)
-        self.cosmo.compute_c_ell()
+    #     self.cosmo: Cosmology = Cosmology(camb_params, verbose)
 
-        if self.lensing:
-            c_ell_lensed = self.cosmo.c_ell["lensed_scalar"]["c_ell"][: self.nell].T
-            self.c_ell_lensed = c_ell_lensed.astype(self.r_dtype)
+    #     # we need at least lmax of 300 for this transfer code
+    #     camb_lmax = max(self.lmax + self.lmax_buffer, 300)
+    #     self.cosmo.compute_transfer(camb_lmax, verbose)
+    #     self.cosmo.compute_c_ell()
 
-        c_ell = self.cosmo.c_ell["unlensed_scalar"]["c_ell"][: self.nell].T
-        self.c_ell = c_ell.astype(self.r_dtype)
+    #     if self.lensing:
+    #         c_ell_lensed = self.cosmo.c_ell["lensed_scalar"]["c_ell"][: self.nell].T
+    #         self.c_ell_lensed = c_ell_lensed.astype(self.r_dtype)
 
-        ns = self.cosmo_params["ns"]
-        ps = self.cosmo_params["pivot_scalar"]
-        shape = Shape.prim_local(ns, pivot=ps)
+    #     c_ell = self.cosmo.c_ell["unlensed_scalar"]["c_ell"][: self.nell].T
+    #     self.c_ell = c_ell.astype(self.r_dtype)
 
-        self.cosmo.add_prim_reduced_bispectrum(shape, self.radii)
+    #     ns = self.cosmo_params["ns"]
+    #     ps = self.cosmo_params["pivot_scalar"]
+    #     shape = Shape.prim_local(ns, pivot=ps)
 
-        pols = self.pol_idxs()
-        # self.cov = cov = self.b_ell**2 * self.c_ell + self.n_ell
-        self.cov = cov = self.c_ell
+    #     self.cosmo.add_prim_reduced_bispectrum(shape, self.radii)
 
-        inoise = np.full(self.n_ell.shape, 1e-16)
-        inoise[pols, self.lmin :] = 1 / self.n_ell[pols, self.lmin :]
+    #     pols = self.pol_idxs()
+    #     # self.cov = cov = self.b_ell**2 * self.c_ell + self.n_ell
+    #     self.cov = cov = self.c_ell
 
-        icov = np.zeros_like(cov)
-        icov[pols, self.lmin :] = 1 / self.c_ell[pols, self.lmin :]
-        icov = get_itotcov_ell(icov, inoise, self.b_ell)
-        self.icov = icov[pols, pols]
+    #     inoise = np.full(self.n_ell.shape, 1e-16)
+    #     inoise[pols, self.lmin :] = 1 / self.n_ell[pols, self.lmin :]
 
-        cov = self.b_ell**2 * self.c_ell + self.n_ell
-        self.icov2 = np.zeros_like(cov)
-        self.icov2[pols, self.lmin :] = 1 / cov[pols, self.lmin :]
-        self.icov2 = self.icov2[pols]
+    #     # icov = np.zeros_like(cov)
+    #     # icov[pols, self.lmin :] = 1 / self.c_ell[pols, self.lmin :]
+    #     # icov = get_itotcov_ell(icov, inoise, self.b_ell)
+    #     # self.icov = icov[pols, pols]
 
-        # icov should be  x^icov = S^{-1} (S^{-1} + P^H N^{-1} P)^{-1} P^H N^{-1} P s,
-        # where data = P s + n, where s are the spherical harmonic coefficients
-        # of the signal. P = M Y B, where B is the beam, Y is spherical harmonic
-        # synthesis (alm2map) and M is the pixel mask and any custom filters.
-        # N^{-1} and S^{-1} are the inverse noise and signal covariance matrices,
-        # respectively. ^H denotes the Hermitian transpose.
-        self.estimator: KSW = KSW(
-            self.cosmo.red_bispectra,
-            self.icov_func,
-            self.lmax,
-            self.pols,
-            self.precision,
-        )
+    #     cov = self.b_ell**2 * self.c_ell + self.n_ell
+    #     self.icov = np.zeros_like(cov)
+    #     self.icov[pols, self.lmin :] = 1 / cov[pols, self.lmin :]
+    #     self.icov = self.icov2[pols]
 
-    def icov_func(self, alm):
-        ret = np.zeros_like(alm)
-        for pol in range(ret.shape[0]):
-            ret[pol] = hp.almxfl(alm[pol], self.icov[pol])
-        return ret
+    #     # icov should be  x^icov = S^{-1} (S^{-1} + P^H N^{-1} P)^{-1} P^H N^{-1} P s,
+    #     # where data = P s + n, where s are the spherical harmonic coefficients
+    #     # of the signal. P = M Y B, where B is the beam, Y is spherical harmonic
+    #     # synthesis (alm2map) and M is the pixel mask and any custom filters.
+    #     # N^{-1} and S^{-1} are the inverse noise and signal covariance matrices,
+    #     # respectively. ^H denotes the Hermitian transpose.
+    #     self.estimator: KSW = KSW(
+    #         self.cosmo.red_bispectra,
+    #         self.icov_func,
+    #         self.lmax,
+    #         self.pols,
+    #         self.precision,
+    #     )
+
+    # def icov_func(self, alm):
+    #     ret = np.zeros_like(alm)
+    #     for pol in range(ret.shape[0]):
+    #         ret[pol] = hp.almxfl(alm[pol], self.icov[pol])
+    #     return ret
 
     def pol_idxs(self, keep_b=False, keep_te=False, pretrimmed=False):
         """
@@ -689,79 +650,56 @@ class Core:
                 logger.info("Found full data file, exiting")
                 sys.exit(0)
 
-
-@dataclass
-class Slurm:
-    """
-    A class to represent a Slurm job configuration.
-    Attributes:
-        name (str): The name of the job. Default is "unknown".
-        job (int): The job ID. Default is 0.
-        task_count (int): The number of tasks. Default is 0.
-        array (int): The array job ID. Default is 0.
-        array_index (int): The index of the array job. Default is 0.
-        is_main (bool): Indicates if this is the main job. Default is False.
-    """
-
-    name: str = "unknown"
-    job: int = 0
-    task_count: int = 0
-    array: int = 0
-    array_index: int = 0
-    is_main: bool = False
+    def should_plot(self):
+        return self.plot and self.slurm.is_main
 
 
-def cosmo_defaults():
-    """Some default settings that are required by KSW / camb."""
-    return {"As": 2.13e-09, "ns": 0.9624, "pivot_scalar": 0.05}
+# def get_itotcov_ell(icov_signal_ell, icov_noise_ell=None, b_ell=None):
+#     """
+#     Combine signal and noise power spectra into total inverse
+#     isotropic covariance: S^-1 (S^-1 + B N^-1 B)^-1 B N^-1 B
+#     = (S + B^-1 N B^-1)^-1.
 
+#     Taken from Adri's KSW code
 
-def get_itotcov_ell(icov_signal_ell, icov_noise_ell=None, b_ell=None):
-    """
-    Combine signal and noise power spectra into total inverse
-    isotropic covariance: S^-1 (S^-1 + B N^-1 B)^-1 B N^-1 B
-    = (S + B^-1 N B^-1)^-1.
+#     Parameters
+#     ----------
+#     icov_signal_ell : (npol, npol, nell) or (npol, nell) array
+#         Inverse signal covariance
+#     icov_noise_ell : (npol, npol, nell) or (npol, nell) array
+#         Inverse noise covariance matrix
+#     b_ell : (npol, nell) array
+#         Beam transfer function.
 
-    Taken from Adri's KSW code
+#     Returns
+#     -------
+#     itotcov_ell : (npol, npol, nell) array
+#         Total inverse covariance matrix.
+#     """
+#     if icov_noise_ell is None:
+#         return icov_signal_ell.copy()
 
-    Parameters
-    ----------
-    icov_signal_ell : (npol, npol, nell) or (npol, nell) array
-        Inverse signal covariance
-    icov_noise_ell : (npol, npol, nell) or (npol, nell) array
-        Inverse noise covariance matrix
-    b_ell : (npol, nell) array
-        Beam transfer function.
+#     # Check if icov_signal_ell is (npol, nell) and convert to (npol, npol, nell)
+#     if icov_signal_ell.ndim == 2:
+#         npol, _ = icov_signal_ell.shape
+#         icov_signal_ell = (
+#             icov_signal_ell[:, np.newaxis, :] * np.eye(npol)[:, :, np.newaxis]
+#         )
 
-    Returns
-    -------
-    itotcov_ell : (npol, npol, nell) array
-        Total inverse covariance matrix.
-    """
-    if icov_noise_ell is None:
-        return icov_signal_ell.copy()
+#     # Check if icov_noise_ell is (npol, nell) and convert to (npol, npol, nell)
+#     if icov_noise_ell.ndim == 2:
+#         npol, _ = icov_noise_ell.shape
+#         icov_noise_ell = (
+#             icov_noise_ell[:, np.newaxis, :] * np.eye(npol)[:, :, np.newaxis]
+#         )
 
-    # Check if icov_signal_ell is (npol, nell) and convert to (npol, npol, nell)
-    if icov_signal_ell.ndim == 2:
-        npol, _ = icov_signal_ell.shape
-        icov_signal_ell = (
-            icov_signal_ell[:, np.newaxis, :] * np.eye(npol)[:, :, np.newaxis]
-        )
+#     if b_ell is not None:
+#         b_ell = b_ell * np.eye(b_ell.shape[0])[:, :, np.newaxis]
+#         in_mat = np.einsum("ijl, jkl, kol -> iol", b_ell, icov_noise_ell, b_ell)
+#     else:
+#         in_mat = icov_noise_ell
 
-    # Check if icov_noise_ell is (npol, nell) and convert to (npol, npol, nell)
-    if icov_noise_ell.ndim == 2:
-        npol, _ = icov_noise_ell.shape
-        icov_noise_ell = (
-            icov_noise_ell[:, np.newaxis, :] * np.eye(npol)[:, :, np.newaxis]
-        )
-
-    if b_ell is not None:
-        b_ell = b_ell * np.eye(b_ell.shape[0])[:, :, np.newaxis]
-        in_mat = np.einsum("ijl, jkl, kol -> iol", b_ell, icov_noise_ell, b_ell)
-    else:
-        in_mat = icov_noise_ell
-
-    imat = np.linalg.inv((icov_signal_ell + in_mat).T).T
-    itotcov_ell = np.einsum("ijl, jkl -> ikl", imat, in_mat)
-    itotcov_ell = np.einsum("ijl, jkl -> ikl", icov_signal_ell, itotcov_ell)
-    return itotcov_ell
+#     imat = np.linalg.inv((icov_signal_ell + in_mat).T).T
+#     itotcov_ell = np.einsum("ijl, jkl -> ikl", imat, in_mat)
+#     itotcov_ell = np.einsum("ijl, jkl -> ikl", icov_signal_ell, itotcov_ell)
+#     return itotcov_ell

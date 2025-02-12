@@ -20,6 +20,8 @@ from .plots import (
     make_alm_plots,
 )
 
+from .slurm import Slurm
+
 __all__ = [
     "setup_logging",
     "save_data",
@@ -38,4 +40,5 @@ __all__ = [
     "plot_elsner_comp",
     "plot_metrics",
     "make_alm_plots",
+    "Slurm",
 ]

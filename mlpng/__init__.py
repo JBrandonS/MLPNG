@@ -1,3 +1,3 @@
-from .core import Core, get_itotcov_ell
+from .core import Core
 
-__all__ = ["Core", "get_itotcov_ell"]
+__all__ = ["Core"]
