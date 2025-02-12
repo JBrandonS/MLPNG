@@ -122,7 +122,7 @@ def main():
     if core.lensing:
         # We need to open the data file again to get the lensed alms
         data = h5py.File(core.file, "r", swmr=True, locking=False)
-        alms = data["alm_lensed"]
+        alms = data["alm_lensed"]  # [:, :, core.pol_idxs()]
 
         logger.debug(
             "Computing lensed estimates with alms of shape %s, dtype: %s",

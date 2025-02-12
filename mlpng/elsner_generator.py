@@ -38,20 +38,9 @@ def generate_alm(core, nsims=None, cls=None):
         nsims = core.nsims
 
     if cls is None:
-        if core.noise:
-            cls = core.b_ell**2 * core.c_ell + core.n_ell
-        else:
-            cls = core.c_ell.copy()
-    else:
-        # TODO FIX
-        empty = np.zeros((1, cls.shape[1]))
-        cls = np.concatenate((cls[:-1], empty, cls[-1:]), axis=0)
-        core.c_ell = cls[:, : core.nell]
+        cls = core.cov
 
-    if core.use_e and not core.use_t:
-        empty = np.zeros((1, cls.shape[1]))
-        cls = np.concatenate((empty, cls, empty), axis=0)
-
+    print("genering alm with cls", cls.shape, flush=True)
     sims = [hp.synalm(cls, lmax=core.lmax, new=True) for _ in range(nsims)]
     return np.ascontiguousarray(sims)[:, core.pol_idxs()]
 
@@ -81,15 +70,11 @@ def integrand(alm, alpha_l, bl_div_cl, lmax, nside, upscale=False):
         nsides = np.array([32, 64, 128, 256, 512, 1024, 2048, 4096])
         nside = nsides[nsides > nside][0]
 
-    npols = alm.shape[0]
-    Balm = np.array([hp.almxfl(alm[p], bl_div_cl[..., p]) for p in range(npols)])
-    if Balm.shape[0] == 2:
-        Balm = np.vstack([Balm, np.zeros_like(Balm[0])])
-
+    Balm = np.array([hp.almxfl(alm[p], bl_div_cl[..., p]) for p in range(alm.shape[0])])
     B = hp.alm2map(Balm, nside, pol=False)
-    inner = hp.map2alm(B**2, lmax, use_pixel_weights=True, pol=False)
-    inner = np.array(inner, ndmin=2)
-    return np.array([hp.almxfl(inner[p], alpha_l[..., p]) for p in range(npols)])
+    inner = np.array(hp.map2alm(B**2, lmax, use_pixel_weights=True, pol=False), ndmin=2)
+    solution = [hp.almxfl(inner[p], alpha_l[..., p]) for p in range(alpha_l.shape[-1])]
+    return np.array(solution)
 
 
 def trap_generator(generator, radii):
@@ -126,19 +111,35 @@ def generate_alm_nl(core, alms):
         alm_nl: The calculated almng array.
     """
 
+    pol_idxs = core.pol_idxs()
+    logger.debug("Using pol_idxs: %s", pol_idxs)
+
+    # transfer = compute_transfer(core, core.lmax, verbose=True)
+    transfer = core.cosmo.transfer
+
     # get the transfer functions with tr_ell_k being \Delta_\ell(k)
-    tr_ells = core.cosmo.transfer["ells"]
-    tr_k = core.cosmo.transfer["k"]
-    # this is T, E, PHI
-    tr_ell_k = core.cosmo.transfer["tr_ell_k"][..., core.pol_idxs()] * 5 / 3
+    tr_ells = transfer["ells"]
+    tr_k = transfer["k"]
+    tr_ell_k = transfer["tr_ell_k"]  # this is T, E, PHI
+    tr_ell_k = tr_ell_k[..., pol_idxs]
+
+    # camb returns transfers in zeta, need to convert to phi
+    tr_ell_k *= 5 / 3
 
     # this will be the f(k) value to be placed in the radial function
     # first will be for alpha_ell, second will be beta_ell
     # see komatsu 2003 eq 5 and 6
     f_k = np.ones((len(tr_k), 2), dtype=core.r_dtype)
-    Pk = core.cosmo.camb_params.primordial_power(tr_k, 0)
-    f_k[:, 1] = 2 * np.pi**2 * Pk / (tr_k) ** (3) * (3 / 5) ** 2
 
+    # we need to multiply the f_k by the delta_phi term, and convert from k^2 to k^-1
+    # see creminelii 2006, eq 16
+    # for delta_phi = A: (taken from adri's ksw)
+    # Planck defines A as <phi_k1 phi_k2> = (2pi)^3 delta(k12) A / k^3.
+    # CAMB defines As as <zeta_k2 zeta_k2> = (2pi)^3 delta(k12) 2 * pi^2 As / k^3.
+    # So A = (3/5)^2 * 2 * pi^2 As.
+    Pk = core.cosmo.camb_params.primordial_power(tr_k, 0)
+    delta_phi = 2 * np.pi**2 * Pk * (3 / 5) ** 2
+    f_k[:, 1] = delta_phi * tr_k ** (-3)
     rad = radial_func(f_k, tr_ell_k, tr_k, core.radii, tr_ells)
 
     alpha_ell = rad[..., 0]
@@ -161,14 +162,8 @@ def generate_alm_nl(core, alms):
         fill_value=0,  # type: ignore
     )(core.ells)
 
-    s_ell = core.b_ell**2 * core.c_ell + core.n_ell
-    # s_ell = core.c_ell + core.n_ell / core.b_ell**2
-    s_ell = s_ell[core.pol_idxs()]
-    icov = np.zeros_like(s_ell)
-    icov[:, core.lmin :] = 1 / s_ell[:, core.lmin :]
-
     bl_div_cl = np.zeros_like(beta_l)
-    bl_div_cl[:, core.lmin :] = beta_l[:, core.lmin :] * icov.T[None, core.lmin :]
+    bl_div_cl[:, core.lmin :] = beta_l[:, core.lmin :] * core.icov2.T[core.lmin :]
 
     # ensure all arrays are c contiguous, they wont be since we are using the interpolator which returns f contiguous
     alpha_l = np.ascontiguousarray(alpha_l)
@@ -187,7 +182,7 @@ def generate_alm_nl(core, alms):
     for sim in trange(core.nsims, desc="alm_nl"):
         generator = parallel(
             delayed(integrand)(
-                alms[sim],
+                alms[sim, pol_idxs],
                 alpha_l[r],
                 bl_div_cl[r],
                 core.lmax,
@@ -248,21 +243,20 @@ def lens_alms(core, alms_to_lens):
 
 
 def get_fisher_iso(core, lensed=False):
-    core.init_estimator()
-    pols = core.pol_idxs(keep_b=False, keep_te=False, pretrimmed=True)
+    pols = core.pol_idxs()
+
     c_ell = core.c_ell if not lensed else core.c_ell_lensed
+    cov = c_ell + core.n_ell / core.b_ell**2
 
-    ic_ell = np.zeros_like(c_ell)
-    ic_ell[pols, core.lmin :] = 1 / c_ell[pols, core.lmin :]
+    ib = np.ones_like(c_ell)
+    ib[pols, core.lmin :] = 1 / core.b_ell[pols, core.lmin :]
 
-    inoise = np.full(core.n_ell.shape, 1e-16)
-    inoise[pols, core.lmin :] = 1 / core.n_ell[pols, core.lmin :]
+    ic_ell = np.zeros_like(cov)
+    ic_ell[pols, core.lmin :] = 1 / cov[pols, core.lmin :]
+    ic_ell = ic_ell[pols]
 
-    icov = get_itotcov_ell(ic_ell, inoise, core.b_ell)
-    pols = core.pol_idxs(keep_b=False, keep_te=False)
-    icov = icov[pols, pols]
+    fisher = core.estimator.compute_fisher_isotropic(ic_ell, comm=None)
 
-    fisher = core.estimator.compute_fisher_isotropic(icov, comm=None)
     # it improves the saving to return a numpy array
     logger.debug("got %s iso fisher: %s", "lensed" if lensed else "unlensed", fisher)
     return np.array([fisher]).astype(core.r_dtype)
@@ -345,8 +339,8 @@ def main():
 
     icov = np.zeros_like(cov)
     icov[pols, core.lmin :] = 1 / cov[pols, core.lmin :]
-    icov = get_itotcov_ell(icov, inoise, core.b_ell)
-    icov = icov[pols, pols]
+    # icov = get_itotcov_ell(icov, inoise, core.b_ell)
+    # icov = icov[pols, pols]
     core.icov = np.array(icov[:, : core.nell])
 
     alm_l = generate_alm(core)
@@ -360,7 +354,13 @@ def main():
     # save the data for jorik and daan
     data = {}
     data["alm_l"] = alm_l[:, pols].astype(core.c_dtype)
+    logger.debug(
+        "saving jorik alm_l shape: %s, dtype: %s",
+        alm_l[:, pols].shape,
+        alm_l[:, pols].dtype,
+    )
     data["alm_nl"] = alm_nl.astype(core.c_dtype)
+    logger.debug("saving jorik alm_nl shape: %s, dtype: %s", alm_nl.shape, alm_nl.dtype)
     tstr = f"_{core.slurm.array_index}" if core.slurm.array_index > 0 else ""
     file = os.path.join(core.dirs["data"], f"alm-{core.name}{tstr}.hdf5")
     save_data(file, data)
@@ -368,7 +368,12 @@ def main():
 
     # generate the fnls
     fnls = core.rng.uniform(core.fnl_min, core.fnl_max, (core.nsims, core.ndups, 1, 1))
-    alms = alm_l[:, None, core.pol_idxs()] + fnls * alm_nl[:, None]
+
+    # Add the duplicate dimension to the alms
+    alm_l = alm_l[:, None, core.pol_idxs()]
+    alm_nl = alm_nl[:, None]
+
+    alms = alm_l + fnls * alm_nl
     alms = np.ascontiguousarray(alms)
     logger.debug("alms shape: %s, dtype: %s", alms.shape, alms.dtype)
 
@@ -392,16 +397,7 @@ def main():
 
     if core.slurm.is_main and core.plot:
         # lets make a few plots for the alms
-        print(
-            "alm_l shape",
-            alm_l.shape,
-            "alm nl shape",
-            alm_nl.shape,
-            "alms shape",
-            alms.shape,
-            flush=True,
-        )
-        make_alm_plots(core, alm_l, alm_nl, alms[:, 0])
+        make_alm_plots(core, alm_l[:, 0], alm_nl[:, 0], alms[:, 0])
 
     # once again save the maps to free up memory
     save_data(core.file, {"map": maps.astype(core.r_dtype)})
@@ -430,7 +426,7 @@ def main():
         )
 
         if core.slurm.is_main and core.plot:
-            make_alm_plots(core, alms=alm_lensed[:, 0], lensed=True)
+            make_alm_plots(core, alms=alm_lensed[:, 0, core.pol_idxs()], lensed=True)
 
     # note: we save as requested dtype but do calculations in complex128 since healpy needs it for alm2map
     logger.debug("Collecting save data")
@@ -446,8 +442,8 @@ def main():
     sdata["fnl_norm"] = fnl_norm.astype(core.r_dtype)
 
     if core.lensing:
-        sdata["alm_lensed"] = alm_lensed.astype(core.c_dtype)
-        sdata["map_lensed"] = maps_lensed.astype(core.r_dtype)
+        sdata["alm_lensed"] = alm_lensed[:, :, core.pol_idxs()].astype(core.c_dtype)
+        sdata["map_lensed"] = maps_lensed[:, :, core.pol_idxs()].astype(core.r_dtype)
         sdata["phi_map"] = phi_map.astype(core.r_dtype)
 
     save_data(core.file, sdata)

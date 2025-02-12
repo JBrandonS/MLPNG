@@ -177,6 +177,7 @@ class Core:
         parser.add_argument("--fnl_range", type=int, nargs=2)
         parser.add_argument("--num_estimates", type=int)
         parser.add_argument("--pols", type=str, nargs="+")
+        parser.add_argument("--phi_scale", type=float)
 
         # for BooleanOptionalAction: --flag will set the value `flag` to True, --no-flag will set `flag` to False
         # otherwise it will be none
@@ -187,6 +188,8 @@ class Core:
         parser.add_argument("--double_precision", action=argparse.BooleanOptionalAction)
         parser.add_argument("--plot", action=argparse.BooleanOptionalAction)
         parser.add_argument("--isotropic", action=argparse.BooleanOptionalAction)
+
+        parser.add_argument("--save_alms", action=argparse.BooleanOptionalAction)
 
         # this allows us to save a copy of the final settings used for the run
         # only really useful for debugging, must be provided by the CLI and not in the settings file
@@ -354,6 +357,8 @@ class Core:
         cpus = len(os.sched_getaffinity(0))
         self.n_cpus = int(os.getenv("SLURM_CPUS_PER_TASK", cpus))
 
+        self.phi_scale = self._get("phi_scale", 1)
+
     def _noise_beam(self):
         """
         Set up the noise and beam parameters for the Core object.
@@ -388,7 +393,7 @@ class Core:
             n_ell[0] = convert(self._get("noise_tt", 1)) ** 2
             n_ell[1] = convert(self._get("noise_ee", 5)) ** 2
             n_ell[2] = 0  # B is always 0
-            n_ell[3] = convert(self._get("noise_te", 10)) ** 2
+            n_ell[3] = 0 # no TE noise
         else:
             n_ell = np.full((4, self.nell), 1e-16, dtype=self.r_dtype)
             b_ell = np.ones((4, self.nell), dtype=self.r_dtype)
@@ -502,7 +507,13 @@ class Core:
             fstr = f"{self.fnl_min}-{self.fnl_max}"
 
         # finally we build our string
-        name = self._get("base_name", f"l{self.lmax}_n{self.nside}")
+        base_name = f"l{self.lmax}_n{self.nside}"
+        name = self._get("base_name", None)
+        if name is not None:
+            if name.startswith("+"):
+                name = f"{base_name}{name[1:]}"
+        else:
+            name =  base_name
         self.name = f"{name}_{pol_str}_{csims}x{self.ndups}_f{fstr}"
 
         self.dirs = {}
@@ -575,8 +586,8 @@ class Core:
         self.cosmo.add_prim_reduced_bispectrum(shape, self.radii)
 
         pols = self.pol_idxs()
-        self.cov = cov = self.b_ell**2 * self.c_ell + self.n_ell
-        # self.cov = cov = self.c_ell
+        # self.cov = cov = self.b_ell**2 * self.c_ell + self.n_ell
+        self.cov = cov = self.c_ell
 
         inoise = np.full(self.n_ell.shape, 1e-16)
         inoise[pols, self.lmin :] = 1 / self.n_ell[pols, self.lmin :]
@@ -586,6 +597,7 @@ class Core:
         icov = get_itotcov_ell(icov, inoise, self.b_ell)
         self.icov = icov[pols, pols]
 
+        cov = self.b_ell**2 * self.c_ell + self.n_ell
         self.icov2 = np.zeros_like(cov)
         self.icov2[pols, self.lmin :] = 1 / cov[pols, self.lmin :]
         self.icov2 = self.icov2[pols]
@@ -656,7 +668,7 @@ class Core:
             else:
                 raise ValueError(f"Directory {base_dir} does not exist")
 
-        return os.path.join(base_dir, f"{self.name}_{self.slurm.job}_{name}{extension}")
+        return os.path.join(base_dir, f"{self.slurm.job}_{name}{extension}")
 
     def check_existing_data_file(self):
         if os.path.exists(self.file):
