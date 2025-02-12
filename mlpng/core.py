@@ -174,9 +174,11 @@ class Core:
         parser.add_argument("--lmin", type=int)
         parser.add_argument("--lmax", type=int)
         parser.add_argument("--lmax_buffer", type=int)
-        parser.add_argument("--fnl_range", type=float, nargs=2)
+        parser.add_argument("--fnl_range", type=int, nargs=2)
         parser.add_argument("--num_estimates", type=int)
         parser.add_argument("--pols", type=str, nargs="+")
+
+        parser.add_argument("--data_fraction", type=float)
 
         # for BooleanOptionalAction: --flag will set the value `flag` to True, --no-flag will set `flag` to False
         # otherwise it will be none
@@ -187,6 +189,9 @@ class Core:
         parser.add_argument("--double_precision", action=argparse.BooleanOptionalAction)
         parser.add_argument("--plot", action=argparse.BooleanOptionalAction)
         parser.add_argument("--isotropic", action=argparse.BooleanOptionalAction)
+
+        parser.add_argument("--wandb", action=argparse.BooleanOptionalAction)
+        parser.add_argument("--tensorboard", action=argparse.BooleanOptionalAction)
 
         # this allows us to save a copy of the final settings used for the run
         # only really useful for debugging, must be provided by the CLI and not in the settings file
@@ -309,7 +314,8 @@ class Core:
         self.cosmo_params["lmax"] = self.lmax
 
         # setup the fnl values
-        self.fnl_min, self.fnl_max = self._get("fnl_range", (-100, 100))
+        fmin, fmax = self._get("fnl_range", (-100, 100))
+        self.fnl_min, self.fnl_max = int(fmin), int(fmax)
 
         # setup the polarization which should support --pols [T|TE]
         pols = self._get("pols", "TE")
@@ -353,6 +359,10 @@ class Core:
         # os.cpu_count() which gets the number of CPUs on the system
         cpus = len(os.sched_getaffinity(0))
         self.n_cpus = int(os.getenv("SLURM_CPUS_PER_TASK", cpus))
+
+        self.use_wandb = self._get("wandb", False)
+        self.use_tb = self._get("tensorboard", False)
+        self.data_fraction = self._get("data_fraction", 1.0)
 
     def _noise_beam(self):
         """
