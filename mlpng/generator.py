@@ -1,10 +1,8 @@
 """..."""
-import gc
+import copy
 import logging
 import os
-import sys
 from itertools import product
-from tkinter import S
 import healpy as hp
 import numpy as np
 from joblib import Parallel, delayed
@@ -21,6 +19,13 @@ from ksw.radial_functional import radial_func
 
 from . import Core
 from .utils import save_data, setup_logging, make_alm_plots, remove_mono_dipole
+
+from mpi4py import MPI
+
+mpi_comm = MPI.COMM_WORLD
+mpi_rank = mpi_comm.Get_rank()
+mpi_size = mpi_comm.Get_size()
+mpi_root = mpi_rank == 0
 
 logger = setup_logging("mlpng.generator", level=logging.DEBUG)
 
@@ -55,30 +60,33 @@ def integrand(alm, alpha_l, bl_div_cl, lmax, nside, upscale=False):
     solution = [hp.almxfl(inner[p], alpha_l[..., p]) for p in range(alpha_l.shape[-1])]
     return np.array(solution)
 
-def trap_generator(generator, radii):
+
+def trap_generator(gen, radii):
     """
     Perform trapezoidal integration using a generator. This will consume the memory as possible to help
     with memory management, this becomes needed for nside >= 512.
 
     Parameters:
-        generator: A generator yielding the function values to integrate.
+        gen: A generator yielding the function values to integrate.
         radii: The radii values, should match the size of the generator
 
     Returns:
         The integral computed using Simpson's rule.
     """
     integral = 0.0
-    y_prev = radii[0] ** 2 * next(generator)
+    y_prev = radii[0] ** 2 * next(gen)
     for i in range(1, len(radii)):
-        y_curr = radii[i] ** 2 * next(generator)
+        y_curr = radii[i] ** 2 * next(gen)
         integral += (radii[i] - radii[i - 1]) * (y_prev + y_curr) / 2.0
         y_prev = y_curr
 
     return integral
-    
+
+
 class Generator(Core):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+
+    def __init__(self, argv=None):
+        super().__init__(argv)
 
         camb_params = camb.set_params(**self.cosmo_params, verbose=False)
 
@@ -90,33 +98,42 @@ class Generator(Core):
         self.cosmo.compute_c_ell()
 
         if self.lensing:
-            c_ell_lensed = self.cosmo.c_ell["lensed_scalar"]["c_ell"][: self.nell].T
-            self.c_ell_lensed = c_ell_lensed.astype(self.r_dtype)
+            self.c_ell_lensed = self.cosmo.c_ell["lensed_scalar"]["c_ell"][
+                : self.nell
+            ].T
+            # self.c_ell_lensed = c_ell_lensed.astype(self.r_dtype)
 
-        c_ell = self.cosmo.c_ell["unlensed_scalar"]["c_ell"][: self.nell].T
-        self.c_ell = c_ell.astype(self.r_dtype)
-
-        ns = self.cosmo_params["ns"]
-        ps = self.cosmo_params["pivot_scalar"]
-        shape = Shape.prim_local(ns, pivot=ps)
-
-        self.cosmo.add_prim_reduced_bispectrum(shape, self.radii)
+        self.c_ell = self.cosmo.c_ell["unlensed_scalar"]["c_ell"][: self.nell].T
 
         pols = self.pol_idxs()
         self.cov = self.b_ell**2 * self.c_ell + self.n_ell
+        self.icov = np.zeros_like(self.cov)
+        self.icov[pols, self.lmin :] = 1 / self.cov[pols, self.lmin :]
 
+        icov = np.zeros_like(self.cov)
+        icov[pols, self.lmin :] = 1 / self.c_ell[pols, self.lmin :]
         inoise = np.full(self.n_ell.shape, 1e-16)
         inoise[pols, self.lmin :] = 1 / self.n_ell[pols, self.lmin :]
+        icov = self.get_itotcov_ell(icov, inoise, self.b_ell)
+        self.icov2 = icov[pols, pols]
 
-        # icov = np.zeros_like(cov)
-        # icov[pols, self.lmin :] = 1 / self.c_ell[pols, self.lmin :]
-        # icov = get_itotcov_ell(icov, inoise, self.b_ell)
-        # self.icov = icov[pols, pols]
+    def get_ksw(self, shape):
+        ns = self.cosmo_params["ns"]
+        ps = self.cosmo_params["pivot_scalar"]
 
-        cov = self.b_ell**2 * self.c_ell + self.n_ell
-        self.icov = np.zeros_like(cov)
-        self.icov[pols, self.lmin :] = 1 / cov[pols, self.lmin :]
-        # self.icov = self.icov2[pols]
+        match shape:
+            case "local":
+                shape = Shape.prim_local(ns, pivot=ps)
+            case "equilateral":
+                shape = Shape.prim_equilateral(ns, pivot=ps)
+            case "orthogonal":
+                shape = Shape.prim_orthogonal(ns, pivot=ps)
+            case _:
+                raise ValueError(f"Unknown shape {shape}")
+
+        #  hack to remove the previous bispectrum
+        self.cosmo.red_bispectra = []
+        self.cosmo.add_prim_reduced_bispectrum(shape, self.radii)
 
         # icov should be  x^icov = S^{-1} (S^{-1} + P^H N^{-1} P)^{-1} P^H N^{-1} P s,
         # where data = P s + n, where s are the spherical harmonic coefficients
@@ -124,7 +141,7 @@ class Generator(Core):
         # synthesis (alm2map) and M is the pixel mask and any custom filters.
         # N^{-1} and S^{-1} are the inverse noise and signal covariance matrices,
         # respectively. ^H denotes the Hermitian transpose.
-        self.estimator: KSW = KSW(
+        return KSW(
             self.cosmo.red_bispectra,
             self.icov_func,
             self.lmax,
@@ -132,13 +149,67 @@ class Generator(Core):
             self.precision,
         )
 
-    def icov_func(self, alm):
+    def icov_func(self, alm, icov=None):
+        if icov is None:
+            icov = self.icov
+
         ret = np.zeros_like(alm)
         for pol in range(ret.shape[0]):
-            ret[pol] = hp.almxfl(alm[pol], self.icov[pol])
+            ret[pol] = hp.almxfl(alm[pol], icov[pol])
         return ret
 
-    def generate_alm(self, nsims=None, cls=None):
+    @staticmethod
+    def get_itotcov_ell(icov_signal_ell, icov_noise_ell=None, b_ell=None):
+        """
+        Combine signal and noise power spectra into total inverse
+        isotropic covariance: S^-1 (S^-1 + B N^-1 B)^-1 B N^-1 B
+        = (S + B^-1 N B^-1)^-1.
+
+        Taken from Adri's KSW code
+
+        Parameters
+        ----------
+        icov_signal_ell : (npol, npol, nell) or (npol, nell) array
+            Inverse signal covariance
+        icov_noise_ell : (npol, npol, nell) or (npol, nell) array
+            Inverse noise covariance matrix
+        b_ell : (npol, nell) array
+            Beam transfer function.
+
+        Returns
+        -------
+        itotcov_ell : (npol, npol, nell) array
+            Total inverse covariance matrix.
+        """
+        if icov_noise_ell is None:
+            return icov_signal_ell.copy()
+
+        # Check if icov_signal_ell is (npol, nell) and convert to (npol, npol, nell)
+        if icov_signal_ell.ndim == 2:
+            npol, _ = icov_signal_ell.shape
+            icov_signal_ell = (
+                icov_signal_ell[:, np.newaxis, :] * np.eye(npol)[:, :, np.newaxis]
+            )
+
+        # Check if icov_noise_ell is (npol, nell) and convert to (npol, npol, nell)
+        if icov_noise_ell.ndim == 2:
+            npol, _ = icov_noise_ell.shape
+            icov_noise_ell = (
+                icov_noise_ell[:, np.newaxis, :] * np.eye(npol)[:, :, np.newaxis]
+            )
+
+        if b_ell is not None:
+            b_ell = b_ell * np.eye(b_ell.shape[0])[:, :, np.newaxis]
+            in_mat = np.einsum("ijl, jkl, kol -> iol", b_ell, icov_noise_ell, b_ell)
+        else:
+            in_mat = icov_noise_ell
+
+        imat = np.linalg.inv((icov_signal_ell + in_mat).T).T
+        itotcov_ell = np.einsum("ijl, jkl -> ikl", imat, in_mat)
+        itotcov_ell = np.einsum("ijl, jkl -> ikl", icov_signal_ell, itotcov_ell)
+        return itotcov_ell
+
+    def generate_alm(self, nsims=None, cls=None) -> np.ndarray:
         """
         generates the gaussian alms using the given core.
 
@@ -157,8 +228,7 @@ class Generator(Core):
             cls = self.cov
 
         sims = [hp.synalm(cls, lmax=self.lmax, new=True) for _ in range(nsims)]
-        sims = np.ascontiguousarray(sims) # ensure contiguous memory
-        return sims
+        return np.ascontiguousarray(sims)  # ensure contiguous memory
 
     def generate_alm_nl(self, alms):
         """
@@ -175,7 +245,6 @@ class Generator(Core):
         pol_idxs = self.pol_idxs()
         logger.debug("Using pol_idxs: %s", pol_idxs)
 
-        # transfer = compute_transfer(core, core.lmax, verbose=True)
         transfer = self.cosmo.transfer
 
         # get the transfer functions with tr_ell_k being \Delta_\ell(k)
@@ -241,7 +310,7 @@ class Generator(Core):
 
         logger.debug("Starting...")
         for sim in trange(self.nsims, desc="alm_nl"):
-            generator = parallel(
+            gen = parallel(
                 delayed(integrand)(
                     alms[sim, pol_idxs],
                     alpha_l[r],
@@ -253,24 +322,11 @@ class Generator(Core):
             )
 
             # here we use our function to calculate the integral
-            alm_nl[sim] = trap_generator(generator, self.radii)
+            alm_nl[sim] = trap_generator(gen, self.radii)
 
         return alm_nl
 
-
-    def lens_alms(self, alms_to_lens):
-        # make a copy of the alms for the lensing since they will modify them
-        alm = alms_to_lens.copy()
-
-        if not self.use_t:
-            alm = np.concatenate(
-                (np.zeros((self.nsims, self.ndups, 1, self.nelem)), alm), axis=2
-            )
-        if self.use_e:
-            # need to add a zero for the spin-2 component
-            alm = np.concatenate(
-                (alm, np.zeros((self.nsims, self.ndups, 1, self.nelem))), axis=2
-            )
+    def lens_alms(self, alm):
         alm_lensed = np.zeros_like(alm)
 
         # PP PT PE
@@ -286,28 +342,59 @@ class Generator(Core):
         geom_info = ("healpix", {"nside": self.nside})
         geom = lenspyx.get_geom(geom_info)
 
-        for sim, dup in product(range(self.nsims), range(self.ndups)):
+        def _work(sim, dup):
             lenmap = lenspyx.alm2lenmap(
                 alm[sim, dup], dlm, geometry=geom_info, nthreads=self.slurm.n_cpus
             )
-            lenmap = np.ascontiguousarray(lenmap)  # convert from tuple to array
+            lenmap = np.ascontiguousarray(lenmap)
 
-            if self.use_t:
+        for sim in range(self.nsims):
+            for dup in range(self.ndups):
+                lenmap = lenspyx.alm2lenmap(
+                    alm[sim, dup], dlm, geometry=geom_info, nthreads=self.slurm.n_cpus
+                )
+                lenmap = np.ascontiguousarray(lenmap)  # convert from tuple to array
+
                 alm_lensed[sim, dup, 0] = geom.map2alm(
                     lenmap[0].copy(), self.lmax, self.lmax, nthreads=self.slurm.n_cpus
                 )
-
-            if self.use_e:
-                alm_lensed[sim, dup, 1:] = geom.map2alm_spin(
-                    lenmap[1:].copy(), 2, self.lmax, self.lmax, nthreads=self.slurm.n_cpus
-                )
         return alm_lensed
 
+    # def get_fisher_iso(self, lensed=False):
+    #     fisher = self.ksw.compute_fisher_isotropic(
+    #         self.icov[self.pol_idxs()], comm=None
+    #     )
+    #     logger.debug("%s iso fisher: %s", "lensed" if lensed else "unlensed", fisher)
+    #     return np.array([fisher]).astype(self.r_dtype)
 
-    def get_fisher_iso(self, lensed=False):
-        fisher = self.estimator.compute_fisher_isotropic(self.icov[self.pol_idxs()], comm=None)
-        logger.debug("%s iso fisher: %s", "lensed" if lensed else "unlensed", fisher)
-        return np.array([fisher]).astype(self.r_dtype)
+    def generate_alm_nl_shape(self, alms, shape):
+        theta_batch = int(np.floor(1.5 * self.lmax + 1)) // mpi_size
+        pols = self.pol_idxs()
+
+        alm_steps = self.generate_alm(nsims=self.mc_steps)
+
+        logger.debug("Initializing KSW with %s steps", self.mc_steps)
+        ksw = self.get_ksw(shape)
+
+        # step through the mc to initialize
+        ksw.step_batch(
+            lambda i: self.icov_func(alm_steps[i, pols]),
+            range(self.mc_steps),
+            mpi_comm,
+            theta_batch=theta_batch,
+        )
+
+        # get our sim values now that MC is setup
+        alm_ng = np.zeros_like(alms[:, pols])
+        for i in trange(self.nsims, desc=f"alm_ng {shape}"):
+            icov = self.icov_func(alms[i, pols])
+            alm_ng[i] = ksw.compute_ng_sim(icov, theta_batch=theta_batch)
+
+        # get fisher and store as an array for saving
+        fisher = np.array([ksw.compute_fisher()]).astype(self.r_dtype)
+        logger.debug("calculated fisher: %s, std div: %s", fisher, np.sqrt(1 / fisher))
+
+        return alm_ng, fisher
 
     def run(self):
         r"""
@@ -333,71 +420,111 @@ class Generator(Core):
         pol_idxs = self.pol_idxs()
 
         alm_l = self.generate_alm()
-        alm_nl = self.generate_alm_nl(alm_l)
-        fnls = self.rng.uniform(self.fnl_min, self.fnl_max, (self.nsims, self.ndups, 1))
+        fnls = self.rng.uniform(self.fnl_min, self.fnl_max, (self.nsims, 1))
 
-        # Add the duplicate dimension to the alms
-        alm_l = alm_l[:, None, pol_idxs]
-        alm_nl = alm_nl[:, None]
-
-        # finally combine into the full alms and remove the monopole and dipole terms
-        alms = alm_l + fnls[..., None] * alm_nl
-        alms = remove_mono_dipole(alms, inplace=True)
-        alms = np.ascontiguousarray(alms)
-
-        if self.should_plot():
-            # lets make a few plots for the alms
-            make_alm_plots(self, alm_l[:, 0], alm_nl[:, 0], alms[:, 0])
-
-        logger.info("Getting maps in nest ordering")
-        maps = np.zeros(self.map_shape, dtype=self.r_dtype)
-        for sim, dup in product(range(self.nsims), range(self.ndups)):
-            rmap = hp.alm2map(alms[sim, dup].copy(), nside=self.nside, pol=self.use_pols)
-            maps[sim, dup] = hp.reorder(rmap, r2n=True)
-
-        # we go ahead and save some data so it can be freed, needed for nside > 512 to have good memory usage
         sdata = {}
-        if self.save_alms:
-            sdata["alm"] = alms.astype(self.c_dtype)
-            sdata["alm_l"] = alm_l.astype(self.c_dtype)
-            sdata["alm_nl"] = alm_nl.astype(self.c_dtype)
-        # we transpose to get into a channels-last format, better for AI
-        sdata["map"] = np.transpose(maps, (0, 1, 3, 2)).astype(self.r_dtype)
+        sdata["alm_l"] = alm_l[:, pol_idxs].astype(self.c_dtype)
+        sdata["fnl"] = fnls.astype(self.r_dtype)
         save_data(self.file, sdata)
-        del maps, alm_l, alm_nl  # actually force the garbage collection
+        del sdata
 
-        alm_lensed = maps_lensed = None
-        if self.lensing:
-            logger.info("Starting lensing")
-            alm_lensed = self.lens_alms(alms)
+        for shape in self.shapes:
+            logger.info("Starting %s", shape)
 
-            maps_lensed = np.zeros(self.map_shape, dtype=self.r_dtype)
-            for sim, dup in product(range(self.nsims), range(self.ndups)):
-                rmap = hp.alm2map(alm_lensed[sim, dup], nside=self.nside, pol=self.use_pols)
-                maps_lensed[sim, dup] = hp.reorder(rmap, r2n=True)
+            alm_nl, fisher = self.generate_alm_nl_shape(alm_l, shape)
+            logger.debug(
+                "alm_nl shape: %s, fisher shape: %s", alm_nl.shape, fisher.shape
+            )
+
+            # finally combine into the full alms and remove the monopole and dipole terms
+            alms = alm_l[:, None, pol_idxs] + fnls[..., None] * alm_nl[:, None]
+            alms = remove_mono_dipole(alms, inplace=True)
+            alms = np.ascontiguousarray(alms)
+
+            sdata = {"unlensed": {shape: {}}}
+            sdata["unlensed"][shape]["alm_nl"] = alm_nl.astype(self.c_dtype)
+            sdata["unlensed"][shape]["fisher"] = fisher.astype(self.r_dtype)
+            save_data(self.file, sdata, verbose=True)
 
             if self.should_plot():
-                make_alm_plots(self, alms=alm_lensed[:, 0, pol_idxs], lensed=True)
+                logger.info("Making alm plots for %s", shape)
+                logger.debug(
+                    "alm_l shape: %s, alm_nl shape: %s, alms shape: %s",
+                    alm_l.shape,
+                    alm_nl.shape,
+                    alms.shape,
+                )
+                make_alm_plots(self, alm_l, alm_nl, alms[:, 0])
 
-        # note: we save as requested dtype but do calculations in complex128 since healpy needs it for alm2map
-        sdata = {}
-        sdata["fnl"] = fnls.astype(self.r_dtype)
-        if self.slurm.is_main:
-            # only save 1 copy of the fnls, so only on main
-            sdata["fisher_iso"] = self.get_fisher_iso(False)
-            if self.lensing:
-                sdata["fisher_iso_lensed"] = self.get_fisher_iso(True)
-        if self.lensing:
+            del alm_nl, fisher, sdata
+
+            logger.debug("Getting maps in nest ordering")
+            maps = np.zeros(self.map_shape, dtype=self.r_dtype)
+            for sim, dup in product(range(self.nsims), range(self.ndups)):
+                rmap = hp.alm2map(alms[sim, dup], nside=self.nside, pol=self.use_pols)
+                maps[sim, dup] = hp.reorder(rmap, r2n=True)
+
+            # we transpose to get into a channels-last format, better for AI
+            maps = np.transpose(maps, (0, 1, 3, 2)).astype(self.r_dtype)
+
+            # we go ahead and save some data so it can be freed, needed for nside > 512 to have good memory usage
+            sdata = {"unlensed": {shape: {}}}
+            # sdata["unlensed"][shape]["fnl"] = fnls.astype(self.r_dtype)
+            # sdata["unlensed"][shape]["alm_nl"] = alm_nl.astype(self.c_dtype)
+            sdata["unlensed"][shape]["map"] = maps
+            # sdata["unlensed"][shape]["fisher"] = fisher.astype(self.r_dtype)
             if self.save_alms:
-                sdata["alm_lensed"] = alm_lensed[:, :, pol_idxs].astype(self.c_dtype)
-                
-            sdata["map_lensed"] = np.transpose(maps_lensed[:, :, pol_idxs], (0, 1, 3, 2)).astype(self.r_dtype)
-            # sdata["phi_map"] = phi_map.astype(core.r_dtype)
-            
-        save_data(self.file, sdata)
-        logger.info("Finished %s!", self.slurm.job)
+                sdata["unlensed"][shape]["alm"] = alms.astype(self.c_dtype)
+            save_data(self.file, sdata)
+            del maps, alms, sdata
+
+            # if self.lensing:
+            #     logger.info("Starting lensing")
+            #     alm_l_lensed = self.lens_alms(alm_l)
+            #     alm_nl_lensed = self.lens_alms(alm_nl)
+            #     alms_lensed = self.lens_alms(alms)
+
+            #     logger.debug(
+            #         "l shape: %s, nl shape: %s, alms shape: %s",
+            #         alm_l_lensed.shape,
+            #         alm_nl_lensed.shape,
+            #         alms_lensed.shape,
+            #     )
+
+            #     maps_lensed = np.zeros(self.map_shape, dtype=self.r_dtype)
+            #     for sim, dup in product(range(self.nsims), range(self.ndups)):
+            #         rmap = hp.alm2map(
+            #             alms_lensed[sim, dup], nside=self.nside, pol=self.use_pols
+            #         )
+            #         maps_lensed[sim, dup] = hp.reorder(rmap, r2n=True)
+
+            #     if self.should_plot():
+            #         make_alm_plots(self, alms=alms_lensed[:, 0, pol_idxs], lensed=True)
+
+            #     # we transpose to get into a channels-last format, better for AI
+            #     map_data = np.transpose(maps_lensed, (0, 1, 3, 2)).astype(self.r_dtype)
+
+            #     sdata = {"lensed": {shape: {}}}
+            #     # this is the same for lensed and unlensed
+            #     sdata["lensed"][shape]["fnl"] = fnls.astype(self.r_dtype)
+            #     sdata["lensed"]["alm_l"] = alm_l_lensed.astype(self.c_dtype)
+            #     sdata["lensed"][shape]["alm_nl"] = alm_nl_lensed.astype(self.c_dtype)
+            #     sdata["lensed"][shape]["map"] = map_data
+            #     if self.save_alms:
+            #         alm_data = alms_lensed.astype(self.c_dtype)
+            #         sdata["lensed"][shape]["alm"] = alm_data
+            #     if self.slurm.is_main:
+            #         #   TODO: Add fisher calculation for lensed
+            #         sdata["lensed"][shape]["fisher"] = fisher.astype(self.r_dtype)
+            #     save_data(self.file, sdata)
+
+            logger.info("Finished %s!", shape)
 
 
 if __name__ == "__main__":
     generator = Generator()
+
+    # check if we actually need to run / clean files
+    generator.check_existing_data_file()
+
     generator.run()

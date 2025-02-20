@@ -40,29 +40,37 @@ def recursive_copy(hf_source, hf_dest, num_files, index):
         None
     """
     for key in hf_source.keys():
-        # get the number of data points in the dataset, stored in the 0th dimension
-        num_elem = hf_source[key].shape[0]
-        # get the shape of the actual data
-        data_shape = hf_source[key].shape[1:]
-        logger.debug("%s: Found non-scalar dataset of shape: %s", key, data_shape)
+        if isinstance(hf_source[key], h5py.Group):
+            # If the key is a group, create the group in the destination file and recurse
+            if key not in hf_dest:
+                hf_dest.create_group(key)
+            recursive_copy(hf_source[key], hf_dest[key], num_files, index)
+        elif isinstance(hf_source[key], h5py.Dataset):
+            # If the key is a dataset, copy the data
+            num_elem = hf_source[key].shape[0]
+            data_shape = hf_source[key].shape[1:]
+            logger.debug("%s: Found non-scalar dataset of shape: %s", key, data_shape)
 
-        if key not in hf_dest:
-            ds_shape = (num_files * num_elem,) + data_shape
-            dtype = hf_source[key].dtype
+            if key not in hf_dest:
+                ds_shape = (num_files * num_elem,) + data_shape
+                dtype = hf_source[key].dtype
+
+                logger.debug(
+                    "%s: Creating dataset with shape %s, and dtype %s",
+                    key,
+                    ds_shape,
+                    dtype,
+                )
+                hf_dest.create_dataset(key, shape=ds_shape, dtype=dtype)
 
             logger.debug(
-                "%s: Creating dataset with shape %s, and dtype %s", key, ds_shape, dtype
+                "%s: Copying data to index range %s",
+                key,
+                (index * num_elem, (index + 1) * num_elem),
             )
-            hf_dest.create_dataset(key, shape=ds_shape, dtype=dtype)
-
-        logger.debug(
-            "%s: Copying data to index range %s",
-            key,
-            (index * num_elem, (index + 1) * num_elem),
-        )
-        logger.debug("%s: Data type of hf_source: %s", key, hf_source[key].dtype)
-        logger.debug("%s: Data type of hf_dest: %s", key, hf_dest[key].dtype)
-        hf_dest[key][index * num_elem : (index + 1) * num_elem] = hf_source[key]
+            logger.debug("%s: Data type of hf_source: %s", key, hf_source[key].dtype)
+            logger.debug("%s: Data type of hf_dest: %s", key, hf_dest[key].dtype)
+            hf_dest[key][index * num_elem : (index + 1) * num_elem] = hf_source[key]
 
 
 def combine_data(directory, base_name, ext=".hdf5", remove_files=True, expected=100):
@@ -113,6 +121,7 @@ def combine_data(directory, base_name, ext=".hdf5", remove_files=True, expected=
     files_to_combine = sorted(files_to_combine, key=extract_number)
 
     # Create a new h5py file to hold all the combined data
+    logger.info("Saving combined data to %s", nc_file)
     with h5py.File(nc_file, "x") as hf_combined:
         for idx, file in tqdm(
             enumerate(files_to_combine), desc="Processing files", total=expected
@@ -123,6 +132,7 @@ def combine_data(directory, base_name, ext=".hdf5", remove_files=True, expected=
 
     # Move the combined file to remove the .nc extension
     # This will also override any existing file with the same name
+    logger.info("Moving combined file to %s", os.path.join(directory, base_name + ext))
     os.replace(
         nc_file,
         os.path.join(directory, base_name + ext),
@@ -133,10 +143,6 @@ def combine_data(directory, base_name, ext=".hdf5", remove_files=True, expected=
             os.remove(file)
 
 
-def main():
+if __name__ == "__main__":
     core = Core()
     combine_data(core.dirs["data"], core.name, ".hdf5", expected=core.narray)
-
-
-if __name__ == "__main__":
-    sys.exit(main())

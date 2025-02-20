@@ -9,9 +9,9 @@
 # these must be in settings/ and have the .json extension
 SETTINGS=(
   # "n32"
-  # "n64"
+  "n64"
   "n128"
-  # "n256"
+  "n256"
   
   # "n512"
   # "n1024"
@@ -26,12 +26,16 @@ SETTINGS=(
 
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
 ARGS=(
-  "--nsims" "1000"
-  "--pols" "T"
-  "--base_name" "+_ps1"
-  "--fnl_range" "-1000" "1000"
-  "--no-save_alms"
-  "--phi_scale" "1"
+  "--nsims" "100"
+  # "--force_gen"
+  # "--pols" "T"
+  # "--base_name" "+_ortho"
+  # "--fnl_range" "-1000" "1000"
+  # "--shape" "local"
+  # "--shape" "equilateral"
+  # "--shape" "orthogonal"
+  # "--no-save_alms"
+  # "--phi_scale" "1"
   "--narray" "100"
 )
 

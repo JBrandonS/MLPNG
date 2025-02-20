@@ -48,73 +48,82 @@ class Estimator(Generator):
         self.theta_batch = int(np.floor(1.5 * self.lmax + 1)) // mpi_size
         logger.debug("Using theta_batch %s", self.theta_batch)
 
-        if self.isotropic:
-            with h5py.File(self.file, "r", swmr=True, locking=False) as data:
-                self.fisher = data["fisher_iso"][0]
-        else:
-            logger.debug("Computing fisher")
-            if os.path.exists(self.mc_file):
-                logger.info("Loading KSW state from %s", self.mc_file)
-                self.estimator.start_from_read_state(self.mc_file, comm=mpi_comm)
-            else:
-                alm_steps = self.generate_alm(nsims=self.mc_steps)
+        # if self.isotropic:
+        # with h5py.File(self.file, "r", swmr=True, locking=False) as data:
+        #     self.fisher = data["fisher_iso"][0]
+        # else:
+        #     logger.debug("Computing fisher")
+        #     if os.path.exists(self.mc_file):
+        #         logger.info("Loading KSW state from %s", self.mc_file)
+        #         self.ksw.start_from_read_state(self.mc_file, comm=mpi_comm)
+        #     else:
+        #         alm_steps = self.generate_alm(nsims=self.mc_steps)
 
-                logger.info("Initializing KSW with %s steps", self.mc_steps)
-                self.estimator.step_batch(
-                    lambda i: self.icov_func(alm_steps[i, self.pol_idxs()]),
-                    range(self.mc_steps),
-                    mpi_comm,
-                    theta_batch=self.theta_batch,
-                )
+        #         logger.info("Initializing KSW with %s steps", self.mc_steps)
+        #         self.ksw.step_batch(
+        #             lambda i: self.icov_func(alm_steps[i, self.pol_idxs()]),
+        #             range(self.mc_steps),
+        #             mpi_comm,
+        #             theta_batch=self.theta_batch,
+        #         )
 
-                # save the mc state if we are using the mc file
-                if self.slurm.is_main:
-                    logger.info("Saving KSW state to %s", self.mc_file)
-                    self.estimator.write_state(self.mc_file, comm=mpi_comm)
+        #         # save the mc state if we are using the mc file
+        #         if self.slurm.is_main:
+        #             logger.info("Saving KSW state to %s", self.mc_file)
+        #             self.ksw.write_state(self.mc_file, comm=mpi_comm)
 
-            self.fisher = self.estimator.compute_fisher()
-        logger.info("Fisher: %s, standard deviation: %s", self.fisher, 1 / np.sqrt(self.fisher))
+        #     self.fisher = self.ksw.compute_fisher()
+        # logger.info("Fisher: %s, standard deviation: %s", self.fisher, 1 / np.sqrt(self.fisher))
 
     def run(self, lensing=False):
-        with h5py.File(self.file, "r", swmr=True, locking=False) as data:
-            alms = data["alm_lensed" if lensing else "alm"]
-            fnls = np.array(data["fnl"][: self.num_estimates])[:, 0].flatten()
+        lstr = "lensed" if lensing else "unlensed"
+        for shape in self.shapes:
+            logger.debug("Estimating for %s %s", lstr, shape)
+            with h5py.File(self.file, "r", swmr=True, locking=False) as data:
+                alm_l = data["alm_l"][: self.num_estimates, self.pol_idxs()]
+                alm_nl = data[lstr][shape]["alm_nl"][: self.num_estimates]
+                fnl = np.array(data["fnl"][: self.num_estimates])
+                fisher = data[lstr][shape]["fisher"][0]  # TODO fix
 
-            logger.debug("Computing estimates")
-            estimates, _, _, _ = self.estimator.compute_estimate_batch(
-                lambda idx: self.icov_func(alms[idx, 0]),
-                range(self.num_estimates),
-                comm=mpi_comm,
-                fisher=self.fisher,
-                theta_batch=self.theta_batch,
-                lin_term=0 if self.isotropic else None,
-            )
-
-        if mpi_root:
-            print_errors(fnls, estimates, self.fisher)
-
-            # save the data, this will append to the alm_file
-            sdata = {}
-            if not lensing:
-                sdata["fisher"] = self.fisher.astype(self.r_dtype)
-                sdata["estimate"] = estimates.astype(self.r_dtype)
-            else:
-                sdata["estimate_lensed"] = estimates.astype(self.r_dtype)
-            save_data(self.file, sdata, mode="a")
-
-            if self.plot:
-                base = "ksw_lensed" if lensing else "ksw"
-                plot_predictions(
-                    fnls,
-                    estimates,
-                    fisher=self.fisher,
-                    save_file=self.get_plot_file(f"{base}_preds"),
+                logger.debug(
+                    "Fisher: %s, standard deviation: %s", fisher, 1 / np.sqrt(fisher)
                 )
-                plot_histogram(fnls, estimates, save_file=self.get_plot_file(f"{base}_hist"))
+
+                # make our alms
+                alm = alm_l + fnl[..., None] * alm_nl
+
+                logger.debug("Computing estimates")
+                ksw = self.get_ksw(shape)
+                estimates, _, _, _ = ksw.compute_estimate_batch(
+                    lambda idx: self.icov_func(alm[idx]),
+                    range(self.num_estimates),
+                    comm=mpi_comm,
+                    fisher=fisher,
+                    theta_batch=self.theta_batch,
+                    lin_term=0 if self.isotropic else None,
+                )
+
+            if mpi_root:
+                # save the data, this will append to the alm_file
+                sdata = {lstr: {shape: {"estimate": estimates}}}
+                save_data(self.file, sdata, mode="a")
+
+                print_errors(fnl, estimates, fisher)
+                if self.plot:
+                    base = f"ksw_{shape}_{lstr}"
+                    plot_predictions(
+                        fnl,
+                        estimates,
+                        fisher=fisher,
+                        save_file=self.get_plot_file(f"{base}_preds"),
+                    )
+                    plot_histogram(
+                        fnl, estimates, save_file=self.get_plot_file(f"{base}_hist")
+                    )
 
 if __name__ == "__main__":
     estimator = Estimator()
     estimator.run(False)
 
-    if estimator.lensing:
-        estimator.run(True)
+    # if estimator.lensing:
+    #     estimator.run(True)

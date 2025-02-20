@@ -385,16 +385,16 @@ def plot_elsner_comp(
         elsner_l = trim_alms(elsner_l, lmax)
         elsner_nl = trim_alms(elsner_nl, lmax)
 
-    npols = alm_l.shape[0]
+    npols = core.npols
     _, axes = plt.subplots(3, npols, figsize=(16, 12))
     if len(axes.shape) == 1:
         # fix for single pol
         axes = axes[:, np.newaxis]
 
     for data in [(alm_l, alm_nl, "alm"), (elsner_l, elsner_nl, "elsner")]:
-        for pol in range(data[0].shape[0]):
+        for pol in range(core.npols):
             ratio = np.ma.mean(np.ma.abs(data[0][pol]) / np.ma.abs(data[1][pol]))
-            logger.info("Mean ratio of %s %s: %s", data[2], core.pols[pol], ratio)
+            logger.debug("Mean ratio of %s %s: %s", data[2], core.pols[pol], ratio)
 
     for pol in range(core.npols):
         plt.sca(axes[0, pol])

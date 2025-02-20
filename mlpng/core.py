@@ -74,6 +74,7 @@ class Core:
     c_ell: np.ndarray
     n_ell: np.ndarray
     b_ell: np.ndarray
+    shapes: list[str]
 
     _cosmo_defaults = {"As": 2.13e-09, "ns": 0.9624, "pivot_scalar": 0.05}
 
@@ -87,12 +88,12 @@ class Core:
         """
 
         # init our core object, split for readability
-        self.slurm = Slurm()
         self._process_settings(argv)
+
         self._init()
+        self._paths()
         self._noise_beam()
         self._radii()
-        self._paths()
 
     def _parse_args(self, args=None):
         """
@@ -124,6 +125,13 @@ class Core:
         parser.add_argument("--num_estimates", type=int)
         parser.add_argument("--pols", type=str, nargs="+")
         parser.add_argument("--phi_scale", type=float)
+
+        parser.add_argument(
+            "--shapes",
+            choices=["local", "equilateral", "orthogonal", "all"],
+            nargs="+",
+            help="Specify the shape type. Must be one of: local, equilateral, orthogonal, all.",
+        )
 
         # for BooleanOptionalAction: --flag will set the value `flag` to True, --no-flag will set `flag` to False
         # otherwise it will be none
@@ -166,9 +174,9 @@ class Core:
         """
         val = self.settings.get(name, None)
         if val is None:
-            logger.debug(
-                "Setting '%s' not found, using default: %s", name, repr(default)
-            )
+            # logger.debug(
+            #     "Setting '%s' not found, using default: %s", name, repr(default)
+            # )
             return default
 
         if val != default:
@@ -178,13 +186,13 @@ class Core:
                 repr(val),
                 repr(default),
             )
-        else:
-            logger.debug("Found default value for '%s': %s", name, repr(val))
+        # else:
+        #     logger.debug("Found default value for '%s': %s", name, repr(val))
         return val
 
     def _process_settings(self, argv):
         args = self._parse_args(argv)
-        
+
         # We start by loading in the settings from the provided file
         # From there we store the settings in the settings dict attribute
         # We then override the settings with the command line arguments
@@ -284,6 +292,7 @@ class Core:
         Raises:
             AssertionError: If the number of patches is not even.
         """
+        self.slurm = Slurm()
 
         self.seed = self._get("seed", np.random.default_rng().integers(0, 2**32 - 1))
         self.rng = np.random.default_rng(self.seed)
@@ -291,21 +300,27 @@ class Core:
 
         # main parameters
         self.nside = self._get("nside", 128)
-        self.lensing = self._get("lensing", True)
+        self.lensing = self._get("lensing", False)
         self.nsims = self._get("nsims", 100)
         self.ndups = self._get("ndups", 25)
         self.narray = self._get("narray", self.slurm.task_count or 1)
-        self.fnl_min, self.fnl_max = self._get("fnl_range", (-100, 100))
+        self.fnl_min, self.fnl_max = self._get("fnl_range", (-1000, 1000))
+
+        self.shapes = self._get("shapes", "all")
+        if self.shapes == "all":
+            self.shapes = ["local", "equilateral", "orthogonal"]
+        elif isinstance(self.shapes, str):
+            self.shapes = [self.shapes]
 
         self.phi_scale = self._get("phi_scale", 1)
 
-        self.force_gen = self._get("force_generation", True)
+        self.force_gen = self._get("force_generation", False)
         self.force_ksw = self._get("force_ksw", False)
         self.num_estimates = self._get(
             "num_estimates", min(self.nsims * self.narray, 1000)
         )
         self.plot = self._get("plot", True)
-        self.save_alms = self._get("save_alms", True)
+        self.save_alms = self._get("save_alms", False)
 
         if self.slurm.task_count > 0 and self.slurm.task_count != self.narray:
             raise ValueError(
@@ -328,8 +343,9 @@ class Core:
         self.use_e = "E" in self.pols
         self.use_b = False  # "B" in self.pols
         self.use_pols = self.pols == 3 #used for hp commands
-        
-        self.isotropic = self._get("isotropic", True)
+
+        self.isotropic = True  # self._get("isotropic", True)
+        logger.warning("Forcing isotropic mode")
 
         # setup our precision types to be consistent
         if self._get("double_precision", False):
@@ -487,7 +503,7 @@ class Core:
 
         self.file = os.path.join(self.dirs["data"], f"{self.name}{tstr}.hdf5")
         self.mc_file = os.path.join(self.dirs["mc"], f"{self.name}.hdf5")
-        self.mc_steps = self._get("mc_steps", 100)
+        self.mc_steps = self._get("mc_steps", 500)
 
         logger.debug("Using data file: %s", self.file)
         if os.path.exists(self.mc_file):
@@ -634,20 +650,10 @@ class Core:
     def check_existing_data_file(self):
         if os.path.exists(self.file):
             if self.force_gen:
-                logger.info("Removing existing data file")
+                logger.info("Removing existing data file '%s'", self.file)
                 os.remove(self.file)
             else:
-                logger.info("Data file exists, exiting")
-                sys.exit(0)
-
-        # we also should check for the full file
-        full_file = os.path.join(self.dirs["data"], f"{self.name}.hdf5")
-        if os.path.exists(full_file):
-            if self.force_gen:
-                logger.info("Removing existing full data file")
-                os.remove(full_file)
-            else:
-                logger.info("Found full data file, exiting")
+                logger.info("Data file '%s' exists, exiting", self.file)
                 sys.exit(0)
 
     def should_plot(self):

@@ -1,9 +1,7 @@
 from .utils import (
     setup_logging,
     save_data,
-    load_data,
     remove_mono_dipole,
-    get_fisher,
     print_errors,
     trim_alms,
     try_init_wandb,
@@ -25,9 +23,7 @@ from .slurm import Slurm
 __all__ = [
     "setup_logging",
     "save_data",
-    "load_data",
     "remove_mono_dipole",
-    "get_fisher",
     "print_errors",
     "trim_alms",
     "try_init_wandb",

@@ -47,7 +47,62 @@ def setup_logging(
     return log
 
 
-def save_data(file_path, data_dict, mode="a"):
+def recursive_save(file, path, data, verbose=False):
+    """
+    Recursively save a dictionary to an HDF5 file.
+
+    Args:
+        file (h5py.File): The HDF5 file object.
+        path (str): The path in the HDF5 file to save the dictionary.
+        dict (dict): The dictionary to save.
+
+    Returns:
+        None
+    """
+    for key, value in data.items():
+        npath = f"{path}/{key}"
+        if verbose:
+            logger.debug("Processing path: %s", npath)
+
+        if isinstance(value, dict):
+            if verbose:
+                logger.debug("Processing dict: %s", key)
+
+            # check if group exists, if not create it
+            if npath in file:
+                grp = file[npath]
+            else:
+                grp = file.create_group(npath)
+            recursive_save(grp, npath, value)
+
+        elif isinstance(value, np.ndarray):
+            # logger.debug("Processing ndarray: %s", key)
+            if npath in file:
+                if verbose:
+                    logger.debug("Appending %s/%s data to existing", path, key)
+                # Resize the dataset to accommodate the new data
+                file[npath].resize(
+                    (file[npath].shape[0] + value.shape[0],) + value.shape[1:]
+                )
+                file[npath][-value.shape[0] :] = value
+            else:
+                if verbose:
+                    logger.debug("Creating new dataset: %s/%s", path, key)
+                file.create_dataset(
+                    npath, data=value, maxshape=(None,) + value.shape[1:]
+                )
+        else:
+            if verbose:
+                logger.debug(
+                    "Creating dataset for key %s of type %s at %s",
+                    key,
+                    type(value),
+                    path,
+                )
+            file.create_dataset(npath, data=value)
+
+
+def save_data(file_path, data_dict, mode="a", verbose=False):
     """
     Save data to an HDF5 file.
 
@@ -62,96 +117,12 @@ def save_data(file_path, data_dict, mode="a"):
     Returns:
         None
     """
-    logger.info("Saving data to '%s'", file_path)
+    if verbose:
+        logger.info("Saving data to '%s'", file_path)
     with h5py.File(file_path, mode) as hf:
-        for key, value in data_dict.items():
-            logger.debug("%s: Processing key", key)
-            if isinstance(value, dict):
-                logger.debug("%s: Processing dict", key)
-                grp = hf.create_group(key)
-                for k, v in value.items():
-                    logger.debug("%s: Processing subkey %s", key, k)
-                    grp.create_dataset(k, data=np.array(v))
-
-                continue
-
-            if isinstance(value, np.ndarray):
-                logger.debug("%s: Processing ndarray", key)
-                if key in hf:
-                    logger.debug("%s: Appending to existing", key)
-                    # Resize the dataset to accommodate the new data
-                    hf[key].resize(  # type: ignore
-                        (hf[key].shape[0] + value.shape[0],) + value.shape[1:]  # type: ignore
-                    )  # type: ignore
-                    # Append the new data
-                    hf[key][-value.shape[0] :] = value  # type: ignore
-                else:
-                    # Create a new dataset for this key
-                    logger.debug("%s: Creating new dataset", key)
-                    hf.create_dataset(
-                        key, data=value, maxshape=(None,) + value.shape[1:]
-                    )
-            else:
-                # For other data types, create a dataset
-                logger.debug("Creating dataset for key %s of type %s", key, type(value))
-                hf.create_dataset(key, data=value)
-
-
-def load_data(data_file, keys):
-    """
-    Load data from an HDF5 file.
-
-    Args:
-        data_file (str): The path to the HDF5 file.
-        keys (str or list): The key(s) of the data to load.
-
-    Returns:
-        dict: A dictionary containing the loaded data, where the keys are the provided key(s) and the values are the corresponding data arrays.
-
-    Raises:
-        ValueError: If any of the provided keys are not found in the HDF5 file.
-    """
-    logger.info("Loading data '%s' from '%s'", keys, data_file)
-
-    if isinstance(keys, str):
-        keys = [keys]
-
-    data = {}
-    with h5py.File(data_file, "r", swmr=True, locking=False) as hdf:
-        for key in keys:
-            logger.debug("%s: Loading", key)
-            kv = hdf.get(key, None)
-            if kv is None:
-                raise ValueError(f"Key {key} not found in {data_file}")
-            logger.debug(
-                "%s: Loaded, %s", key, kv.shape if isinstance(kv, np.ndarray) else kv
-            )
-            data[key] = kv[()]  # type: ignore
-
-    logger.info("Finished loading data from %s", data_file)
-    return data
-
-
-def get_fisher(file, name="fisher"):
-    """
-    Load the fisher matrix from an HDF5 file.
-
-    Parameters:
-    - file (str): The path to the HDF5 file.
-
-    Returns:
-    - fisher (numpy.ndarray or None): The loaded fisher matrix, or None if it couldn't be loaded.
-    """
-    try:
-        with h5py.File(file, "r", swmr=True, locking=False) as hdf:
-            fisher = float(hdf.get(name, [None])[0])  # type: ignore
-            logger.info(
-                "Loaded fisher: %s, with error: %s", fisher, np.sqrt(1 / fisher)
-            )
-    except Exception as e:
-        logger.error("Could not load fisher matrix: %s", e)
-        raise e
-    return fisher
+        recursive_save(hf, "", data_dict, verbose=verbose)
+    if verbose:
+        logger.debug("Finished saving data to '%s'", file_path)
 
 
 def remove_mono_dipole(alm, inplace=False):
