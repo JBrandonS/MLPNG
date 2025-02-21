@@ -108,55 +108,159 @@ class Core:
         parser = argparse.ArgumentParser()
 
         # only required argument is the settings file
-        parser.add_argument("settings_file")
+        parser.add_argument("settings_file", help="Path to the settings file")
 
-        # some standard arguments heres, we can add more as needed
-        parser.add_argument("--nsims", type=int)
-        parser.add_argument("--narray", type=int)
-        parser.add_argument("--nside", type=int)
-        parser.add_argument("--ndups", type=int)
-        parser.add_argument("--base_dir", type=str)
-        parser.add_argument("--seed", type=int)
-        parser.add_argument("--base_name", type=str)
-        parser.add_argument("--lmin", type=int)
-        parser.add_argument("--lmax", type=int)
-        parser.add_argument("--lmax_buffer", type=int)
-        parser.add_argument("--fnl_range", type=int, nargs=2)
-        parser.add_argument("--num_estimates", type=int)
-        parser.add_argument("--pols", type=str, nargs="+")
-        parser.add_argument("--phi_scale", type=float)
-
+        # some standard arguments here, we can add more as needed
+        parser.add_argument(
+            "--nsims",
+            type=int,
+            help="Number of simulations to run, per array job",
+        )
+        parser.add_argument(
+            "--narray",
+            type=int,
+            help="Number of arrays to process",
+        )
+        parser.add_argument(
+            "--nside",
+            type=int,
+            help="Resolution parameter for HEALPix",
+        )
+        parser.add_argument(
+            "--ndups",
+            type=int,
+            help="Number of duplicates",
+        )
+        parser.add_argument(
+            "--base_dir",
+            type=str,
+            help="Base directory for data storage",
+        )
+        parser.add_argument(
+            "--seed",
+            type=int,
+            help="Random seed for reproducibility",
+        )
+        parser.add_argument(
+            "--base_name",
+            type=str,
+            help="Base name for the output files",
+        )
+        parser.add_argument(
+            "--lmin",
+            type=int,
+            help="Minimum multipole moment",
+        )
+        parser.add_argument(
+            "--lmax",
+            type=int,
+            help="Maximum multipole moment",
+        )
+        parser.add_argument(
+            "--lmax_buffer",
+            type=int,
+            help="Buffer for the maximum multipole moment for some camb calculations",
+        )
+        parser.add_argument(
+            "--fnl_range",
+            type=int,
+            nargs=2,
+            help="Range for the fnl parameter in min max, i.e. --fnl_range -100 100",
+        )
+        parser.add_argument(
+            "--num_estimates",
+            type=int,
+            help="Number of estimates to compute",
+        )
+        parser.add_argument(
+            "--pols",
+            type=str,
+            nargs="+",
+            help="Polarizations to consider, Right now only T is fully tested",
+        )
+        parser.add_argument(
+            "--phi_scale",
+            type=float,
+            help="Scale for the lensing maps",
+        )
         parser.add_argument(
             "--shapes",
             choices=["local", "equilateral", "orthogonal", "all"],
             nargs="+",
-            help="Specify the shape type. Must be one of: local, equilateral, orthogonal, all.",
+            help="Specify the shape type. Must be any of: local, equilateral, orthogonal, or all. Multiple shapes can be specified.",
         )
 
         # for BooleanOptionalAction: --flag will set the value `flag` to True, --no-flag will set `flag` to False
-        # otherwise it will be none
-        parser.add_argument("--lensing", action=argparse.BooleanOptionalAction)
-        parser.add_argument("--noise", action=argparse.BooleanOptionalAction)
-        parser.add_argument("--force_generation", action=argparse.BooleanOptionalAction)
-        parser.add_argument("--force_ksw", action=argparse.BooleanOptionalAction)
-        parser.add_argument("--double_precision", action=argparse.BooleanOptionalAction)
-        parser.add_argument("--plot", action=argparse.BooleanOptionalAction)
-        parser.add_argument("--isotropic", action=argparse.BooleanOptionalAction)
-        parser.add_argument("--save_alms", action=argparse.BooleanOptionalAction)
+        parser.add_argument(
+            "--lensing",
+            action=argparse.BooleanOptionalAction,
+            help="Enable or disable lensing",
+        )
+        parser.add_argument(
+            "--noise",
+            action=argparse.BooleanOptionalAction,
+            help="Enable or disable noise",
+        )
+        parser.add_argument(
+            "--force_generation",
+            action=argparse.BooleanOptionalAction,
+            help="Force data generation, delete files if existing",
+        )
+        parser.add_argument(
+            "--force_ksw",
+            action=argparse.BooleanOptionalAction,
+            help="Force KSW estimator to run",
+        )
+        parser.add_argument(
+            "--double_precision",
+            action=argparse.BooleanOptionalAction,
+            help="Use double precision",
+        )
+        parser.add_argument(
+            "--plot",
+            action=argparse.BooleanOptionalAction,
+            help="Enable or disable plotting",
+        )
+        parser.add_argument(
+            "--isotropic",
+            action=argparse.BooleanOptionalAction,
+            help="Enable or disable isotropic mode, not fully supported rn",
+        )
+        parser.add_argument(
+            "--save_alms",
+            action=argparse.BooleanOptionalAction,
+            help="Save the combined alms, otherwise will need to create them on the fly",
+        )
 
         # ML trainer settings
-        parser.add_argument("--data_fraction", type=float)
-        parser.add_argument("--wandb", action=argparse.BooleanOptionalAction)
-        parser.add_argument("--tensorboard", action=argparse.BooleanOptionalAction)
+        parser.add_argument(
+            "--data_fraction",
+            type=float,
+            help="Fraction of data to use for training",
+        )
+        parser.add_argument(
+            "--wandb",
+            action=argparse.BooleanOptionalAction,
+            help="Enable or disable Weights & Biases logging",
+        )
+        parser.add_argument(
+            "--tensorboard",
+            action=argparse.BooleanOptionalAction,
+            help="Enable or disable TensorBoard logging",
+        )
 
         # this allows us to save a copy of the final settings used for the run
         # only really useful for debugging, must be provided by the CLI and not in the settings file
-        parser.add_argument("--save_settings", action="store_true")
+        parser.add_argument(
+            "--save_settings",
+            action="store_true",
+            help="Save a copy of the final settings used for the run",
+        )
 
         if args is None:
             args = sys.argv[1:]
 
-        logger.info("Parsing CLI args: %s", args)
+        logger.debug("Parsing CLI args: %s", args)
         pargs, _ = parser.parse_known_args(args)
         return pargs
 
@@ -180,12 +284,14 @@ class Core:
             return default
 
         if val != default:
-            logger.debug(
-                "Found non-default value for '%s': %s (default: %s)",
-                name,
-                repr(val),
-                repr(default),
-            )
+            # I dont like the cosmo_params printing, so we will ignore it
+            if name != "cosmo_params":
+                logger.debug(
+                    "Found non-default value for '%s': %s (default: %s)",
+                    name,
+                    repr(val),
+                    repr(default),
+                )
         # else:
         #     logger.debug("Found default value for '%s': %s", name, repr(val))
         return val
@@ -232,6 +338,8 @@ class Core:
                     overridden_value,
                 )
 
+        logger.debug("Running with settings: \n%s", json.dumps(settings, indent=2))
+
         # save a copy of the settings file iff --save_settings is set
         if args.save_settings:
             base_dir = os.path.join(self.dirs["base"], "settings")
@@ -244,8 +352,6 @@ class Core:
                     json.dump(self.settings, f, indent=2)
             else:
                 logger.warning("Settings already exists: '%s', not overwriting", file)
-
-        logger.info("Running with settings: \n%s", json.dumps(settings, indent=2))
 
     def _init(self):
         """
@@ -307,10 +413,10 @@ class Core:
         self.fnl_min, self.fnl_max = self._get("fnl_range", (-1000, 1000))
 
         self.shapes = self._get("shapes", "all")
-        if self.shapes == "all":
-            self.shapes = ["local", "equilateral", "orthogonal"]
-        elif isinstance(self.shapes, str):
+        if isinstance(self.shapes, str):
             self.shapes = [self.shapes]
+        if "all" in self.shapes:
+            self.shapes = ["local", "equilateral", "orthogonal"]
 
         self.phi_scale = self._get("phi_scale", 1)
 
@@ -509,96 +615,6 @@ class Core:
         if os.path.exists(self.mc_file):
             logger.debug("Will use KSW saved state from file '%s'", self.mc_file)
 
-    # def init_estimator(self, verbose=False):
-    #     """
-    #     Initializes the estimator for cosmological parameter estimation.
-    #     This method sets up the cosmological parameters, computes the transfer functions,
-    #     and initializes the KSW estimator for bispectrum analysis.
-    #     Parameters:
-    #     -----------
-    #         verbose : bool, optional
-    #             If True, enables verbose logging for debugging purposes. Default is False.
-    #     Attributes:
-    #     -----------
-    #         cosmo : Cosmology
-    #             An instance of the Cosmology class initialized with the given parameters.
-    #         c_ell : ndarray
-    #             The computed C_ell values, either lensed or unlensed, based on the configuration.
-    #         s_ell : ndarray
-    #             The signal C_ell values with noise added and monopole/dipole terms removed.
-    #         estimator : KSW
-    #             An instance of the KSW estimator initialized with the computed bispectra.
-    #     """
-
-    #     # we do local imports since this will not work on the superpod due to mpi issues, but we dont need ksw there anyways
-    #     # TODO: Check install on MP due to module changes to see if this is fixed
-    #     # pylint: disable=C0415
-    #     import camb
-    #     from ksw import Cosmology, Shape, KSW
-
-    #     camb_params = camb.set_params(**self.cosmo_params, verbose=verbose)
-
-    #     if verbose:
-    #         logger.debug(camb_params)
-    #         logger.debug(camb.get_results(camb_params))
-
-    #     self.cosmo: Cosmology = Cosmology(camb_params, verbose)
-
-    #     # we need at least lmax of 300 for this transfer code
-    #     camb_lmax = max(self.lmax + self.lmax_buffer, 300)
-    #     self.cosmo.compute_transfer(camb_lmax, verbose)
-    #     self.cosmo.compute_c_ell()
-
-    #     if self.lensing:
-    #         c_ell_lensed = self.cosmo.c_ell["lensed_scalar"]["c_ell"][: self.nell].T
-    #         self.c_ell_lensed = c_ell_lensed.astype(self.r_dtype)
-
-    #     c_ell = self.cosmo.c_ell["unlensed_scalar"]["c_ell"][: self.nell].T
-    #     self.c_ell = c_ell.astype(self.r_dtype)
-
-    #     ns = self.cosmo_params["ns"]
-    #     ps = self.cosmo_params["pivot_scalar"]
-    #     shape = Shape.prim_local(ns, pivot=ps)
-
-    #     self.cosmo.add_prim_reduced_bispectrum(shape, self.radii)
-
-    #     pols = self.pol_idxs()
-    #     # self.cov = cov = self.b_ell**2 * self.c_ell + self.n_ell
-    #     self.cov = cov = self.c_ell
-
-    #     inoise = np.full(self.n_ell.shape, 1e-16)
-    #     inoise[pols, self.lmin :] = 1 / self.n_ell[pols, self.lmin :]
-
-    #     # icov = np.zeros_like(cov)
-    #     # icov[pols, self.lmin :] = 1 / self.c_ell[pols, self.lmin :]
-    #     # icov = get_itotcov_ell(icov, inoise, self.b_ell)
-    #     # self.icov = icov[pols, pols]
-
-    #     cov = self.b_ell**2 * self.c_ell + self.n_ell
-    #     self.icov = np.zeros_like(cov)
-    #     self.icov[pols, self.lmin :] = 1 / cov[pols, self.lmin :]
-    #     self.icov = self.icov2[pols]
-
-    #     # icov should be  x^icov = S^{-1} (S^{-1} + P^H N^{-1} P)^{-1} P^H N^{-1} P s,
-    #     # where data = P s + n, where s are the spherical harmonic coefficients
-    #     # of the signal. P = M Y B, where B is the beam, Y is spherical harmonic
-    #     # synthesis (alm2map) and M is the pixel mask and any custom filters.
-    #     # N^{-1} and S^{-1} are the inverse noise and signal covariance matrices,
-    #     # respectively. ^H denotes the Hermitian transpose.
-    #     self.estimator: KSW = KSW(
-    #         self.cosmo.red_bispectra,
-    #         self.icov_func,
-    #         self.lmax,
-    #         self.pols,
-    #         self.precision,
-    #     )
-
-    # def icov_func(self, alm):
-    #     ret = np.zeros_like(alm)
-    #     for pol in range(ret.shape[0]):
-    #         ret[pol] = hp.almxfl(alm[pol], self.icov[pol])
-    #     return ret
-
     def pol_idxs(self, keep_b=False, keep_te=False, pretrimmed=False):
         """
         Get the polarization indices based on the configuration settings.
@@ -658,54 +674,3 @@ class Core:
 
     def should_plot(self):
         return self.plot and self.slurm.is_main
-
-
-# def get_itotcov_ell(icov_signal_ell, icov_noise_ell=None, b_ell=None):
-#     """
-#     Combine signal and noise power spectra into total inverse
-#     isotropic covariance: S^-1 (S^-1 + B N^-1 B)^-1 B N^-1 B
-#     = (S + B^-1 N B^-1)^-1.
-
-#     Taken from Adri's KSW code
-
-#     Parameters
-#     ----------
-#     icov_signal_ell : (npol, npol, nell) or (npol, nell) array
-#         Inverse signal covariance
-#     icov_noise_ell : (npol, npol, nell) or (npol, nell) array
-#         Inverse noise covariance matrix
-#     b_ell : (npol, nell) array
-#         Beam transfer function.
-
-#     Returns
-#     -------
-#     itotcov_ell : (npol, npol, nell) array
-#         Total inverse covariance matrix.
-#     """
-#     if icov_noise_ell is None:
-#         return icov_signal_ell.copy()
-
-#     # Check if icov_signal_ell is (npol, nell) and convert to (npol, npol, nell)
-#     if icov_signal_ell.ndim == 2:
-#         npol, _ = icov_signal_ell.shape
-#         icov_signal_ell = (
-#             icov_signal_ell[:, np.newaxis, :] * np.eye(npol)[:, :, np.newaxis]
-#         )
-
-#     # Check if icov_noise_ell is (npol, nell) and convert to (npol, npol, nell)
-#     if icov_noise_ell.ndim == 2:
-#         npol, _ = icov_noise_ell.shape
-#         icov_noise_ell = (
-#             icov_noise_ell[:, np.newaxis, :] * np.eye(npol)[:, :, np.newaxis]
-#         )
-
-#     if b_ell is not None:
-#         b_ell = b_ell * np.eye(b_ell.shape[0])[:, :, np.newaxis]
-#         in_mat = np.einsum("ijl, jkl, kol -> iol", b_ell, icov_noise_ell, b_ell)
-#     else:
-#         in_mat = icov_noise_ell
-
-#     imat = np.linalg.inv((icov_signal_ell + in_mat).T).T
-#     itotcov_ell = np.einsum("ijl, jkl -> ikl", imat, in_mat)
-#     itotcov_ell = np.einsum("ijl, jkl -> ikl", icov_signal_ell, itotcov_ell)
-#     return itotcov_ell
