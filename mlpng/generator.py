@@ -28,7 +28,7 @@ mpi_rank = mpi_comm.Get_rank()
 mpi_size = mpi_comm.Get_size()
 mpi_root = mpi_rank == 0
 
-logger = setup_logging("mlpng.generator", level=logging.DEBUG)
+logger = setup_logging("mlpng.generator", level=logging.DEBUG, root=mpi_root)
 
 def integrand(alm, alpha_l, bl_div_cl, lmax, nside, upscale=False):
     """
@@ -118,7 +118,7 @@ class Generator(Core):
         # icov = self.get_itotcov_ell(icov, inoise, self.b_ell)
         # self.icov2 = icov[pols, pols]
 
-    def get_ksw(self, shape):
+    def get_ksw(self, shape, step=True, step_alms=None):
         ns = self.cosmo_params["ns"]
         ps = self.cosmo_params["pivot_scalar"]
 
@@ -142,13 +142,29 @@ class Generator(Core):
         # synthesis (alm2map) and M is the pixel mask and any custom filters.
         # N^{-1} and S^{-1} are the inverse noise and signal covariance matrices,
         # respectively. ^H denotes the Hermitian transpose.
-        return KSW(
+        ksw = KSW(
             self.cosmo.red_bispectra,
             self.icov_func,
             self.lmax,
             self.pols,
             self.precision,
         )
+
+        if step:
+            if step_alms is None:
+                step_alms = self.generate_alm(nsims=self.mc_steps)
+            nsteps = len(step_alms)
+
+            # step through the mc to initialize
+            # logger.debug("Initializing KSW with %s steps", nsteps)
+            ksw.step_batch(
+                lambda i: self.icov_func(step_alms[i, self.pol_idxs()]),
+                range(nsteps),
+                mpi_comm,
+                theta_batch=int(np.floor(1.5 * self.lmax + 1)) // mpi_size,
+            )
+            
+        return ksw
 
     def icov_func(self, alm, icov=None):
         if icov is None:
@@ -375,17 +391,7 @@ class Generator(Core):
         theta_batch = int(np.floor(1.5 * self.lmax + 1)) // mpi_size
         pols = self.pol_idxs()
 
-        logger.debug("Initializing KSW with %s steps", self.mc_steps)
-        alm_steps = self.generate_alm(nsims=self.mc_steps)
-        ksw = self.get_ksw(shape)
-
-        # step through the mc to initialize
-        ksw.step_batch(
-            lambda i: self.icov_func(alm_steps[i, pols]),
-            range(self.mc_steps),
-            mpi_comm,
-            theta_batch=theta_batch,
-        )
+        ksw = self.get_ksw(shape, step=True)
 
         # get our sim values now that MC is setup
         alm_ng = np.zeros_like(alms[:, pols])

@@ -126,13 +126,13 @@ def combine_data(directory, base_name, ext=".hdf5", remove_files=True, expected=
         for idx, file in tqdm(
             enumerate(files_to_combine), desc="Processing files", total=expected
         ):
-            logger.info("Processing file %s", file)
+            logger.debug("Processing file %s", file)
             with h5py.File(file, "r") as hf:
                 recursive_copy(hf, hf_combined, expected, idx)
 
     # Move the combined file to remove the .nc extension
     # This will also override any existing file with the same name
-    logger.info("Moving combined file to %s", os.path.join(directory, base_name + ext))
+    logger.debug("Moving combined file to %s", os.path.join(directory, base_name + ext))
     os.replace(
         nc_file,
         os.path.join(directory, base_name + ext),
