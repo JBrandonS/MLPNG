@@ -28,7 +28,7 @@ mpi_rank = mpi_comm.Get_rank()
 mpi_size = mpi_comm.Get_size()
 mpi_root = mpi_rank == 0
 
-logger = setup_logging("mlpng.generator", level=logging.DEBUG, root=mpi_root)
+logger = setup_logging("mlpng.generator", level=logging.DEBUG)
 
 def integrand(alm, alpha_l, bl_div_cl, lmax, nside, upscale=False):
     """
@@ -155,8 +155,6 @@ class Generator(Core):
                 step_alms = self.generate_alm(nsims=self.mc_steps)
             nsteps = len(step_alms)
 
-            # step through the mc to initialize
-            # logger.debug("Initializing KSW with %s steps", nsteps)
             ksw.step_batch(
                 lambda i: self.icov_func(step_alms[i, self.pol_idxs()]),
                 range(nsteps),
