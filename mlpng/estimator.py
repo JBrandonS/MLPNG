@@ -27,6 +27,8 @@ class Estimator(Generator):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
+        logger.debug("MPI rank %s of %s, is root: %s", mpi_rank, mpi_size, mpi_root)
+
         # the KSW code requires the total_sims to be >= mpi_size
         # best usage would have total_sims % mpi_size == 0, but not required
         assert (
@@ -83,7 +85,10 @@ class Estimator(Generator):
                 alm_l = data["alm_l"][: self.num_estimates, self.pol_idxs()]
                 alm_nl = data[lstr][shape]["alm_nl"][: self.num_estimates]
                 fnl = np.array(data["fnl"][: self.num_estimates])
-                fisher = data[lstr][shape]["fisher"][0]  # TODO fix
+
+                # TODO fix the need to get only the first,
+                # maybe we do need to process all maps into one fisher?
+                fisher = data[lstr][shape]["fisher"][0]
 
                 logger.debug(
                     "Fisher: %s, standard deviation: %s", fisher, 1 / np.sqrt(fisher)
