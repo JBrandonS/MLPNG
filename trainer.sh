@@ -4,8 +4,7 @@
 
 # The settings files to use for the sims. These should be found in settings/*.json
 SETTINGS=(
-    "n32"
-    # "elsner"
+    "n128"
 )
 
 # CLI args to change the command ran, helps prevent needing to change the settings file for small / test changes
@@ -13,15 +12,14 @@ SETTINGS=(
 # see scripts/core.parse_args for more info and available arguments, or to add more
 # some additional args are allowed for the trainer see scripts/models/modelcore.py
 ARGS=(
-    "--nsims" "1000"
-    # "--lensing"
-    # "--no-noise"
+    "--nsims" "10000"
     "--pols" "T"
-    # "--no-summary"
-    # "--base_name" "jorik-new"
-    # "--fnl_range" "-100" "100"
+    "--fnl_range" "-1000" "1000"
+    "--base_name" "+_ps1"
+    "--phi_scale" "1"
     "--tb"
     # "--wandb"
+    "--data_fraction" "1.0"
     "--narray" "1"
 )
 

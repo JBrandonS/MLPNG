@@ -1,65 +1,166 @@
+import os
 import logging
-import h5py
-import numpy as np
+import healpy as hp
 
-from keras.utils import Sequence
+import tensorflow as tf
+import tensorflow_io as tfio
+from tensorflow import TensorSpec
+from tensorflow.data import Dataset
+from tensorflow.data.experimental import assert_cardinality
 
 logger = logging.getLogger(__name__)
 
 
-class HDF5Dataset(Sequence):
+def rotate_ds(inputs, y):
+    @tf.py_function(Tout=tf.float32)  # type: ignore
+    def rotate_map(inputs):
+        lat_angle = tf.random.uniform([1], -90.0, 90.0)  # type: ignore
+        lon_angle = tf.random.uniform([1], -180.0, 180.0)  # type: ignore
+        rotator = hp.Rotator(rot=[lat_angle, lon_angle], deg=True, inv=True)
+        x = hp.reorder(inputs, n2r=True)
 
-    def __init__(
-        self,
-        file_path,
-        x_name="map",
-        y_name="fnl",
-        start_idx=0,
-        end_idx=None,
-        verbose=True,
-    ):
-        super().__init__()
+        # I have had issues in the past with the pixel weights not being downloaded due to server errors
+        # disable here if you get an error with the file not being found on astropy's servers
+        x = rotator.rotate_map_alms(x, use_pixel_weights=False)
+        return hp.reorder(x, r2n=True)
 
-        # setup some attributes
-        self.file_path = file_path
-        self.file = h5py.File(file_path, mode="r", swmr=True, locking=False)
+    x = tf.map_fn(rotate_map, inputs)
+    x.set_shape(inputs.shape)  # type: ignore
+    return x, y
 
-        # we dont actually limit the data here because that will load into memory
-        self.x_data = self.file[x_name]
-        self.y_data = self.file[y_name]
-        self.start_idx = start_idx
-        self.end_idx = end_idx if end_idx is not None else self.x_data.shape[0]  # type: ignore
-        if verbose:
-            logger.debug("Loaded HDF5 dataset: '%s'", file_path)
-            logger.debug("Found keys: %s", self.file.keys())
-            logger.debug("Data shape: (%s, %s)", self.x_data.shape, self.y_data.shape)  # type: ignore
 
-    def __len__(self):
-        # we batch later so this is the len of the full DS
-        return self.end_idx - self.start_idx
+# @tf.function(jit_compile=True)
+def tfds_from_hdf5(
+    core,
+    x_name="/map",
+    y_name="/fnl",
+    train_size=0.8,
+    val_size=0.1,
+    test_size=0.1,
+    data_fraction=1.0,
+    shuffle=True,
+    reshuffle=True,
+    batch_size=64,
+    buffer=None,
+    cache_prefix="",
+):
+    # hackish spec TODO
+    npix = hp.nside2npix(core.nside)
+    x_spec = TensorSpec(shape=[core.ndups, core.npols, npix], dtype=core.r_dtype)
+    if y_name == "/fnl":
+        y_spec = TensorSpec(shape=[core.ndups, 1, 1], dtype=core.r_dtype)
+    else:
+        y_spec = TensorSpec(shape=[core.ndups, core.npols, npix], dtype=core.r_dtype)
 
-    def __getitem__(self, idx):
-        # get the indexes for the batch
-        idx += self.start_idx
-        data = np.array(self.x_data[idx])  # type: ignore
-        labels = np.array(self.y_data[idx]).flatten()  # type: ignore
-        return data, labels
+    ds_x: Dataset = tfio.IODataset.from_hdf5(core.file, x_name, x_spec)
+    ds_y: Dataset = tfio.IODataset.from_hdf5(core.file, y_name, y_spec)
 
-    def split(self, train_size=0.8, val_size=0.1, test_size=0.1):
-        # split the data into train, val, test
-        n = self.end_idx - self.start_idx
-        train_end = self.start_idx + int(n * train_size)
-        val_end = train_end + int(n * val_size)
-        test_end = np.min((val_end + int(n * test_size), self.end_idx))
+    dataset = tf.data.Dataset.zip(ds_x, ds_y)
+    dataset = dataset.apply(assert_cardinality(core.nsims * core.narray))
 
-        logger.debug(
-            "Splitting data into train: %s, val: %s, test: %s",
-            train_end - self.start_idx,
-            val_end - train_end,
-            test_end - val_end,
-        )
+    # Split into train/val/test sets
+    train, val, test = split_ds(
+        dataset,
+        train_size * data_fraction,
+        val_size * data_fraction,
+        test_size * data_fraction,
+    )
 
-        train = HDF5Dataset(self.file_path, start_idx=self.start_idx, end_idx=train_end)
-        val = HDF5Dataset(self.file_path, start_idx=train_end, end_idx=val_end)
-        test = HDF5Dataset(self.file_path, start_idx=val_end, end_idx=test_end)
-        return train, val, test
+    train = process_ds(
+        train,
+        batch_size,
+        buffer=buffer,
+        cache_file_suffix=f"{core.name}/{cache_prefix}train",
+        shuffle=shuffle,
+        reshuffle=reshuffle,
+    )
+    val = process_ds(
+        val,
+        batch_size,
+        buffer=buffer,
+        cache_file_suffix=f"{core.name}/{cache_prefix}val",
+        shuffle=shuffle,
+        reshuffle=reshuffle,
+    )
+    test = process_ds(
+        test,
+        batch_size,
+        buffer=buffer,
+        cache_file_suffix=f"{core.name}/{cache_prefix}test",
+        shuffle=False,
+    )
+    return train, val, test
+
+
+def split_ds(ds, train_frac=0.8, val_frac=0.1, test_frac=0.1):
+    ds_len = ds.cardinality().numpy()
+    train_len = int(ds_len * train_frac)
+    val_len = int(ds_len * val_frac)
+    test_len = int(ds_len * test_frac)
+    test_start = train_len + val_len
+
+    logger.debug(
+        "ds_len %s, total split len %s, train %s, val %s, test %s",
+        ds_len,
+        train_len + val_len + test_len,
+        train_len,
+        val_len,
+        test_len,
+    )
+
+    train = ds.take(train_len).apply(assert_cardinality(train_len))
+    val = ds.skip(train_len).take(val_len).apply(assert_cardinality(val_len))
+    test = ds.skip(test_start).take(test_len).apply(assert_cardinality(test_len))
+    return train, val, test
+
+
+def process_ds(
+    ds,
+    batch_size=64,
+    cache=True,
+    unique_cache=True,
+    cache_file_suffix=None,
+    shuffle=True,
+    reshuffle=True,
+    buffer=None,
+    prefetch=True,
+):
+    # remove the ndups axis
+    ds = ds.unbatch()
+
+    if cache:
+        if cache_file_suffix is not None:
+            if unique_cache:
+                cache_file = f"{os.environ.get('SCRATCH')}/tfcache/{os.environ.get('SLURM_JOB_ID')}/{cache_file_suffix}"
+            else:
+                cache_file = f"{os.environ.get('SCRATCH')}/tfcache/{cache_file_suffix}"
+            os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+
+            logger.debug(f"Caching to {cache_file}")
+            ds = ds.cache(cache_file)
+        else:
+            logger.debug("Caching to memory")
+            ds = ds.cache()
+
+    if shuffle:
+        if buffer is None:
+            buffer = min(batch_size * 10, ds.cardinality().numpy())
+        ds = ds.shuffle(buffer_size=buffer, reshuffle_each_iteration=reshuffle)
+
+    ds = ds.batch(
+        batch_size,
+        drop_remainder=True,
+        num_parallel_calls=tf.data.AUTOTUNE,
+        deterministic=False,
+    )
+
+    # if rotate:
+    #     ds = ds.map(
+    #         lambda x, y: rotate_ds(x, y),
+    #         # num_parallel_calls=tf.data.AUTOTUNE,
+    #     )
+
+    if prefetch:
+        ds = ds.prefetch(tf.data.AUTOTUNE)
+
+    return ds
