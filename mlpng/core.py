@@ -406,7 +406,7 @@ class Core:
 
         # main parameters
         self.nside = self._get("nside", 128)
-        self.lensing = self._get("lensing", False)
+        self.lensing = self._get("lensing", True)
         self.nsims = self._get("nsims", 100)
         self.ndups = self._get("ndups", 25)
         self.narray = self._get("narray", self.slurm.task_count or 1)
@@ -422,8 +422,10 @@ class Core:
 
         self.force_gen = self._get("force_generation", False)
         self.force_ksw = self._get("force_ksw", False)
+        self.mc_steps = self._get("mc_steps", 300)
         self.num_estimates = self._get(
-            "num_estimates", min(self.nsims * self.narray, 1000)
+            "num_estimates",
+            min(self.nsims * self.narray, 1000),
         )
         self.plot = self._get("plot", True)
         self.save_alms = self._get("save_alms", False)
@@ -609,11 +611,6 @@ class Core:
 
         self.file = os.path.join(self.dirs["data"], f"{self.name}{tstr}.hdf5")
         self.mc_file = os.path.join(self.dirs["mc"], f"{self.name}.hdf5")
-        self.mc_steps = self._get("mc_steps", 500)
-
-        logger.debug("Using data file: %s", self.file)
-        if os.path.exists(self.mc_file):
-            logger.debug("Will use KSW saved state from file '%s'", self.mc_file)
 
     def pol_idxs(self, keep_b=False, keep_te=False, pretrimmed=False):
         """
@@ -664,6 +661,8 @@ class Core:
         return os.path.join(base_dir, f"{self.slurm.job}_{name}{extension}")
 
     def check_existing_data_file(self):
+        """Check if the data file already exists and handle it based on the `force_gen` setting.
+        If the file exists and `force_gen` is True, the file is removed."""
         if os.path.exists(self.file):
             if self.force_gen:
                 logger.info("Removing existing data file '%s'", self.file)
@@ -673,4 +672,5 @@ class Core:
                 sys.exit(0)
 
     def should_plot(self):
+        """Determine if plotting should be performed based on the `plot` setting and the SLURM job status."""
         return self.plot and self.slurm.is_main

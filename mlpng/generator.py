@@ -22,6 +22,7 @@ from .utils import save_data, setup_logging, make_alm_plots, remove_mono_dipole
 
 from mpi4py import MPI
 
+# this is suported but unused, would improve the KSW code used but greatly increase the memory usage
 mpi_comm = MPI.COMM_WORLD
 mpi_rank = mpi_comm.Get_rank()
 mpi_size = mpi_comm.Get_size()
@@ -110,12 +111,12 @@ class Generator(Core):
         self.icov = np.zeros_like(self.cov)
         self.icov[pols, self.lmin :] = 1 / self.cov[pols, self.lmin :]
 
-        icov = np.zeros_like(self.cov)
-        icov[pols, self.lmin :] = 1 / self.c_ell[pols, self.lmin :]
-        inoise = np.full(self.n_ell.shape, 1e-16)
-        inoise[pols, self.lmin :] = 1 / self.n_ell[pols, self.lmin :]
-        icov = self.get_itotcov_ell(icov, inoise, self.b_ell)
-        self.icov2 = icov[pols, pols]
+        # icov = np.zeros_like(self.cov)
+        # icov[pols, self.lmin :] = 1 / self.c_ell[pols, self.lmin :]
+        # inoise = np.full(self.n_ell.shape, 1e-16)
+        # inoise[pols, self.lmin :] = 1 / self.n_ell[pols, self.lmin :]
+        # icov = self.get_itotcov_ell(icov, inoise, self.b_ell)
+        # self.icov2 = icov[pols, pols]
 
     def get_ksw(self, shape):
         ns = self.cosmo_params["ns"]
@@ -327,6 +328,7 @@ class Generator(Core):
         return alm_nl
 
     def lens_alms(self, alm):
+        """This function lenses the alms using the lenspyx library."""
         alm_lensed = np.zeros_like(alm)
 
         # PP PT PE
@@ -342,38 +344,39 @@ class Generator(Core):
         geom_info = ("healpix", {"nside": self.nside})
         geom = lenspyx.get_geom(geom_info)
 
-        def _work(sim, dup):
+        def looper():
+            if len(alm.shape) == 4:
+                # we have a 4D array, so we need to loop over the sims and dups
+                for sim in range(self.nsims):
+                    for dup in range(self.ndups):
+                        yield alm[sim, dup], alm_lensed[sim, dup]
+            else:
+                for sim in range(self.nsims):
+                    yield alm[sim], alm_lensed[sim]
+
+        for a, lensed in looper():
             lenmap = lenspyx.alm2lenmap(
-                alm[sim, dup], dlm, geometry=geom_info, nthreads=self.slurm.n_cpus
+                a,
+                dlm,
+                geometry=geom_info,
+                nthreads=self.slurm.n_cpus,
             )
-            lenmap = np.ascontiguousarray(lenmap)
-
-        for sim in range(self.nsims):
-            for dup in range(self.ndups):
-                lenmap = lenspyx.alm2lenmap(
-                    alm[sim, dup], dlm, geometry=geom_info, nthreads=self.slurm.n_cpus
-                )
-                lenmap = np.ascontiguousarray(lenmap)  # convert from tuple to array
-
-                alm_lensed[sim, dup, 0] = geom.map2alm(
-                    lenmap[0].copy(), self.lmax, self.lmax, nthreads=self.slurm.n_cpus
-                )
+            lenmap = np.ascontiguousarray(lenmap)  # convert from tuple to array
+            lensed[0] = geom.map2alm(
+                lenmap[0],
+                self.lmax,
+                self.lmax,
+                nthreads=self.slurm.n_cpus,
+            )
         return alm_lensed
 
-    # def get_fisher_iso(self, lensed=False):
-    #     fisher = self.ksw.compute_fisher_isotropic(
-    #         self.icov[self.pol_idxs()], comm=None
-    #     )
-    #     logger.debug("%s iso fisher: %s", "lensed" if lensed else "unlensed", fisher)
-    #     return np.array([fisher]).astype(self.r_dtype)
-
     def generate_alm_nl_shape(self, alms, shape):
+        """This function generates the non-gaussian alms for a given shape using SZ MC method"""
         theta_batch = int(np.floor(1.5 * self.lmax + 1)) // mpi_size
         pols = self.pol_idxs()
 
-        alm_steps = self.generate_alm(nsims=self.mc_steps)
-
         logger.debug("Initializing KSW with %s steps", self.mc_steps)
+        alm_steps = self.generate_alm(nsims=self.mc_steps)
         ksw = self.get_ksw(shape)
 
         # step through the mc to initialize
@@ -392,7 +395,7 @@ class Generator(Core):
 
         # get fisher and store as an array for saving
         fisher = np.array([ksw.compute_fisher()]).astype(self.r_dtype)
-        logger.debug("calculated fisher: %s, std div: %s", fisher, np.sqrt(1 / fisher))
+        logger.debug("Calculated fisher: %s, std div: %s", fisher, np.sqrt(1 / fisher))
 
         return alm_ng, fisher
 
@@ -420,7 +423,7 @@ class Generator(Core):
         pol_idxs = self.pol_idxs()
 
         alm_l = self.generate_alm()
-        fnls = self.rng.uniform(self.fnl_min, self.fnl_max, (self.nsims, 1))
+        fnls = self.rng.uniform(self.fnl_min, self.fnl_max, (self.nsims, self.ndups, 1))
 
         sdata = {}
         sdata["alm_l"] = alm_l[:, pol_idxs].astype(self.c_dtype)
@@ -431,32 +434,26 @@ class Generator(Core):
         for shape in self.shapes:
             logger.info("Starting %s", shape)
 
+            # TODO: look at batching to reduce memory usage
+            # for step in trange(self.nbatches, desc=f"alm_ng {shape}"):
+            # ... need to redo the code for nsims to be batch_size = nsims / nbatches
+
             alm_nl, fisher = self.generate_alm_nl_shape(alm_l, shape)
-            logger.debug(
-                "alm_nl shape: %s, fisher shape: %s", alm_nl.shape, fisher.shape
-            )
 
             # finally combine into the full alms and remove the monopole and dipole terms
             alms = alm_l[:, None, pol_idxs] + fnls[..., None] * alm_nl[:, None]
             alms = remove_mono_dipole(alms, inplace=True)
             alms = np.ascontiguousarray(alms)
 
+            if self.should_plot():
+                logger.debug("Making alm plots for %s", shape)
+                make_alm_plots(self, shape, alm_l, alm_nl, alms[:, 0])
+
             sdata = {"unlensed": {shape: {}}}
             sdata["unlensed"][shape]["alm_nl"] = alm_nl.astype(self.c_dtype)
             sdata["unlensed"][shape]["fisher"] = fisher.astype(self.r_dtype)
             save_data(self.file, sdata, verbose=True)
-
-            if self.should_plot():
-                logger.info("Making alm plots for %s", shape)
-                logger.debug(
-                    "alm_l shape: %s, alm_nl shape: %s, alms shape: %s",
-                    alm_l.shape,
-                    alm_nl.shape,
-                    alms.shape,
-                )
-                make_alm_plots(self, alm_l, alm_nl, alms[:, 0])
-
-            del alm_nl, fisher, sdata
+            del sdata
 
             logger.debug("Getting maps in nest ordering")
             maps = np.zeros(self.map_shape, dtype=self.r_dtype)
@@ -469,54 +466,45 @@ class Generator(Core):
 
             # we go ahead and save some data so it can be freed, needed for nside > 512 to have good memory usage
             sdata = {"unlensed": {shape: {}}}
-            # sdata["unlensed"][shape]["fnl"] = fnls.astype(self.r_dtype)
-            # sdata["unlensed"][shape]["alm_nl"] = alm_nl.astype(self.c_dtype)
             sdata["unlensed"][shape]["map"] = maps
-            # sdata["unlensed"][shape]["fisher"] = fisher.astype(self.r_dtype)
             if self.save_alms:
                 sdata["unlensed"][shape]["alm"] = alms.astype(self.c_dtype)
             save_data(self.file, sdata)
-            del maps, alms, sdata
+            del maps, sdata
 
-            # if self.lensing:
-            #     logger.info("Starting lensing")
-            #     alm_l_lensed = self.lens_alms(alm_l)
-            #     alm_nl_lensed = self.lens_alms(alm_nl)
-            #     alms_lensed = self.lens_alms(alms)
+            if self.lensing:
+                logger.info("Starting lensing")
+                alm_l_lensed = self.lens_alms(alm_l)
+                alm_nl_lensed = self.lens_alms(alm_nl)
+                alms_lensed = self.lens_alms(alms)
 
-            #     logger.debug(
-            #         "l shape: %s, nl shape: %s, alms shape: %s",
-            #         alm_l_lensed.shape,
-            #         alm_nl_lensed.shape,
-            #         alms_lensed.shape,
-            #     )
+                maps_lensed = np.zeros(self.map_shape, dtype=self.r_dtype)
+                for sim, dup in product(range(self.nsims), range(self.ndups)):
+                    rmap = hp.alm2map(
+                        alms_lensed[sim, dup], nside=self.nside, pol=self.use_pols
+                    )
+                    maps_lensed[sim, dup] = hp.reorder(rmap, r2n=True)
 
-            #     maps_lensed = np.zeros(self.map_shape, dtype=self.r_dtype)
-            #     for sim, dup in product(range(self.nsims), range(self.ndups)):
-            #         rmap = hp.alm2map(
-            #             alms_lensed[sim, dup], nside=self.nside, pol=self.use_pols
-            #         )
-            #         maps_lensed[sim, dup] = hp.reorder(rmap, r2n=True)
+                if self.should_plot():
+                    make_alm_plots(
+                        self, shape, alms=alms_lensed[:, 0, pol_idxs], lensed=True
+                    )
 
-            #     if self.should_plot():
-            #         make_alm_plots(self, alms=alms_lensed[:, 0, pol_idxs], lensed=True)
+                # we transpose to get into a channels-last format, better for AI
+                map_data = np.transpose(maps_lensed, (0, 1, 3, 2)).astype(self.r_dtype)
 
-            #     # we transpose to get into a channels-last format, better for AI
-            #     map_data = np.transpose(maps_lensed, (0, 1, 3, 2)).astype(self.r_dtype)
-
-            #     sdata = {"lensed": {shape: {}}}
-            #     # this is the same for lensed and unlensed
-            #     sdata["lensed"][shape]["fnl"] = fnls.astype(self.r_dtype)
-            #     sdata["lensed"]["alm_l"] = alm_l_lensed.astype(self.c_dtype)
-            #     sdata["lensed"][shape]["alm_nl"] = alm_nl_lensed.astype(self.c_dtype)
-            #     sdata["lensed"][shape]["map"] = map_data
-            #     if self.save_alms:
-            #         alm_data = alms_lensed.astype(self.c_dtype)
-            #         sdata["lensed"][shape]["alm"] = alm_data
-            #     if self.slurm.is_main:
-            #         #   TODO: Add fisher calculation for lensed
-            #         sdata["lensed"][shape]["fisher"] = fisher.astype(self.r_dtype)
-            #     save_data(self.file, sdata)
+                sdata = {"lensed": {shape: {}}}
+                sdata["lensed"][shape]["fnl"] = fnls.astype(self.r_dtype)
+                sdata["lensed"]["alm_l"] = alm_l_lensed.astype(self.c_dtype)
+                sdata["lensed"][shape]["alm_nl"] = alm_nl_lensed.astype(self.c_dtype)
+                sdata["lensed"][shape]["map"] = map_data
+                if self.save_alms:
+                    alm_data = alms_lensed.astype(self.c_dtype)
+                    sdata["lensed"][shape]["alm"] = alm_data
+                if self.slurm.is_main:
+                    # TODO: check fisher calculation for lensed
+                    sdata["lensed"][shape]["fisher"] = fisher.astype(self.r_dtype)
+                save_data(self.file, sdata)
 
             logger.info("Finished %s!", shape)
 

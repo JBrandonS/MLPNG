@@ -1,4 +1,3 @@
-import os
 import logging
 
 import healpy as hp
@@ -44,7 +43,7 @@ def finalize_plot(
 
 def plot_cl(
     core,
-    cls,
+    c_ells,
     lmin=None,
     lmax=None,
     title="Angular power spectrum from cl",
@@ -65,7 +64,7 @@ def plot_cl(
 
     ells = np.arange(lmin, lmax + 1)
     scale = (ells * (ells + 1) / 2 / np.pi) if scale else 1
-    cls = np.atleast_2d(cls)[:, lmin : lmax + 1]
+    c_ells = np.atleast_2d(c_ells)[:, lmin : lmax + 1]
 
     if labels is not None:
         if isinstance(labels, str):
@@ -73,13 +72,13 @@ def plot_cl(
 
         if len(labels) != core.npols:
             raise ValueError(
-                f"Number of labels must match number of Cl arrays. Got {len(labels)} labels and {core.npols} Cl arrays of shape {np.shape(cls)}."
+                f"Number of labels must match number of Cl arrays. Got {len(labels)} labels and {core.npols} Cl arrays of shape {np.shape(c_ells)}."
             )
     else:
         labels = [f"{core.pols[i]}" for i in range(core.npols)]
 
     for pol in range(core.npols):
-        plot_func(ells, scale * cls[pol, :], label=labels[pol], linestyle=":")
+        plot_func(ells, scale * c_ells[pol, :], label=labels[pol], linestyle=":")
 
         # we need to get the correct pol for the camb and noise
         cpol = core.pol_idxs()[pol]
@@ -462,7 +461,7 @@ def plot_elsner_vs(
     plt.legend()
 
 
-def make_alm_plots(core, alm_l=None, alm_ng=None, alms=None, lensed=False):
+def make_alm_plots(core, shape, alm_l=None, alm_ng=None, alms=None, lensed=False):
     """
     Generate and save various alm plots for comparison and testing.
 
@@ -474,7 +473,9 @@ def make_alm_plots(core, alm_l=None, alm_ng=None, alms=None, lensed=False):
     """
     logger.debug("Generating alm plots")
     sim = core.rng.integers(core.nsims)  # get random sim idx
-    lstr = "_lensed" if lensed else ""
+    l_str = f"_{shape}"
+    if lensed:
+        l_str += "_lensed"
 
     # plot a few comparison with different functions to get views
     idx = core.rng.integers(1, 1001)
@@ -484,7 +485,7 @@ def make_alm_plots(core, alm_l=None, alm_ng=None, alms=None, lensed=False):
             alm_l[sim],
             alm_ng[sim],
             index=idx,
-            save_file=core.get_plot_file(f"ecomp{lstr}"),
+            save_file=core.get_plot_file(f"ecomp{l_str}"),
             plot_func=plt.plot,
         )
         plot_elsner_comp(
@@ -492,7 +493,7 @@ def make_alm_plots(core, alm_l=None, alm_ng=None, alms=None, lensed=False):
             alm_l[sim],
             alm_ng[sim],
             index=idx,
-            save_file=core.get_plot_file(f"ecomp_log{lstr}"),
+            save_file=core.get_plot_file(f"ecomp_log{l_str}"),
             plot_func=plt.loglog,
         )
         plot_elsner_comp(
@@ -500,7 +501,7 @@ def make_alm_plots(core, alm_l=None, alm_ng=None, alms=None, lensed=False):
             alm_l[sim],
             alm_ng[sim],
             index=idx,
-            save_file=core.get_plot_file(f"ecomp_semilogy{lstr}"),
+            save_file=core.get_plot_file(f"ecomp_semilogy{l_str}"),
             plot_func=plt.semilogy,
         )
 
@@ -508,7 +509,7 @@ def make_alm_plots(core, alm_l=None, alm_ng=None, alms=None, lensed=False):
         plot_cl_alm(
             core,
             alms[sim],
-            save_file=core.get_plot_file(f"{sim}_alm{lstr}"),
+            save_file=core.get_plot_file(f"{sim}_alm{l_str}"),
             ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}$",
             plot_camb=True,
             plot_full_camb=True,
@@ -518,7 +519,7 @@ def make_alm_plots(core, alm_l=None, alm_ng=None, alms=None, lensed=False):
         plot_cl_alm(
             core,
             alm_l[sim],
-            save_file=core.get_plot_file(f"{sim}_alm_l{lstr}"),
+            save_file=core.get_plot_file(f"{sim}_alm_l{l_str}"),
             ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}^{L}$",
             plot_camb=True,
             plot_full_camb=True,
@@ -528,7 +529,7 @@ def make_alm_plots(core, alm_l=None, alm_ng=None, alms=None, lensed=False):
         plot_cl_alm(
             core,
             alm_ng[sim],
-            save_file=core.get_plot_file(f"{sim}_alm_ng{lstr}"),
+            save_file=core.get_plot_file(f"{sim}_alm_ng{l_str}"),
             ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}^{NG}$",
         )
 
