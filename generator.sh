@@ -8,10 +8,10 @@
 # list of the settings file to be used, will be ran in order
 # these must be in settings/ and have the .json extension
 SETTINGS=(
-  # "n32"
-  "n64"
-  "n128"
-  "n256"
+  "n32"
+  # "n64"
+  # "n128"
+  # "n256"
   
   # "n512"
   # "n1024"
@@ -27,8 +27,8 @@ SETTINGS=(
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
 ARGS=(
   "--nsims" "100"
-  # "--force_gen"
-  # "--pols" "T"
+  "--force_gen"
+  "--pols" "T"
   # "--base_name" "+_ortho"
   # "--fnl_range" "-1000" "1000"
   # "--shape" "local"
@@ -36,7 +36,8 @@ ARGS=(
   # "--shape" "orthogonal"
   # "--no-save_alms"
   # "--phi_scale" "1"
-  "--narray" "100"
+  # "--lensing"
+  "--narray" "1"
 )
 
 # override the slurm array settings for narray, only used in data generation

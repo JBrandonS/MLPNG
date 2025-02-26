@@ -7,9 +7,7 @@ import os
 import healpy as hp
 import numpy as np
 
-from .utils import Slurm
-
-logger = logging.getLogger(__name__)
+from .utils import Slurm, setup_logging
 
 class Core:
     """
@@ -78,7 +76,7 @@ class Core:
 
     _cosmo_defaults = {"As": 2.13e-09, "ns": 0.9624, "pivot_scalar": 0.05}
 
-    def __init__(self, argv=None):
+    def __init__(self, argv=None, log_level=logging.DEBUG):
         """
         Initializes a new instance of the `Core` class.
 
@@ -86,6 +84,7 @@ class Core:
             argv (list): List of the CLI Args
             If None, sys.argv will be used.
         """
+        self.logger = setup_logging("mlpng.core", level=log_level)
 
         # init our core object, split for readability
         self._process_settings(argv)
@@ -260,7 +259,7 @@ class Core:
         if args is None:
             args = sys.argv[1:]
 
-        logger.debug("Parsing CLI args: %s", args)
+        self.logger.debug("Parsing CLI args: %s", args)
         pargs, _ = parser.parse_known_args(args)
         return pargs
 
@@ -286,14 +285,14 @@ class Core:
         if val != default:
             # I dont like the cosmo_params printing, so we will ignore it
             if name != "cosmo_params":
-                logger.debug(
+                self.logger.debug(
                     "Found non-default value for '%s': %s (default: %s)",
                     name,
                     repr(val),
                     repr(default),
                 )
         # else:
-        #     logger.debug("Found default value for '%s': %s", name, repr(val))
+        #     self.logger.debug("Found default value for '%s': %s", name, repr(val))
         return val
 
     def _process_settings(self, argv):
@@ -303,7 +302,7 @@ class Core:
         # From there we store the settings in the settings dict attribute
         # We then override the settings with the command line arguments
         # We then set the cosmological parameters to the defaults and override them with the settings
-        logger.info("Loading settings from file '%s'", args.settings_file)
+        self.logger.info("Loading settings from file '%s'", args.settings_file)
         with open(args.settings_file, "r", encoding="utf-8") as f:
             settings = self.settings = json.load(f)
 
@@ -311,7 +310,7 @@ class Core:
         for key, value in vars(args).items():
             # we do not want to save the settings_file or save_settings options, so ignore those
             if value is not None and key not in ["settings_file", "save_settings"]:
-                logger.debug("Forcing setting '%s' to %s due to CLI", key, value)
+                self.logger.debug("Forcing setting '%s' to %s due to CLI", key, value)
                 settings[key] = value
 
         # set the cosmological parameters defaults, and update based on cosmo_params
@@ -323,7 +322,7 @@ class Core:
 
         # This just logs any changes to the defaults, but only if in debug mode
         # Not really needed, but good logs can be helpful
-        if logger.isEnabledFor(logging.DEBUG):
+        if self.logger.isEnabledFor(logging.DEBUG):
             overridden_params = {
                 key: (value, cosmo_params[key])
                 for key, value in self._cosmo_defaults.items()
@@ -331,14 +330,14 @@ class Core:
             }
 
             for key, (default_value, overridden_value) in overridden_params.items():
-                logger.debug(
+                self.logger.debug(
                     "Overriding cosmo param '%s' from %s to %s",
                     key,
                     default_value,
                     overridden_value,
                 )
 
-        logger.debug("Running with settings: \n%s", json.dumps(settings, indent=2))
+        self.logger.debug("Running with settings: \n%s", json.dumps(settings, indent=2))
 
         # save a copy of the settings file iff --save_settings is set
         if args.save_settings:
@@ -347,11 +346,13 @@ class Core:
             os.makedirs(base_dir, exist_ok=True)
 
             if not os.path.exists(file):
-                logger.info("Saving run settings to file: '%s'", file)
+                self.logger.info("Saving run settings to file: '%s'", file)
                 with open(file, "w", encoding="utf-8") as f:
                     json.dump(self.settings, f, indent=2)
             else:
-                logger.warning("Settings already exists: '%s', not overwriting", file)
+                self.logger.warning(
+                    "Settings already exists: '%s', not overwriting", file
+                )
 
     def _init(self):
         """
@@ -400,7 +401,7 @@ class Core:
         """
         self.slurm = Slurm()
 
-        self.seed = self._get("seed", np.random.default_rng().integers(0, 2**32 - 1))
+        self.seed = self._get("seed", 0)
         self.rng = np.random.default_rng(self.seed)
         np.random.seed(self.seed)
 
@@ -456,7 +457,7 @@ class Core:
         self.use_tb = self._get("tensorboard", False)
 
         self.isotropic = True  # self._get("isotropic", True)
-        logger.warning("Forcing isotropic mode")
+        self.logger.warning("Forcing isotropic mode")
 
         # setup our precision types to be consistent
         if self._get("double_precision", False):
@@ -469,13 +470,14 @@ class Core:
             self.precision = "single"
 
         # setup some derived parameters
-        self.total_sims = self.ndups * self.nsims * self.npols * self.narray
+        # self.total_sims = self.ndups * self.nsims * self.npols * self.narray
+        self.total_sims = self.nsims * self.narray
 
         # setup some info parameters
         self.npix = hp.nside2npix(self.nside)
         self.nelem = hp.Alm.getsize(self.lmax)
-        self.alm_shape = (self.nsims, self.ndups, self.npols, self.nelem)
-        self.map_shape = (self.nsims, self.ndups, self.npols, self.npix)
+        self.alm_shape = (self.nsims, self.npols, self.nelem)
+        self.map_shape = (self.nsims, self.npols, self.npix)
 
     def _noise_beam(self):
         """
@@ -602,7 +604,7 @@ class Core:
         base = self._get("base_name", base_name)
         if base.startswith("+"):
             base = f"{base_name}{base[1:]}"
-        self.name = f"{base}_{pol_str}_{total_sims}x{self.ndups}_f{fstr}"
+        self.name = f"{base}_{pol_str}_{total_sims}_f{fstr}"
 
         self.dirs = {}
         self.dirs["base"] = self._get("base_dir", "data")
@@ -668,10 +670,10 @@ class Core:
         If the file exists and `force_gen` is True, the file is removed."""
         if os.path.exists(self.file):
             if self.force_gen:
-                logger.info("Removing existing data file '%s'", self.file)
+                self.logger.info("Removing existing data file '%s'", self.file)
                 os.remove(self.file)
             else:
-                logger.info("Data file '%s' exists, exiting", self.file)
+                self.logger.info("Data file '%s' exists, exiting", self.file)
                 sys.exit(0)
 
     def should_plot(self):
