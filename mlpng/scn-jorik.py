@@ -5,7 +5,8 @@ import logging
 import healpy as hp
 import numpy as np
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["NCCL_DEBUG"] = "INFO"
 
 import tensorflow as tf
 from tensorflow.keras.layers import (  # type: ignore
@@ -13,7 +14,6 @@ from tensorflow.keras.layers import (  # type: ignore
     Dropout,
     Flatten,
     LeakyReLU,
-    Permute,
 )
 from tensorflow.keras.callbacks import (  # type: ignore
     EarlyStopping,
@@ -21,21 +21,9 @@ from tensorflow.keras.callbacks import (  # type: ignore
     TensorBoard,
     ModelCheckpoint,
 )
-from tensorflow.keras.optimizers import Adam, AdamW  # type: ignore
+from tensorflow.keras.optimizers import AdamW  # type: ignore
 from tensorflow.keras.optimizers.schedules import ExponentialDecay  # type: ignore
 from tensorflow.keras.metrics import RootMeanSquaredError  # type: ignore
-
-from mlpng import Core
-from mlpng.utils import (
-    setup_logging,
-    get_fisher,
-    plot_predictions,
-    plot_histogram,
-    print_errors,
-    plot_metrics,
-    try_init_wandb,
-)
-from mlpng.utils.dataloaders import HDF5Dataset
 
 from deepsphere import HealpyGCNN
 from deepsphere.healpy_layers import (
@@ -43,71 +31,26 @@ from deepsphere.healpy_layers import (
     HealpyPool,
 )
 
+from mlpng import Core
+from mlpng.utils import (
+    setup_logging,
+    plot_predictions,
+    plot_histogram,
+    print_errors,
+    plot_metrics,
+    try_init_wandb,
+)
+from mlpng.utils.dataloaders import MapDataset
+from mlpng.utils.callbacks import LinearWarmup
+
 
 logger = setup_logging(__name__, level=logging.DEBUG)
 
-MAX_EPOCHS = 100
-BATCH_SIZE = 32
 
-
-def rotate_ds(inputs, y):
-    @tf.py_function(Tout=tf.float32)  # type: ignore
-    def rotate_map(inputs):
-        lat_angle = tf.random.uniform([1], -90.0, 90.0)  # type: ignore
-        lon_angle = tf.random.uniform([1], -180.0, 180.0)  # type: ignore
-        rotator = hp.Rotator(rot=[lat_angle, lon_angle], deg=True, inv=True)
-        x = hp.reorder(inputs, n2r=True)
-
-        # I have had issues in the past with the pixel weights not being downloaded due to server errors
-        # disable here if you get an error with the file not being found on astropy's servers
-        x = rotator.rotate_map_alms(x, use_pixel_weights=True)
-        return hp.reorder(x, r2n=True)
-
-    x = tf.map_fn(rotate_map, inputs)
-    x.set_shape(inputs.shape)  # type: ignore
-    return x, y
-
-
-def to_tf(ds, core, batch_size=BATCH_SIZE, prerotate=False, reshuffle=True):
-    npix = hp.nside2npix(core.nside)
-    dataset = tf.data.Dataset.from_generator(
-        lambda: ds,
-        output_signature=(
-            tf.TensorSpec(shape=(core.ndups, core.npols, npix), dtype=tf.float32),  # type: ignore
-            # tf.TensorSpec(shape=(core.ndups, npix, core.npols), dtype=tf.float32),  # type: ignore
-            tf.TensorSpec(shape=(core.ndups,), dtype=tf.float32),  # type: ignore
-        ),
-    )
-
-    # takes us from 1 element of (ndups, npols, npix) to ndup elements of (npols, npix)
-    dataset = dataset.apply(tf.data.Dataset.unbatch)
-
-    if prerotate:
-        # apply rotations, do this before cache because its slow
-        dataset = dataset.map(rotate_ds, num_parallel_calls=tf.data.AUTOTUNE)
-
-    dataset = dataset.cache()
-
-    if not prerotate:
-        dataset = dataset.map(rotate_ds, num_parallel_calls=tf.data.AUTOTUNE)
-
-    dataset = dataset.shuffle(buffer_size=1024, reshuffle_each_iteration=reshuffle)
-    dataset = dataset.batch(
-        batch_size,
-        drop_remainder=True,
-        num_parallel_calls=tf.data.AUTOTUNE,
-        # deterministic=False,
-    )
-    return dataset.prefetch(tf.data.AUTOTUNE)
-
-
-def get_model(input_shape):
-    nside = hp.npix2nside(input_shape[2])
-    indices = np.arange(input_shape[2])
+def get_model(input_shape, batch_size=32, n_out=1):
+    nside = hp.npix2nside(input_shape[1])
+    indices = np.arange(input_shape[1])
     layers = []
-
-    # chebyshev wants pols last
-    layers.append(Permute((2, 1)))
 
     n_layers = math.floor(math.log(nside, 2))
     for i in range(n_layers):
@@ -125,17 +68,17 @@ def get_model(input_shape):
         layers.append(HealpyPool(1, "AVG"))
 
     layers.append(Flatten())
-    layers.append(Dropout(0.3))
+    layers.append(Dropout(0.1))
     layers.append(Dense(32, activation=LeakyReLU(0.3)))
     layers.append(Dense(32, activation=LeakyReLU(0.3)))
-    layers.append(Dense(1))
+    layers.append(Dense(n_out))
 
     model = HealpyGCNN(
         nside,
         indices=indices,
         layers=layers,
-        max_batch_size=BATCH_SIZE,
-        initial_Fin=input_shape[1],
+        max_batch_size=batch_size,
+        initial_Fin=input_shape[-1],
         n_neighbors=8,
     )
 
@@ -144,67 +87,84 @@ def get_model(input_shape):
 
 
 def main():
+    batch_size = 64
+    max_epochs = 100
+    shapes = ["local"]
+
     core = Core()
-    fisher = get_fisher(core.file, "fisher_iso")
-    npix = hp.nside2npix(core.nside)
+    ds = MapDataset.fromCore(core, shapes)
+    train, val, test = ds.split(
+        batch_size=batch_size,
+        # cache_file=f"/lustre/smuexa01/client/users/stevensonb/tfcache/{core.name}-{core.slurm.job}.cache",
+    )
+    decay_steps = len(train)  # len(train) is once per epoch
 
-    f = 1
-    ds = HDF5Dataset(core.file, x_name="map", y_name="fnl", verbose=True)
-    train_ds, val_ds, test_ds = ds.split(0.8 / f, 0.1 / f, 0.1 / f)
-    train_tf = to_tf(train_ds, core)
-    val_tf = to_tf(val_ds, core)
-    test_tf = to_tf(test_ds, core, reshuffle=False)
+    strategy = tf.distribute.MirroredStrategy()
+    with strategy.scope():
+        learning_rate = ExponentialDecay(1e-6, decay_steps, 0.95, staircase=True)
+        learning_rate = LinearWarmup(learning_rate, decay_steps * 10, 1e-8)
 
-    decay_steps = len(train_ds) // BATCH_SIZE  # once per epoch
-
-    with tf.distribute.MirroredStrategy().scope():
-        learning_rate = ExponentialDecay(1e-2, decay_steps, 0.95, staircase=True)
-
-        model = get_model((BATCH_SIZE, core.npols, npix))
+        model = get_model((batch_size, core.npix, core.npols), batch_size, 3)
         model.compile(
-            optimizer=AdamW(learning_rate, weight_decay=0.1),  # type: ignore
+            optimizer=AdamW(learning_rate),  # type: ignore
             loss="mse",
             metrics=[RootMeanSquaredError()],  # type: ignore
         )
 
     model.summary()
 
-    tf_dir = f"{core.dirs['tb']}/{core.name}-jorik"
     callbacks = [
         TerminateOnNaN(),
-        EarlyStopping(monitor="val_loss", patience=8, restore_best_weights=True),
-        TensorBoard(log_dir=tf_dir),
-        ModelCheckpoint(tf_dir, monitor="val_loss", save_best_only=True),
+        EarlyStopping(monitor="val_loss", patience=16, restore_best_weights=True),
     ]
-    # try_init_wandb(notes="model testing", tags=["SCNUNet"], append_to=callbacks)
+    if core.use_tb:
+        callbacks.append(
+            TensorBoard(
+                log_dir=core.dirs["tb"],
+            )
+        )
+    if core.use_wandb:
+        try_init_wandb(
+            config={
+                "batch_size": batch_size,
+                "max_epochs": max_epochs,
+                "learning_rate": 5e-3,
+            },
+            dir=core.dirs["data"],
+            append_to=callbacks,
+            patch_tb=core.use_tb,
+        )
 
     history = model.fit(
-        train_tf,
-        epochs=MAX_EPOCHS,
-        validation_data=val_tf,
+        train,
+        epochs=max_epochs,
+        validation_data=val,
         callbacks=callbacks,
         verbose=2,
     )
     model.save(f"{core.dirs['model']}/{core.name}-{core.slurm.job}-jorik.keras")
 
-    ###########################################################
-
     logger.debug("Getting final plots")
-    truth = np.concatenate([y for _, y in test_tf])  # type: ignore
-    preds = model.predict(test_tf, verbose=0)
+    y = np.concatenate([y for _, y in test])  # type: ignore
+    preds = model.predict(test, verbose=0)
     # using evaluate to get the rmse since manually calculating it was giving a different value
-    rmse = model.evaluate(test_tf, verbose=0)[1]
+    rmse = model.evaluate(test, verbose=0)[1]
+    fisher = ds.get_fisher("local")
 
-    print_errors(truth, preds, fisher)
+    print_errors(y, preds, fisher)
     plot_metrics(history, metrics=["loss"], save_file=core.get_plot_file("jorik-loss"))
-    plot_predictions(
-        truth,
-        preds,
-        fisher=fisher,
-        title=f"RMSE: {rmse:.3f}",
-        save_file=core.get_plot_file("preds"),
-    )
-    plot_histogram(truth, preds, save_file=core.get_plot_file("jorik-hist"))
+    print(y.shape)
+    for shape in range(y.shape[1] or 1):
+        plot_predictions(
+            y[:, shape],
+            preds[:, shape],
+            fisher=fisher,
+            title=f"RMSE: {rmse:.3f}",
+            save_file=core.get_plot_file("jorik-preds"),
+        )
+        plot_histogram(
+            y[:, shape], preds[:, shape], save_file=core.get_plot_file("jorik-hist")
+        )
 
 
 if __name__ == "__main__":

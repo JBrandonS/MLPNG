@@ -85,11 +85,11 @@ def to_tf(ds, core, batch_size=16, prerotate=True, for_unet=False):
         ),
     )
 
-    # help fix a issue with TF not knowing the number of batches per epoch
-    dataset = dataset.apply(tf.data.experimental.assert_cardinality(len(ds)))
-
     # takes us from 1 element of (ndups, npols, npix) to ndup elements of (npols, npix)
     dataset = dataset.apply(tf.data.Dataset.unbatch)
+
+    # help fix a issue with TF not knowing the number of batches per epoch
+    dataset = dataset.apply(tf.data.experimental.assert_cardinality(len(ds)))
 
     # dataset = dataset.map(lambda x, y: (tf.transpose(x), y))
     if prerotate:

@@ -452,6 +452,9 @@ class Core:
         self.use_b = False  # "B" in self.pols
         self.use_pols = self.pols == 3 #used for hp commands
 
+        self.use_wandb = self._get("wandb", False)
+        self.use_tb = self._get("tensorboard", False)
+
         self.isotropic = True  # self._get("isotropic", True)
         logger.warning("Forcing isotropic mode")
 

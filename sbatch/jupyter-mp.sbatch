@@ -9,7 +9,7 @@
 #SBATCH --time=8:00:00
 #SBATCH --account=jrmeyers_ml_cmb_0001
 
-conda_env="deepsphere"
+conda_env="ds25"
 
 print_help() {
     echo "Usage: $0 [options]"
@@ -59,5 +59,8 @@ module list
 
 echo "Loading conda env: $conda_env"
 conda activate "$conda_env"
+
+nvidia-smi
+nvcc --version
 
 time srun jupyter notebook --ip=0.0.0.0

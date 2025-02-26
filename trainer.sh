@@ -5,6 +5,8 @@
 # The settings files to use for the sims. These should be found in settings/*.json
 SETTINGS=(
     "n32"
+    # "n64"
+    # "n128"
     # "elsner"
 )
 
@@ -21,7 +23,7 @@ ARGS=(
     # "--base_name" "jorik-new"
     # "--fnl_range" "-100" "100"
     "--tb"
-    # "--wandb"
+    "--wandb"
     "--narray" "1"
 )
 
