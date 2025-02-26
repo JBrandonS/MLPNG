@@ -64,7 +64,8 @@ class Estimator(Generator):
                 alm = alm_l[:, None] + fnl[..., None] * alm_nl[:, None]  # type: ignore
 
                 logger.debug("Computing estimates")
-                estimates, _, _, _ = self.get_ksw(shape).compute_estimate_batch(
+                ksw = self.get_ksw(shape)
+                estimates, _, _, _ = ksw.compute_estimate_batch(
                     lambda idx: self.icov_func(alm[idx, 0]),
                     range(self.num_estimates),
                     comm=mpi_comm,
@@ -76,7 +77,7 @@ class Estimator(Generator):
             if mpi_root:
                 # save the data, this will append to the alm_file
                 sdata = {l_str: {shape: {"estimate": estimates}}}
-                save_data(self.file, sdata, mode="a")
+                save_data(self.file, sdata, mode="a", verbose=True)
 
                 print_errors(fnl[:, 0], estimates, fisher)
                 if self.plot:
