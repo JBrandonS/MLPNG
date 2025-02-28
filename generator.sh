@@ -8,29 +8,30 @@
 # list of the settings file to be used, will be ran in order
 # these must be in settings/ and have the .json extension
 SETTINGS=(
-  "n32"
+  # "n32"
   # "n64"
   # "n128"
   # "n256"
   
-  # "n512"
-  # "n1024"
+  # these can only be run with nsims < 1000, due to time or memory
+  "n512"
+  "n1024"
 
   # these need to use high memory nodes, change sbatch/generator.sbatch to sbatch/generator-hm.sbatch in the main loop below
-  # "n2048"
-  # "n4096"
+  "n2048"
+  "n4096"
 
   # "elsner"
-  # "planck"
+  "planck"
 )
 
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
 ARGS=(
   "--nsims" "100"
-  "--force_gen"
+  # "--force_gen"
   "--pols" "T"
   # "--base_name" "+_ortho"
-  # "--fnl_range" "-1000" "1000"
+  # "--fnl_range" "-100" "100"
   # "--shape" "local"
   # "--shape" "equilateral"
   # "--shape" "orthogonal"

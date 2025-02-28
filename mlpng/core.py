@@ -401,7 +401,7 @@ class Core:
         """
         self.slurm = Slurm()
 
-        self.seed = self._get("seed", 0)
+        self.seed = self._get("seed", 1992)
         self.rng = np.random.default_rng(self.seed)
         np.random.seed(self.seed)
 
@@ -594,17 +594,17 @@ class Core:
         tstr = f"_{self.slurm.array_index}" if self.slurm.array_index > 0 else ""
 
         # simplify the fnl range string if abs(min) and max are the same
-        if self.fnl_max == abs(self.fnl_min):
-            fstr = f"{self.fnl_max}"
-        else:
-            fstr = f"{self.fnl_min}-{self.fnl_max}"
+        # if self.fnl_max == abs(self.fnl_min):
+        #     fstr = f"{self.fnl_max}"
+        # else:
+        #     fstr = f"{self.fnl_min}-{self.fnl_max}"
 
         # finally we build our string
         base_name = f"l{self.lmax}_n{self.nside}"
         base = self._get("base_name", base_name)
         if base.startswith("+"):
             base = f"{base_name}{base[1:]}"
-        self.name = f"{base}_{pol_str}_{total_sims}_f{fstr}"
+        self.name = f"{base}_{pol_str}_{total_sims}" #_f{fstr}"
 
         self.dirs = {}
         self.dirs["base"] = self._get("base_dir", "data")

@@ -53,7 +53,7 @@ class Estimator(Generator):
                 alm_l = np.array(data["alm_l"][l_str])  # type: ignore
                 alm_nl = np.array(data["alm_nl"][l_str][shape])  # type: ignore
                 fnl = self.rng.uniform(
-                    self.fnl_min, self.fnl_max, (self.total_sims, 1, 1)
+                    self.fnl_min, self.fnl_max, (self.num_estimates, 1, 1)
                 )
 
                 # make our alms
@@ -65,7 +65,7 @@ class Estimator(Generator):
                 self.logger.debug("Fisher: %s, std: %s", fisher, 1 / np.sqrt(fisher))
                 estimates, _, _, _ = ksw.compute_estimate_batch(
                     lambda idx: self.icov_func(alm[idx]),
-                    range(self.total_sims),
+                    range(self.num_estimates),
                     comm=mpi_comm,
                     fisher=fisher,
                     theta_batch=theta_batch,
