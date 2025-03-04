@@ -613,6 +613,7 @@ class Core:
         self.dirs["tb"] = join_paths(self._get("tb_dir", "tensorboard"))
         self.dirs["model"] = join_paths(self._get("model_dir", "models"))
         self.dirs["mc"] = join_paths(self._get("mc_dir", "kswmc"))
+        self.dirs["wandb"] = join_paths(self._get("wandb_dir", "wandb"))
 
         self.file = os.path.join(self.dirs["data"], f"{self.name}{tstr}.hdf5")
         self.mc_file = os.path.join(self.dirs["mc"], f"{self.name}.hdf5")
