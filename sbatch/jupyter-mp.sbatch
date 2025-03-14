@@ -4,7 +4,7 @@
 #SBATCH --partition=batch
 #SBATCH --ntasks=1
 #SBATCH --mem=500G
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=32
 #SBATCH --gpus-per-task=1
 #SBATCH --time=8:00:00
 #SBATCH --account=jrmeyers_ml_cmb_0001

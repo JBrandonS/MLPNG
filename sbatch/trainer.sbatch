@@ -3,16 +3,11 @@
 #SBATCH --partition=batch
 #SBATCH --ntasks=1
 #SBATCH --mem=256G
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=32
 #SBATCH --gpus-per-task=1
 #SBATCH --output=data/logs/trainer/%j.log
 #SBATCH --time=1-00:00:00
 #SBATCH --account=jrmeyers_ml_cmb_0001
-
-export NCCL_DEBUG=WARN
-export NCCL_DEBUG_SUBSYS=ALL
-export NCCL_P2P_LEVEL=NVL
-export NCCL_LAUNCH_MODE=PARALLEL
 
 module="mlpng.${1:-scn-jorik}"
 shift # remove the first argument from $@

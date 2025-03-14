@@ -6,7 +6,7 @@ import healpy as hp
 import numpy as np
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-os.environ["NCCL_DEBUG"] = "INFO"
+# os.environ["NCCL_DEBUG"] = "WARN"
 
 import tensorflow as tf
 from tensorflow.keras.layers import (  # type: ignore
@@ -14,6 +14,7 @@ from tensorflow.keras.layers import (  # type: ignore
     Dropout,
     Flatten,
     LeakyReLU,
+    BatchNormalization,
 )
 from tensorflow.keras.callbacks import (  # type: ignore
     EarlyStopping,
@@ -21,8 +22,8 @@ from tensorflow.keras.callbacks import (  # type: ignore
     TensorBoard,
     ModelCheckpoint,
 )
-from tensorflow.keras.optimizers import AdamW  # type: ignore
-from tensorflow.keras.optimizers.schedules import ExponentialDecay  # type: ignore
+from tensorflow.keras.optimizers import Adam, AdamW  # type: ignore
+from tensorflow.keras.optimizers.schedules import ExponentialDecay, CosineDecay  # type: ignore
 from tensorflow.keras.metrics import RootMeanSquaredError  # type: ignore
 
 from deepsphere import HealpyGCNN
@@ -40,25 +41,32 @@ from mlpng.utils import (
     plot_metrics,
     try_init_wandb,
 )
-from mlpng.utils.dataloaders import MapDataset
+from mlpng.utils.dataloaders import MapDataset, elsnerMapDataset
 from mlpng.utils.callbacks import LinearWarmup
 
 
 logger = setup_logging(__name__, level=logging.DEBUG)
+logger.info("Conda environment: %s", os.environ["CONDA_DEFAULT_ENV"])
+logger.info("Python executable: %s", sys.executable)
+logger.info("TensorFlow version: %s", tf.__version__)
+logger.info("CUDA version: %s", tf.sysconfig.get_build_info()["cuda_version"])
+logger.info("cuDNN version: %s", tf.sysconfig.get_build_info()["cudnn_version"])
 
 
 def get_model(input_shape, batch_size=32, n_out=1):
     nside = hp.npix2nside(input_shape[1])
-    indices = np.arange(input_shape[1])
+
     layers = []
+
+    # layers.append(tf.keras.layers.LayerNormalization(axis=[1, 2], epsilon=1e-16))
 
     n_layers = math.floor(math.log(nside, 2))
     for i in range(n_layers):
-        fout = 2 ** (4 + i)
+        fout = 64  # 2 ** (2 + i)
         layers.append(
             HealpyChebyshev(
                 K=2,
-                Fout=fout,
+                Fout=fout,  # this is not mentioned in paper
                 use_bias=True,
                 use_bn=True,
                 activation=LeakyReLU(0.3),
@@ -68,18 +76,18 @@ def get_model(input_shape, batch_size=32, n_out=1):
         layers.append(HealpyPool(1, "AVG"))
 
     layers.append(Flatten())
-    layers.append(Dropout(0.1))
+    layers.append(Dropout(0.3))
     layers.append(Dense(32, activation=LeakyReLU(0.3)))
     layers.append(Dense(32, activation=LeakyReLU(0.3)))
     layers.append(Dense(n_out))
 
     model = HealpyGCNN(
         nside,
-        indices=indices,
+        indices=np.arange(input_shape[1]),
         layers=layers,
+        n_neighbors=8,
         max_batch_size=batch_size,
         initial_Fin=input_shape[-1],
-        n_neighbors=8,
     )
 
     model.build(input_shape)
@@ -92,21 +100,29 @@ def main():
     shapes = ["local"]
 
     core = Core()
-    ds = MapDataset.fromCore(core, shapes)
+    ds = MapDataset.fromCore(core, shapes=shapes)
+    # ds = elsnerMapDataset.fromCore(core, shapes=shapes)
+
+    # get our dataset, right now we manually convert to tf to match the
     train, val, test = ds.split(
+        0.4,
+        0.1,
+        0.5,
         batch_size=batch_size,
-        # cache_file=f"/lustre/smuexa01/client/users/stevensonb/tfcache/{core.name}-{core.slurm.job}.cache",
+        duplicates=[25, 10, 2],
+        cache_file=core.name,
     )
-    decay_steps = len(train)  # len(train) is once per epoch
+
+    decay_steps = core.total_sims * 0.8 * 25 // batch_size * 5
 
     strategy = tf.distribute.MirroredStrategy()
     with strategy.scope():
-        learning_rate = ExponentialDecay(1e-6, decay_steps, 0.95, staircase=True)
-        learning_rate = LinearWarmup(learning_rate, decay_steps * 10, 1e-8)
+        learning_rate = ExponentialDecay(4e-2, decay_steps, 0.98, staircase=True)
+        # learning_rate = LinearWarmup(learning_rate, decay_steps * 5, 1e-5)
 
-        model = get_model((batch_size, core.npix, core.npols), batch_size, 3)
+        model = get_model((None, core.npix, core.npols), batch_size, len(shapes))
         model.compile(
-            optimizer=AdamW(learning_rate),  # type: ignore
+            optimizer=AdamW(learning_rate, weight_decay=0.1),  # type: ignore
             loss="mse",
             metrics=[RootMeanSquaredError()],  # type: ignore
         )
@@ -115,12 +131,15 @@ def main():
 
     callbacks = [
         TerminateOnNaN(),
-        EarlyStopping(monitor="val_loss", patience=16, restore_best_weights=True),
+        # EarlyStopping(monitor="val_loss", patience=16, restore_best_weights=True),
     ]
     if core.use_tb:
         callbacks.append(
             TensorBoard(
-                log_dir=core.dirs["tb"],
+                log_dir=f"{core.dirs['tb']}/{core.name}/{core.slurm.job}",
+                histogram_freq=1,
+                # write_images=True,
+                write_steps_per_second=True,
             )
         )
     if core.use_wandb:
@@ -128,9 +147,9 @@ def main():
             config={
                 "batch_size": batch_size,
                 "max_epochs": max_epochs,
-                "learning_rate": 5e-3,
+                # "learning_rate": 5e-3,
             },
-            dir=core.dirs["data"],
+            dir=core.dirs["wandb"],
             append_to=callbacks,
             patch_tb=core.use_tb,
         )
@@ -151,10 +170,9 @@ def main():
     rmse = model.evaluate(test, verbose=0)[1]
     fisher = ds.get_fisher("local")
 
-    print_errors(y, preds, fisher)
+    # print_errors(y, preds, fisher)
     plot_metrics(history, metrics=["loss"], save_file=core.get_plot_file("jorik-loss"))
-    print(y.shape)
-    for shape in range(y.shape[1] or 1):
+    for shape in range(y.shape[1]):
         plot_predictions(
             y[:, shape],
             preds[:, shape],

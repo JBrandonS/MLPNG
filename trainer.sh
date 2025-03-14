@@ -4,10 +4,10 @@
 
 # The settings files to use for the sims. These should be found in settings/*.json
 SETTINGS=(
-    "n32"
+    # "n32"
     # "n64"
     # "n128"
-    # "elsner"
+    "elsner"
 )
 
 # CLI args to change the command ran, helps prevent needing to change the settings file for small / test changes
@@ -18,12 +18,13 @@ ARGS=(
     "--nsims" "1000"
     # "--lensing"
     # "--no-noise"
+    "--shapes" "local"
     "--pols" "T"
     # "--no-summary"
     # "--base_name" "jorik-new"
-    # "--fnl_range" "-100" "100"
-    "--tb"
-    "--wandb"
+    "--fnl_range" "-1000" "1000"
+    "--tensorboard"
+    # "--wandb"
     "--narray" "1"
 )
 
