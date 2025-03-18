@@ -62,12 +62,12 @@ def get_model(input_shape, batch_size=32, n_out=1):
 
     n_layers = math.floor(math.log(nside, 2))
     for i in range(n_layers):
-        fout = 64  # 2 ** (2 + i)
+        fout = 32  # 2 ** (4 + i)
         layers.append(
             HealpyChebyshev(
                 K=2,
                 Fout=fout,  # this is not mentioned in paper
-                use_bias=True,
+                # use_bias=True,
                 use_bn=True,
                 activation=LeakyReLU(0.3),
             )
@@ -108,16 +108,17 @@ def main():
         0.4,
         0.1,
         0.5,
+        to_tf=True,
         batch_size=batch_size,
         duplicates=[25, 10, 2],
         cache_file=core.name,
     )
 
-    decay_steps = core.total_sims * 0.8 * 25 // batch_size * 5
+    decay_steps = core.total_sims * 0.4 * 25 // batch_size * 5
 
     strategy = tf.distribute.MirroredStrategy()
     with strategy.scope():
-        learning_rate = ExponentialDecay(4e-2, decay_steps, 0.98, staircase=True)
+        learning_rate = ExponentialDecay(4e-3, decay_steps, 0.98, staircase=True)
         # learning_rate = LinearWarmup(learning_rate, decay_steps * 5, 1e-5)
 
         model = get_model((None, core.npix, core.npols), batch_size, len(shapes))
@@ -131,7 +132,7 @@ def main():
 
     callbacks = [
         TerminateOnNaN(),
-        # EarlyStopping(monitor="val_loss", patience=16, restore_best_weights=True),
+        EarlyStopping(monitor="val_loss", patience=16, restore_best_weights=True),
     ]
     if core.use_tb:
         callbacks.append(
@@ -152,6 +153,7 @@ def main():
             dir=core.dirs["wandb"],
             append_to=callbacks,
             patch_tb=core.use_tb,
+            patch_logdir=f"{core.dirs['tb']}/{core.name}/{core.slurm.job}",
         )
 
     history = model.fit(
