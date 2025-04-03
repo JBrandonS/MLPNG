@@ -1,13 +1,13 @@
 import os
+import math
 import copy
 import logging
-from pickle import TRUE
 import h5py
 import numpy as np
 import healpy as hp
 import tensorflow as tf
 from joblib import Parallel, delayed
-from tensorflow.data.experimental import assert_cardinality
+import itertools
 
 logger = logging.getLogger(__name__)
 
@@ -16,15 +16,17 @@ class ALMDataset:
     @classmethod
     def fromCore(cls, core, **kwargs):
         file_path = kwargs.pop("file_path", core.file)
+        shapes = kwargs.pop("shapes", core.shapes)
         x_shape = kwargs.pop("x_shape", core.alm_shape[1:])
         x_dtype = kwargs.pop("x_dtype", core.c_dtype)
-        y_shape = kwargs.pop("y_shape", (None, 1))
+        y_shape = kwargs.pop("y_shape", (None, len(shapes)))
         y_dtype = kwargs.pop("y_dtype", core.r_dtype)
         fnl_min = kwargs.pop("fnl_min", core.fnl_min)
         fnl_max = kwargs.pop("fnl_max", core.fnl_max)
 
         return cls(
             file_path=file_path,
+            shapes=shapes,
             fnl_min=fnl_min,
             fnl_max=fnl_max,
             x_shape=x_shape,
@@ -67,17 +69,22 @@ class ALMDataset:
         self.start_idx = start_idx
         if end_idx is None:
             with h5py.File(self.file_path, mode="r", swmr=True, locking=False) as f:
-                self.end_idx = f["alm_l"]["unlensed"].shape[0]
+                self.end_idx = f["alm_l"]["unlensed"].shape[0]  # type: ignore
         else:
-            self.end_idx = end_idx
+            self.end_idx = end_idx  # type: ignore
 
     def __len__(self):
         return self.end_idx - self.start_idx
 
-    def get_fisher(self, shape, lensed=False):
+    def get_fisher(self, shapes=None, lensed=False):
+        if shapes is None:
+            shapes = self.shapes
+
+        fishers = []
         with h5py.File(self.file_path, mode="r", swmr=True, locking=False) as f:
-            fisher = f["fisher"][shape][0]
-        return fisher
+            for shape in shapes:
+                fishers.append(f["fisher"][shape][0])
+        return np.array(fishers)
 
     def split(
         self,
@@ -183,7 +190,7 @@ class ALMDataset:
             # Finally convert the datasets to tf
             train = train.to_tf(cache_file=cache[0], duplicates=dups[0], **to_tf_kwargs)
             val = val.to_tf(cache_file=cache[1], duplicates=dups[1], **to_tf_kwargs)
-            # test always should have reshuffle off since we want to plot the same data
+            # test always should have shuffle off since we want to plot the same data
             to_tf_kwargs.pop("shuffle", None)
             test = test.to_tf(
                 shuffle=False, cache_file=cache[2], duplicates=dups[2], **to_tf_kwargs
@@ -197,8 +204,8 @@ class ALMDataset:
         unbatch=True,
         cache=True,
         cache_file="",
-        buffer_size=1024,
         shuffle=True,
+        buffer_size=1024,
         reshuffle=True,
         batch_size=1,
         batch_n_calls=tf.data.AUTOTUNE,
@@ -206,19 +213,49 @@ class ALMDataset:
         batch_drop_remainder=False,
         prefetch_n_calls=tf.data.AUTOTUNE,
     ):
+        """
+        Converts a data generator into a TensorFlow `tf.data.Dataset` pipeline with various preprocessing options.
+        Args:
+            gen_batch_size (int, optional): The batch size for the data generator, these batches will be processed in python and sent as one to the tf pipeline.
+                This setting should be used to optimize the CPU load vs memory transfer, probably want it on the order of the number of CPUS. Defaults to 32.
+            duplicates (int, optional): Number of samples to generate per 'seed' batch. Defaults to 1.
+            unbatch (bool, optional): Whether to unbatch the dataset, splitting batched samples into individual samples. Defaults to True.
+            cache (bool, optional): Whether to cache the dataset. Defaults to True.
+            cache_file (str, optional): Path to a file for caching the dataset. If empty, caching is done in memory. Defaults to "".
+            shuffle (bool, optional): Whether to shuffle the dataset. Defaults to True.
+            buffer_size (int, optional): Buffer size for shuffling the dataset. Defaults to 1024.
+            reshuffle (bool, optional): Whether to reshuffle the dataset on each iteration. Defaults to True.
+            batch_size (int, optional): The batch size for the final dataset. Defaults to 1.
+            batch_n_calls (int, optional): Number of parallel calls for batching. Defaults to `tf.data.AUTOTUNE`.
+            batch_deterministic (bool, optional): Whether batching should be deterministic. Defaults to False.
+            batch_drop_remainder (bool, optional): Whether to drop the last batch if it has fewer than `batch_size` elements. Defaults to False.
+            prefetch_n_calls (int, optional): Number of parallel calls for prefetching. Defaults to `tf.data.AUTOTUNE`.
+        Returns:
+            tf.data.Dataset: A TensorFlow dataset pipeline with the specified preprocessing steps applied.
+        Notes:
+            - If `cache` is enabled and `cache_file` is provided, the dataset will be cached to the specified file.
+                If the cache file exists, it will be reused unless deleted manually.
+        """
+
         if cache and cache_file:
-            logger.debug("Using cache file: %s", cache_file)
+            logger.debug("Using cache file: '%s'", cache_file)
 
         ds = tf.data.Dataset.from_generator(
             self._generator,
             args=[gen_batch_size, duplicates],
             output_signature=(
-                tf.TensorSpec(shape=self.x_shape, dtype=self.x_dtype),
-                tf.TensorSpec(shape=self.y_shape, dtype=self.y_dtype),
+                tf.TensorSpec(shape=self.x_shape, dtype=self.x_dtype),  # type: ignore
+                tf.TensorSpec(shape=self.y_shape, dtype=self.y_dtype),  # type: ignore
             ),
         )
 
+        # inform TF about the expected size of the dataset
+        ds_len = math.ceil(len(self) / gen_batch_size)
+        ds = ds.apply(tf.data.experimental.assert_cardinality(ds_len))
+
         if unbatch:
+            # this takes us from 1 * (batch, ...) samples to batch * (....)
+            # i.e. a single (batch * duplicates, pols, data) tensor -> (batch * duplicates) tensors of shape (pols, data)
             ds = ds.unbatch()
 
         if cache:
@@ -240,35 +277,35 @@ class ALMDataset:
         )
         return ds.prefetch(prefetch_n_calls)
 
-    def _generate(self, indices, duplicates, batch_size):
+    def _generate(self, indices, duplicates):
         """
-        Generates a single batch of data and fnl values for the given indices.
+        Generates a single batch of data, returning the data and fnl values.
         """
-        with h5py.File(self.file_path, mode="r", swmr=True, locking=False) as f:
-            alm_ls = np.array(f["alm_l"][self.l_str][indices])
-            alm_nls = np.array(
-                [f["alm_nl"][self.l_str][s][indices] for s in self.shapes]
-            )
-
         fnls = np.random.uniform(
             low=self.fnl_min,
             high=self.fnl_max,
-            size=(len(self.shapes), duplicates, len(indices), 1),
-        )  # shape (len(shapes), dups, batch_size, 1)
+            size=(len(self.shapes), duplicates, len(indices), 1, 1),
+        )
 
-        alm_ls = alm_ls[None, ...]
-        alm_nls = alm_nls[:, None, ...]
+        with h5py.File(self.file_path, mode="r", swmr=True, locking=False) as f:
+            alm_l = np.array([f["alm_l"][self.l_str][indices]])  # type: ignore
+            alm_nl = np.array(
+                [f["alm_nl"][self.l_str][s][indices] for s in self.shapes]  # type: ignore
+            )
 
-        alm = alm_ls + np.einsum("i...,i...->...", fnls, alm_nls)
-        return alm, fnls
+        alms = alm_l + np.einsum("i...,i...->...", fnls, alm_nl)
+        return alms, fnls
 
-    def _generator(self, batch_size, duplicates, n_jobs=2):
+    def _generator(self, batch_size, duplicates, n_jobs=8, pre_dispatch="n_jobs"):
         """
-        Returns a parallel generator to read data from the HDF5 file. This is used to load the data in parallel.
-        You probably dont need to change anything here but instead in _generate"""
+        Returns a parallel generator to read data from the file. This is used to load the data in parallel.
+        You probably dont need to change anything here but instead in _generate
+        """
 
         # we make a batch of indices to read from the HDF5 file,
         # these are then split into batch_size batches, with the last batch holding the remainder
+        # note: temping to shuffle here but h5py wants the arguments sorted too
+        # we also shuffle on the TF side so not a big deal
         indices = np.arange(self.start_idx, self.end_idx)
         batched_indices = [
             indices[i : i + batch_size] for i in range(0, len(indices), batch_size)
@@ -278,12 +315,8 @@ class ALMDataset:
         return Parallel(
             n_jobs,
             return_as="generator",
-            pre_dispatch="n_jobs",
-            # timeout=60 * 60 * 8,
-        )(
-            delayed(self._generate)(idxs, duplicates, batch_size)
-            for idxs in batched_indices
-        )
+            pre_dispatch=pre_dispatch,
+        )(delayed(self._generate)(idxs, duplicates) for idxs in batched_indices)
 
 
 class MapDataset(ALMDataset):
@@ -301,53 +334,61 @@ class MapDataset(ALMDataset):
         self.rotate = rotate
         super().__init__(file_path=file_path, **kwargs)
 
-    def _generate(self, indices, duplicates, batch_size):
-        def process(alm):
-            o_lmax = hp.Alm.getlmax(alm.shape[-1])
-            n_lmax = 3 * self.nside - 1
-            a = hp.resize_alm(alm, o_lmax, o_lmax, n_lmax, n_lmax)
+    @staticmethod
+    def _alm_to_map(alm, rotate, nside):
+        if rotate:
+            # Apply a random rotation to the maps
+            rotator = hp.Rotator(
+                deg=True,
+                rot=[
+                    np.random.uniform(-180, 180),
+                    np.random.uniform(-90, 90),
+                    np.random.uniform(0, 360),
+                ],
+            )
+            alm = rotator.rotate_alm(alm)
 
-            if self.rotate:
-                # Apply a random rotation to the maps
-                rotator = hp.Rotator(
-                    deg=True,
-                    rot=[
-                        np.random.uniform(-180, 180),
-                        np.random.uniform(-90, 90),
-                        np.random.uniform(0, 360),
-                    ],
-                )
-                a = rotator.rotate_alm(a)
+        m = hp.alm2map(alm, nside, pol=False)
+        return hp.reorder(m, r2n=True)
 
-            m = hp.alm2map(a, self.nside, pol=False)
-            return hp.reorder(m, r2n=True)
+    @staticmethod
+    def _mask_fnls(fnls, mask_prob=0.035859):
+        # generate a mask along the shapes, dup, sim dimensions
+        mask = np.random.rand(*fnls.shape[0:3]) < mask_prob
+        fnls[mask] = 0
+        return fnls
 
-        idx_len = len(indices)
+    def _generate(self, indices, duplicates):
+        batch_size = len(indices)
 
         fnls = np.random.uniform(
             low=self.fnl_min,
             high=self.fnl_max,
-            size=(len(self.shapes), duplicates, idx_len, 1, 1),
+            size=(len(self.shapes), duplicates, batch_size, 1, 1),
         )
-
-        n_cpus = len(os.sched_getaffinity(0))  # number of CPUs, accounting for slurm
-        map_jobs = min(n_cpus, duplicates * batch_size)
+        fnls = self._mask_fnls(fnls)
 
         with h5py.File(self.file_path, mode="r", swmr=True, locking=False) as f:
-            alm_l = np.array([f["alm_l"][self.l_str][indices]])
+            alm_l = np.array([f["alm_l"][self.l_str][indices]])  # type: ignore
             alm_nl = np.array(
-                [f["alm_nl"][self.l_str][s][indices] for s in self.shapes]
+                [f["alm_nl"][self.l_str][s][indices] for s in self.shapes]  # type: ignore
             )
 
         alms = alm_l + np.einsum("i...,i...->...", fnls, alm_nl)
 
-        maps = Parallel(map_jobs)(
-            delayed(process)(sim) for batches in alms for sim in batches
-        )
+        # number of CPUs, accounting for slurm, use 1 less to avoid overloading
+        n_cpus = len(os.sched_getaffinity(0)) // 4 - 1
+        n_jobs = min(n_cpus, duplicates * batch_size)
+        with Parallel(n_jobs, pre_dispatch="n_jobs") as p:  # , prefer="threads"
+            maps = p(
+                delayed(self._alm_to_map)(sim, self.rotate, self.nside)
+                for batches in alms
+                for sim in batches
+            )
 
-        maps = np.transpose(maps, (0, 2, 1))
-        fnls = np.reshape(fnls, (-1, len(self.shapes)))
-
+        maps = np.transpose(maps, (0, 2, 1))  # type: ignore
+        fnls = fnls.transpose(1, 2, 3, 4, 0)
+        fnls = np.reshape(fnls, (duplicates * batch_size, len(self.shapes)))
         return maps, fnls
 
 
@@ -356,7 +397,7 @@ class elsnerDataset(ALMDataset):
         self.rotate = rotate
         super().__init__(file_path, start_idx=start_idx, end_idx=end_idx, **kwargs)
 
-    def _generate(self, indices, duplicates, batch_size):
+    def _generate(self, indices, duplicates):
         def process_alm(i, fnl):
             i = str(i).zfill(4)
             alm_l = hp.read_alm(f"data/elsner/alm_l_{i}_v3.fits", hdu=(1))
@@ -407,11 +448,11 @@ class elsnerMapDataset(elsnerDataset):
         self.nside = nside
         super().__init__(file_path=file_path, **kwargs)
 
-    def _generate(self, indices, duplicates, batch_size):
+    def _generate(self, indices, duplicates):
         def get_alm(i, fnl):
-            i = str(i).zfill(4)
-            alm_l = hp.read_alm(f"data/elsner/alm_l_{i}_v3.fits", hdu=(1))
-            alm_nl = hp.read_alm(f"data/elsner/alm_nl_{i}_v3.fits", hdu=(1))
+            idx = str(i).zfill(4)
+            alm_l = hp.read_alm(f"data/elsner/alm_l_{idx}_v3.fits", hdu=(1))
+            alm_nl = hp.read_alm(f"data/elsner/alm_nl_{idx}_v3.fits", hdu=(1))
 
             alm_l = np.array([[alm_l]]) * 2.725e6
             alm_nl = np.array([[[alm_nl]]]) * 2.725e6
@@ -419,10 +460,7 @@ class elsnerMapDataset(elsnerDataset):
             return alm_l + np.einsum("i...,i...->...", fnl, alm_nl)
 
         def process(alm):
-            a = alm
-            # o_lmax = hp.Alm.getlmax(alm.shape[-1])
-            # n_lmax = 3 * self.nside - 1
-            # a = hp.resize_alm(alm, o_lmax, o_lmax, n_lmax, n_lmax)
+            a = np.copy(alm)  # prevent modification of the alm in global state
 
             if self.rotate:
                 # Apply a random rotation to the maps
@@ -439,16 +477,16 @@ class elsnerMapDataset(elsnerDataset):
             m = hp.alm2map(a, self.nside, pol=False)
             return hp.reorder(m, r2n=True)
 
-        idx_len = len(indices)
+        batch_size = len(indices)
 
         fnls = np.random.uniform(
             low=self.fnl_min,
             high=self.fnl_max,
-            size=(idx_len, len(self.shapes), duplicates, 1, 1),  # todo add pols
+            size=(batch_size, len(self.shapes), duplicates, 1, 1),  # todo add pols
         )
 
         n_cpus = len(os.sched_getaffinity(0))  # number of CPUs, accounting for slurm
-        alm_jobs = min(n_cpus, idx_len)
+        alm_jobs = min(n_cpus, batch_size)
         map_jobs = min(n_cpus, duplicates * batch_size)
 
         alms = Parallel(alm_jobs)(
@@ -456,10 +494,13 @@ class elsnerMapDataset(elsnerDataset):
         )
 
         maps = Parallel(map_jobs)(
-            delayed(process)(sim) for batches in alms for sim in batches
+            delayed(process)(sim)
+            for batches in alms
+            for sim in batches  # type: ignore
         )
 
-        maps = np.transpose(maps, (0, 2, 1))
-        fnls = np.reshape(fnls, (-1, len(self.shapes)))
+        maps = np.transpose(maps, (0, 2, 1))  # type: ignore
+        fnls = fnls.transpose(1, 2, 3, 4, 0)
+        fnls = np.reshape(fnls, (duplicates * batch_size, len(self.shapes)))
 
         return maps, fnls
