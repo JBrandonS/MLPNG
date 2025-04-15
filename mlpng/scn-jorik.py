@@ -2,6 +2,9 @@ import os
 import sys
 import math
 import logging
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+
 import healpy as hp
 import numpy as np
 
@@ -19,6 +22,7 @@ from tensorflow.keras.callbacks import (  # type: ignore
     TerminateOnNaN,
     TensorBoard,
 )
+from tensorflow.keras.optimizers import AdamW  # type: ignore
 from tensorflow.keras.optimizers import AdamW  # type: ignore
 from tensorflow.keras.optimizers.schedules import ExponentialDecay  # type: ignore
 from tensorflow.keras.metrics import RootMeanSquaredError  # type: ignore
@@ -128,7 +132,9 @@ def main():
 
         model = get_model((None, core.npix, core.npols), batch_size, len(shapes))
         model.compile(
-            optimizer=AdamW(learning_rate, weight_decay=0.1),  # type: ignore
+            optimizer=AdamW(
+                learning_rate,  # weight_decay=0.01, global_clipnorm=1.0
+            ),  # type: ignore
             loss="mse",
             metrics=[RootMeanSquaredError()],  # type: ignore
         )
@@ -200,4 +206,6 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    tf.profiler.experimental.start("preflogs")
+    main()
+    tf.profiler.experimental.stop()

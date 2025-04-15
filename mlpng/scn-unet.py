@@ -1,22 +1,21 @@
 import os
 import sys
+import math
 import logging
+
 import healpy as hp
 import numpy as np
 
-# os.environ["KERAS_BACKEND"] = "tensorflow"
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
-os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+# os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 
 import matplotlib.pyplot as plt
-from scipy import rand
 import tensorflow as tf
 from tensorflow import keras  # type: ignore
 from tensorflow.keras import layers  # type: ignore
 from tensorflow.keras.layers import (  # type: ignore
     Conv1D,
     Dense,
-    Dropout,
     LayerNormalization,
     Activation,
     Concatenate,
@@ -27,9 +26,11 @@ from tensorflow.keras.callbacks import (
     TensorBoard,
     ModelCheckpoint,
 )
-from tensorflow.keras.optimizers import AdamW, Adam  # type: ignore
-from tensorflow.keras.optimizers.schedules import ExponentialDecay, LearningRateSchedule  # type: ignore
+from tensorflow.keras.optimizers import AdamW  # type: ignore
+from tensorflow.keras.optimizers.schedules import ExponentialDecay  # type: ignore
 from tensorflow.keras.metrics import RootMeanSquaredError  # type: ignore
+
+import wandb
 
 from mlpng import Core
 from mlpng.utils import (
@@ -41,17 +42,14 @@ from mlpng.utils import (
     plot_metrics,
     try_init_wandb,
 )
-from mlpng.utils.dataloaders import HDF5Dataset
+from mlpng.utils.dataloaders import tfds_from_hdf5
 
-from deepsphere import HealpyGCNN, healpy_layers as hp_layer
+from deepsphere import HealpyGCNN
 from deepsphere.healpy_layers import (
     HealpyChebyshev,
     HealpyPool,
     HealpyPseudoConv_Transpose,
 )
-from deepsphere.gnn_layers import Chebyshev
-import tfkan
-import keract
 
 
 logger = setup_logging(__name__, level=logging.DEBUG)
@@ -203,13 +201,14 @@ class LinearWarmup(keras.optimizers.schedules.LearningRateSchedule):
         return config
 
 
-@keras.saving.register_keras_serializable()  # type: ignore
+# @tf.keras.saving.register_keras_serializable()  # type: ignore
 class SCNBlock(keras.Model):  # type: ignore
 
     def __init__(
         self,
         filters,
         n_mid=None,
+        n_mid_scale=4,
         n_out=None,
         n_neighbors=8,
         cheb_degree=7,
@@ -225,7 +224,7 @@ class SCNBlock(keras.Model):  # type: ignore
         self.filters = filters
         self.n_neighbors = n_neighbors
         if n_mid is None:
-            n_mid = filters * 4
+            n_mid = filters * n_mid_scale
         if n_out is None:
             n_out = filters
         self.n_mid = n_mid
@@ -249,27 +248,26 @@ class SCNBlock(keras.Model):  # type: ignore
         )
 
     def build(self, input_shape):
-        nside = hp.npix2nside(input_shape[1])
-        self.res_conv_1d.build(input_shape)
+        npix = input_shape[-2]
+        nside = hp.npix2nside(npix)
+        indices = np.arange(npix)
 
+        self.res_conv_1d.build(input_shape)
         self.gcnn = HealpyGCNN(
             int(nside),
-            np.arange(input_shape[1]),
+            indices,
             layers=[
                 self.cheb,
-                # LayerNormalization(),
                 Conv1D(self.n_mid, kernel_size=1),
                 LayerNormalization(),
                 Activation(self.activation),
                 Conv1D(self.n_out, kernel_size=1),
-                # LayerNormalization(),
             ],
             verbose=False,
             max_batch_size=self.batch_size,
             initial_Fin=input_shape[-1],
         )
         self.gcnn.build(input_shape)
-        super().build(input_shape)
 
     def call(self, inputs, training=None, mask=None):
         res = inputs
@@ -280,49 +278,47 @@ class SCNBlock(keras.Model):  # type: ignore
         return x + res
 
     def compute_output_shape(self, input_shape):
-        output = (input_shape[0], input_shape[1], self.n_out)
-        return output
+        return (input_shape[0], input_shape[1], self.n_out)
 
 
-@keras.saving.register_keras_serializable()
+# @tf.keras.saving.register_keras_serializable()
 def SCNUNet(
     input_shape,
-    base_channels=8,
+    base_channels=2,
     n_neighbors=8,
-    blocks=[1, 1, 1, 1, 1, 1, 1],
-    pools=[1, 1, 1, 1, 1, 1, 1],
-    cheb_degree=7,
+    cheb_degree=3,
     cheb_init=None,
     cheb_act=None,
     cheb_bias=True,
     cheb_batch=True,
     max_batch_size=64,
-    n_bottleneck=0,
-    token_dim=256,
-    channel_dim=2048,
+    n_bottleneck=1,
+    token_dim=32,
+    channel_dim=16,
     name="SCNUNet",
     scn_act="relu",
 ):
+    nside = hp.npix2nside(input_shape[-2])
+    n_layers = math.floor(math.log(nside, 2))
+    channels = [base_channels * 2**p for p in range(n_layers)]
     inputs = keras.Input(shape=input_shape)
-    channels = [base_channels * 2**p for p in range(len(blocks))]
-    skips = []
 
+    skips = []
     x = inputs
-    for block in range(len(blocks)):
-        for _ in range(blocks[block]):
-            x = SCNBlock(
-                channels[block],
-                n_neighbors=n_neighbors,
-                cheb_degree=cheb_degree,
-                cheb_init=cheb_init,
-                cheb_act=cheb_act,
-                cheb_bias=cheb_bias,
-                cheb_batch=cheb_batch,
-                batch_size=max_batch_size,
-                activation=scn_act,
-            )(x)
+    for layer in range(n_layers):
+        x = SCNBlock(
+            channels[layer],
+            n_neighbors=n_neighbors,
+            cheb_degree=cheb_degree,
+            cheb_init=cheb_init,
+            cheb_act=cheb_act,
+            cheb_bias=cheb_bias,
+            cheb_batch=cheb_batch,
+            batch_size=max_batch_size,
+            activation=scn_act,
+        )(x)
         skips.append(x)
-        x = HealpyPool(p=pools[block], pool_type="AVG")(x)
+        x = HealpyPool(p=1, pool_type="AVG")(x)
 
     # bottleneck
     for i in range(n_bottleneck):
@@ -330,27 +326,26 @@ def SCNUNet(
     if n_bottleneck > 0:
         x = layers.LayerNormalization(name="Bottleneck_norm")(x)
 
-    for block, skip in zip(reversed(range(len(blocks))), reversed(skips)):
-        x = HealpyPseudoConv_Transpose(pools[block], channels[block])(x)
-        # x = Concatenate()([x, skip])
-
-        for _ in range(blocks[block]):
-            x = SCNBlock(
-                channels[block],
-                n_neighbors=n_neighbors,
-                cheb_degree=cheb_degree,
-                cheb_init=cheb_init,
-                cheb_act=cheb_act,
-                cheb_bias=cheb_bias,
-                cheb_batch=cheb_batch,
-                batch_size=max_batch_size,
-            )(x)
+    # decoder
+    for block, skip in zip(reversed(range(n_layers)), reversed(skips)):
+        x = HealpyPseudoConv_Transpose(1, channels[block])(x)
+        x = Concatenate()([x, skip])
+        x = SCNBlock(
+            channels[block],
+            n_neighbors=n_neighbors,
+            cheb_degree=cheb_degree,
+            cheb_init=cheb_init,
+            cheb_act=cheb_act,
+            cheb_bias=cheb_bias,
+            cheb_batch=cheb_batch,
+            batch_size=max_batch_size,
+        )(x)
 
     x = Conv1D(input_shape[-1], 1)(x)
     return keras.Model(inputs=inputs, outputs=x, name=name)  # type: ignore
 
 
-@keras.saving.register_keras_serializable()  # type: ignore
+# @tf.keras.saving.register_keras_serializable()  # type: ignore
 class mlp_block(layers.Layer):
     def __init__(self, hidden_dim=512, activation="gelu", name="MLPBlock"):
         super().__init__(name=name)
@@ -373,7 +368,7 @@ class mlp_block(layers.Layer):
         }
 
 
-@keras.saving.register_keras_serializable()  # type: ignore
+# @tf.keras.saving.register_keras_serializable()  # type: ignore
 class mixer_block(layers.Layer):
     def __init__(
         self,
@@ -400,7 +395,7 @@ class mixer_block(layers.Layer):
     def call(self, inputs):
         y = self.norm(inputs)
         y = self.perm_1(y)
-        y = self.perm_2(self.token_mixing(self.perm_1(y)))
+        y = self.token_mixing(y)
         y = self.perm_2(y)
         x = inputs + y
         y = self.norm(x)
@@ -415,30 +410,36 @@ class mixer_block(layers.Layer):
         }
 
 
-def get_model(
+def SCNEstimator(
     full_model,
-    ff_layers=3,
+    ff_layers=1,
     token_dim=256,
-    channel_dim=2048,
-    activation="relu",
-    name="SCNReg",
+    channel_dim=128,
+    mixer_activation="gelu",
+    name="SCNEstimator",
 ):
     encoder_input = full_model.input
     encoder_output = None
     for layer in full_model.layers:
-        if "healpy_pool_6" == layer.name:
+        if "Bottleneck_0" == layer.name:
             encoder_output = layer.output
             break
+
     encoder_model = keras.Model(inputs=encoder_input, outputs=encoder_output)  # type: ignore
     encoder_model.trainable = False
 
     x = encoder_model.output
     for i in range(ff_layers):
         x = mixer_block(
-            token_dim, channel_dim, activation=activation, name=f"MLPMixerBlock_{i}"
+            token_dim,
+            channel_dim,
+            activation=mixer_activation,
+            name=f"MLPMixerBlock_{i}",
         )(x)
+
     x = layers.GlobalAveragePooling1D()(x)
-    x = Dense(1, kernel_initializer="zeros")(x)
+    # x = Dense(1, kernel_initializer="zeros")(x)
+    x = Dense(1)(x)
 
     return keras.Model(inputs=encoder_input, outputs=x, name=name)  # type: ignore
 
@@ -510,76 +511,95 @@ def unet_plots(model, ds, core, name):
 
 
 def main():
-    args = [
-        "settings/n128.json",
-        "--nsims",
-        "1000",
-        "--narray",
-        "1",
-        "--pols",
-        "T",
-    ]
-    core = Core(args)
+    core = Core()
     fisher = get_fisher(core.file, "fisher_iso")
     npix = hp.nside2npix(core.nside)
 
-    model_file = f"{core.dirs['model']}/{core.name}-{core.slurm.job}-unet-small.keras"
-    reg_file = f"{core.dirs['model']}/{core.name}-{core.slurm.job}-small-reg.keras"
+    unet_file = f"{core.dirs['model']}/scnunet-{core.name}.keras"
+    model_file = f"{core.dirs['model']}/scnestimator{core.name}.keras"
+
+    unet_epochs = 40
+    unet_batch_size = 64
+    unet_decay_steps = int(core.total_sims * 0.8 * core.data_fraction / unet_batch_size)
+
+    estimator_epochs = 40
+    estimator_batch_size = 64
+    estimator_decay_steps = int(
+        core.total_sims * 0.8 * core.data_fraction / estimator_batch_size
+    )
+
+    metrics = [RootMeanSquaredError()]
     strategy = tf.distribute.MirroredStrategy()
-    metrics = []
 
-    if not os.path.exists(model_file):
-        BATCH_SIZE = 8
-
-        f = 10
-        ds = HDF5Dataset(core.file, x_name="alm", y_name="fnl")
-        train_ds, test_ds, val_ds = ds.split(0.7 / f, 0.2 / f, 0.1 / f)
-        decay_steps = len(train_ds) // BATCH_SIZE  # once per epoch
-        train_tf, test_tf, val_tf = (
-            to_tf(x, core, BATCH_SIZE, True, for_unet=True)
-            for x in [train_ds, test_ds, val_ds]
+    if not os.path.exists(unet_file):
+        train, val, test = tfds_from_hdf5(
+            core,
+            "/map",
+            "/map",
+            data_fraction=core.data_fraction,
+            batch_size=unet_batch_size,
+            reshape_y=False,
+            transpose_y=True,
+            buffer=128,
+            cache_prefix="unet",
         )
 
         with strategy.scope():
-            learning_rate = ExponentialDecay(4e-3, decay_steps, 0.95, staircase=True)
-            # learning_rate = LinearWarmup(learning_rate, decay_steps * 10, 1e-5)
+            learning_rate = ExponentialDecay(
+                4e-3, unet_decay_steps, 0.95, staircase=True
+            )
+            learning_rate = LinearWarmup(learning_rate, unet_decay_steps, 1e-5)
 
-            unet = SCNUNet((npix, 1))
+            unet = SCNUNet((npix, core.npols))
             unet.compile(
-                optimizer=AdamW(learning_rate),  # type: ignore
+                optimizer=AdamW(learning_rate, weight_decay=0.01, global_clipnorm=1.0),  # type: ignore
                 loss="mse",
-                metrics=metrics,  # type: ignore
+                metrics=metrics,
             )
 
         unet.summary()
 
-        tf_dir = f"{core.dirs['tb']}/{core.name}-unet"
         callbacks = [
             TerminateOnNaN(),
             EarlyStopping(monitor="val_loss", patience=8, restore_best_weights=True),
-            TensorBoard(log_dir=tf_dir),
-            ModelCheckpoint(tf_dir, monitor="val_loss", save_best_only=True),
         ]
-        try_init_wandb(notes="model testing", tags=["SCNUNet"], append_to=callbacks)
+        if core.use_tb:
+            callbacks += [
+                TensorBoard(log_dir=core.dirs["tb"]),
+                ModelCheckpoint(
+                    core.dirs["tb"], monitor="val_loss", save_best_only=True
+                ),
+            ]
+        if core.use_wandb:
+            try_init_wandb(
+                notes="model testing",
+                tags=["SCNUNet"],
+                append_to=callbacks,
+                patch_tb=core.use_tb,
+            )
 
         history = unet.fit(
-            train_tf,
-            epochs=30,
-            validation_data=val_tf,
+            train,
+            epochs=unet_epochs,
+            validation_data=val,
             callbacks=callbacks,
-            verbose=2,
+            verbose=1,
         )
-        unet.evaluate(test_tf, verbose=2)  # type: ignore
-        unet.save(model_file)
+        unet.evaluate(test, verbose=2)  # type: ignore
+        unet.save(unet_file)
 
-        # plot_weights(unet, f"{core.dirs['plot']}/{core.name}/unet-weights")
-        unet_plots(unet, test_tf, core, f"{core.name}-{core.slurm.job}")
-        del train_tf, test_tf, val_tf
+        if core.use_wandb:
+            wandb.finish()
+
+        unet_plots(unet, test, core, f"{core.name}-{core.slurm.job}")
+        plot_metrics(
+            history, metrics=["loss"], save_file=core.get_plot_file("unet_loss")
+        )
     else:
-        print("Loading model from file", model_file, flush=True)
+        logger.info("Loading model from file: %s", model_file)
         with strategy.scope():
             unet = keras.saving.load_model(  # type: ignore
-                model_file,
+                unet_file,
                 custom_objects={
                     "SCNBlock": SCNBlock,
                     "HealpyPool": HealpyPool,
@@ -589,67 +609,71 @@ def main():
             )
 
     #####################################################################
-    BATCH_SIZE = 64
+    # Train estimator
 
-    f = 1
-    ds = HDF5Dataset(core.file, x_name="alm", y_name="fnl")
-    train_ds, test_ds, val_ds = ds.split(0.9 / f, 0.05 / f, 0.05 / f)
-    train_tf, test_tf, val_tf = (
-        to_tf(x, core, BATCH_SIZE) for x in [train_ds, test_ds, val_ds]
+    train, val, test = tfds_from_hdf5(
+        core,
+        "/map",
+        "/fnl",
+        data_fraction=core.data_fraction,
+        batch_size=estimator_batch_size,
     )
-    decay_steps = len(train_ds) // BATCH_SIZE  # once per epoch
 
     with strategy.scope():
-        learning_rate = ExponentialDecay(4e-3, decay_steps * 3, 0.95, staircase=False)
-        learning_rate = LinearWarmup(learning_rate, decay_steps * 10, 1e-8)
+        learning_rate = ExponentialDecay(
+            4e-3, estimator_decay_steps, 0.95, staircase=False
+        )
+        learning_rate = LinearWarmup(learning_rate, estimator_decay_steps, 1e-8)
 
-        model = get_model(unet)
-        model.build((BATCH_SIZE, npix, 1))
-        model.compile(
-            optimizer=AdamW(learning_rate, global_clipnorm=1),  # type: ignore
+        estimator = SCNEstimator(unet)
+        estimator.build((npix, core.npols))
+        estimator.compile(
+            optimizer=AdamW(learning_rate, weight_decay=0.01, global_clipnorm=1.0),  # type: ignore
             loss="mse",
-            metrics=[],  # type: ignore
+            metrics=metrics,
         )
 
-    model.summary()
+    estimator.summary()
 
-    tf_dir = f"{core.dirs['tb']}/{core.name}-reg"
     callbacks = [
         TerminateOnNaN(),
         EarlyStopping(monitor="val_loss", patience=8, restore_best_weights=True),
-        TensorBoard(log_dir=tf_dir),
-        ModelCheckpoint(tf_dir, monitor="val_loss", save_best_only=True),
     ]
-    try_init_wandb(notes="model testing", tags=["SCNUNet"], append_to=callbacks)
+    if core.use_tb:
+        callbacks += [
+            TensorBoard(log_dir=core.dirs["tb"]),
+            ModelCheckpoint(core.dirs["tb"], monitor="val_loss", save_best_only=True),
+        ]
+    if core.use_wandb:
+        try_init_wandb(
+            notes="model testing",
+            tags=["SCNUNet-Estimator"],
+            append_to=callbacks,
+            patch_tb=core.use_tb,
+        )
 
-    history = model.fit(
-        train_tf,
-        epochs=300,
-        validation_data=val_tf,
+    history = estimator.fit(
+        train,
+        epochs=estimator_epochs,
+        validation_data=val,
         callbacks=callbacks,
         verbose=2,
     )
-    model.evaluate(test_tf, verbose=2)  # type: ignore
-    model.save(reg_file)
+    estimator.evaluate(test, verbose=2)  # type: ignore
+    estimator.save(model_file)
 
-    ###########################################################
-
-    preds = model.predict(test_tf, verbose=2).flatten() * 100  # type: ignore
-    truth = np.concatenate([y for _, y in test_tf]) * 100  # type: ignore
-
-    name = f"SCNUReg-{core.slurm.job}"
-    save_base = f"{core.dirs['plot']}/{core.name}"
-    os.makedirs(save_base, exist_ok=True)
+    preds = estimator.predict(test, verbose=2).flatten()
+    truth = np.concatenate([y for _, y in test])
 
     print_errors(truth, preds, fisher)
-    plot_metrics(history, metrics=["loss"], save_file=f"{save_base}/{name}-loss.png")
+    plot_metrics(history, metrics=["loss"], save_file=core.get_plot_file("est_loss"))
     plot_predictions(
         truth,
         preds,
         fisher=fisher,
-        save_file=f"{save_base}/{name}-preds.png",
+        save_file=core.get_plot_file("est_predictions"),
     )
-    plot_histogram(truth, preds, save_file=f"{save_base}/{name}-hist.png")
+    plot_histogram(truth, preds, save_file=core.get_plot_file("est_histogram"))
 
 
 if __name__ == "__main__":

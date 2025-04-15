@@ -4,10 +4,7 @@
 
 # The settings files to use for the sims. These should be found in settings/*.json
 SETTINGS=(
-    # "n32"
-    # "n64"
     "n128"
-    # "elsner"
 )
 
 # CLI args to change the command ran, helps prevent needing to change the settings file for small / test changes

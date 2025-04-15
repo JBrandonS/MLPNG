@@ -7,6 +7,7 @@
 #SBATCH --gpus-per-task=1
 #SBATCH --output=data/logs/trainer/%j.log
 #SBATCH --time=1-00:00:00
+#SBATCH --time=1-00:00:00
 #SBATCH --account=jrmeyers_ml_cmb_0001
 
 module="mlpng.${1:-scn-jorik}"
@@ -17,7 +18,7 @@ mkdir -p data/logs/trainer
 echo "Running trainer with module $module on $(hostname)"
 
 module purge
-module load spack conda gcc/13.2.0 cuda/12.4.1-vz7djzz hpc-x/2.17.1 openblas/0.3.26-sauswx6 amdlibflame/4.2-5lac6gu nccl/2.21.5-1-nnpmvmq cudnn/8.9.7.29-12-lo4uzx3
+module load conda gcc/13.2.0 cuda/12.4.1-vz7djzz hpc-x/2.17.1 openblas/0.3.26-sauswx6 amdlibflame/4.2-5lac6gu nccl/2.21.5-1-nnpmvmq cudnn/8.9.7.29-12-lo4uzx3
 module list
 conda activate ds25
 
