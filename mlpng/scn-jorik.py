@@ -6,7 +6,6 @@ import healpy as hp
 import numpy as np
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-# os.environ["NCCL_DEBUG"] = "WARN"
 
 import tensorflow as tf
 from tensorflow.keras.layers import (  # type: ignore
@@ -14,16 +13,14 @@ from tensorflow.keras.layers import (  # type: ignore
     Dropout,
     Flatten,
     LeakyReLU,
-    BatchNormalization,
 )
 from tensorflow.keras.callbacks import (  # type: ignore
     EarlyStopping,
     TerminateOnNaN,
     TensorBoard,
-    ModelCheckpoint,
 )
-from tensorflow.keras.optimizers import Adam, AdamW  # type: ignore
-from tensorflow.keras.optimizers.schedules import ExponentialDecay, CosineDecay  # type: ignore
+from tensorflow.keras.optimizers import AdamW  # type: ignore
+from tensorflow.keras.optimizers.schedules import ExponentialDecay  # type: ignore
 from tensorflow.keras.metrics import RootMeanSquaredError  # type: ignore
 
 from deepsphere import HealpyGCNN
@@ -41,8 +38,7 @@ from mlpng.utils import (
     plot_metrics,
     try_init_wandb,
 )
-from mlpng.utils.dataloaders import MapDataset, elsnerMapDataset
-from mlpng.utils.callbacks import LinearWarmup
+from mlpng.utils.dataloaders import MapDataset
 
 
 logger = setup_logging(__name__, level=logging.DEBUG)
@@ -53,16 +49,13 @@ logger.info("CUDA version: %s", tf.sysconfig.get_build_info()["cuda_version"])
 logger.info("cuDNN version: %s", tf.sysconfig.get_build_info()["cudnn_version"])
 
 
-def get_model(input_shape, batch_size=32, n_out=1):
+def get_model(input_shape, max_batch_size=32, n_out=1):
     nside = hp.npix2nside(input_shape[1])
-
     layers = []
-
-    # layers.append(tf.keras.layers.LayerNormalization(axis=[1, 2], epsilon=1e-16))
 
     n_layers = math.floor(math.log(nside, 2))
     for i in range(n_layers):
-        fout = 32  # 2 ** (4 + i)
+        fout = 32
         layers.append(
             HealpyChebyshev(
                 K=2,
@@ -86,7 +79,7 @@ def get_model(input_shape, batch_size=32, n_out=1):
         indices=np.arange(input_shape[1]),
         layers=layers,
         n_neighbors=8,
-        max_batch_size=batch_size,
+        max_batch_size=max_batch_size,
         initial_Fin=input_shape[-1],
     )
 
@@ -96,7 +89,7 @@ def get_model(input_shape, batch_size=32, n_out=1):
 
 def main():
     batch_size = 64
-    max_epochs = 100
+    max_epochs = 300
     shapes = ["local"]
 
     core = Core()
@@ -114,12 +107,24 @@ def main():
         cache_file=core.name,
     )
 
-    decay_steps = core.total_sims * 0.4 * 25 // batch_size * 5
+    # the paper does not rotate the test set
+    test.rotate = False  # type: ignore
+
+    epoch_steps = math.ceil(core.total_sims * 0.4 * 25 // batch_size)
+    decay_steps = epoch_steps * 1
+
+    # get this data that we will need later, also serves to create the test data
+    # this allows us to have the full cached dataset by the end of the first epoch
+    # if the cache exists this is very fast
+    logger.debug("Creating test cache")
+    y_test = np.concatenate([y for _, y in test])  # type: ignore
 
     strategy = tf.distribute.MirroredStrategy()
     with strategy.scope():
-        learning_rate = ExponentialDecay(4e-3, decay_steps, 0.98, staircase=True)
-        # learning_rate = LinearWarmup(learning_rate, decay_steps * 5, 1e-5)
+        learning_rate = 5e-4
+        learning_rate = ExponentialDecay(
+            learning_rate, decay_steps, 0.95, staircase=True
+        )
 
         model = get_model((None, core.npix, core.npols), batch_size, len(shapes))
         model.compile(
@@ -134,12 +139,12 @@ def main():
         TerminateOnNaN(),
         EarlyStopping(monitor="val_loss", patience=16, restore_best_weights=True),
     ]
+    tb_dir = f"{core.dirs['tb']}/{core.name}/{core.slurm.job}"
     if core.use_tb:
         callbacks.append(
             TensorBoard(
-                log_dir=f"{core.dirs['tb']}/{core.name}/{core.slurm.job}",
+                log_dir=tb_dir,
                 histogram_freq=1,
-                # write_images=True,
                 write_steps_per_second=True,
             )
         )
@@ -148,12 +153,13 @@ def main():
             config={
                 "batch_size": batch_size,
                 "max_epochs": max_epochs,
-                # "learning_rate": 5e-3,
+                "shapes": shapes,
+                "learning_rate": repr(learning_rate),
             },
             dir=core.dirs["wandb"],
             append_to=callbacks,
             patch_tb=core.use_tb,
-            patch_logdir=f"{core.dirs['tb']}/{core.name}/{core.slurm.job}",
+            patch_logdir=tb_dir,
         )
 
     history = model.fit(
@@ -163,27 +169,33 @@ def main():
         callbacks=callbacks,
         verbose=2,
     )
-    model.save(f"{core.dirs['model']}/{core.name}-{core.slurm.job}-jorik.keras")
 
     logger.debug("Getting final plots")
-    y = np.concatenate([y for _, y in test])  # type: ignore
     preds = model.predict(test, verbose=0)
     # using evaluate to get the rmse since manually calculating it was giving a different value
     rmse = model.evaluate(test, verbose=0)[1]
     fisher = ds.get_fisher("local")
 
-    # print_errors(y, preds, fisher)
+    # save only if our results are good enough
+    if rmse <= 3 * np.sqrt(1 / fisher):  # type: ignore
+        model.save(
+            f"{core.dirs['model']}/{core.name}-{core.slurm.job}-{rmse:.2f}-jorik.keras"
+        )
+
+    print_errors(y_test, preds, fisher)
     plot_metrics(history, metrics=["loss"], save_file=core.get_plot_file("jorik-loss"))
-    for shape in range(y.shape[1]):
+    for shape in range(y_test.shape[1]):
         plot_predictions(
-            y[:, shape],
+            y_test[:, shape],
             preds[:, shape],
-            fisher=fisher,
+            fisher=fisher,  # type: ignore
             title=f"RMSE: {rmse:.3f}",
             save_file=core.get_plot_file("jorik-preds"),
         )
         plot_histogram(
-            y[:, shape], preds[:, shape], save_file=core.get_plot_file("jorik-hist")
+            y_test[:, shape],
+            preds[:, shape],
+            save_file=core.get_plot_file("jorik-hist"),
         )
 
 

@@ -6,8 +6,8 @@
 SETTINGS=(
     # "n32"
     # "n64"
-    # "n128"
-    "elsner"
+    "n128"
+    # "elsner"
 )
 
 # CLI args to change the command ran, helps prevent needing to change the settings file for small / test changes
@@ -16,7 +16,10 @@ SETTINGS=(
 # some additional args are allowed for the trainer see scripts/models/modelcore.py
 ARGS=(
     "--nsims" "10000"
-    "--shapes" "local"
+    # "--shapes" "local"
+    # "--shapes" "equilateral"
+    # "--shapes" "orthogonal"
+    # "--shapes" "all"
     # "--pols" "T"
     # "--base_name" "jorik-new"
     # "--fnl_range" "-1000" "1000"
@@ -28,7 +31,8 @@ ARGS=(
 # these models should be registered with @register_model
 MODELS=(
     # "scn-jorik"
-    "scn-shapes"
+    # "scn-shapes"
+    "scn-big"
 )
 
 # loops through all the SETTINGS files and for each submits a slurm job for each MODEL

@@ -9,6 +9,7 @@ import numpy as np
 
 from .utils import Slurm, setup_logging
 
+
 class Core:
     """
     The `Core` class represents the core functionality of the MLPNG (Machine Learning for Primordial Non-Gaussianity) project.
@@ -451,7 +452,7 @@ class Core:
         self.use_t = "T" in self.pols
         self.use_e = "E" in self.pols
         self.use_b = False  # "B" in self.pols
-        self.use_pols = self.pols == 3 #used for hp commands
+        self.use_pols = self.pols == 3  # used for hp commands
 
         self.use_wandb = self._get("wandb", False)
         self.use_tb = self._get("tensorboard", False)
@@ -513,7 +514,7 @@ class Core:
             n_ell[0] = convert(self._get("noise_tt", 1)) ** 2
             n_ell[1] = convert(self._get("noise_ee", 5)) ** 2
             n_ell[2] = 0  # B is always 0
-            n_ell[3] = 0 # no TE noise
+            n_ell[3] = 0  # no TE noise
         else:
             n_ell = np.full((4, self.nell), 1e-16, dtype=self.r_dtype)
             b_ell = np.ones((4, self.nell), dtype=self.r_dtype)
@@ -604,7 +605,7 @@ class Core:
         base = self._get("base_name", base_name)
         if base.startswith("+"):
             base = f"{base_name}{base[1:]}"
-        self.name = f"{base}_{pol_str}_{total_sims}" #_f{fstr}"
+        self.name = f"{base}_{pol_str}_{total_sims}"  # _f{fstr}"
 
         self.dirs = {}
         self.dirs["base"] = self._get("base_dir", "data")
