@@ -13,7 +13,7 @@ from lenspyx import utils_hp
 from scipy import linalg
 
 import camb
-from ksw import Cosmology, Shape, KSW
+from ksw import Cosmology, Shape, KSW, ReducedBispectrum
 from ksw.radial_functional import radial_func
 
 from . import Core
@@ -24,6 +24,7 @@ mpi_comm = MPI.COMM_WORLD
 mpi_rank = mpi_comm.Get_rank()
 mpi_size = mpi_comm.Get_size()
 mpi_root = mpi_rank == 0
+
 
 def integrand(alm, alpha_l, bl_div_cl, lmax, nside, upscale=False):
     """
@@ -80,7 +81,6 @@ def trap_generator(gen, radii):
 
 
 class Generator(Core):
-
     def __init__(self, argv=None, log_level=logging.DEBUG):
         super().__init__(argv, log_level=log_level)
         self.logger = setup_logging("mlpng.generator", level=log_level)
@@ -93,73 +93,18 @@ class Generator(Core):
         self.cosmo.compute_c_ell()
 
         if self.lensing:
-            self.c_ell_lensed = self.cosmo.c_ell["lensed_scalar"]["c_ell"][
-                : self.nell
-            ].T
-            # self.c_ell_lensed = c_ell_lensed.astype(self.r_dtype)
+            c_ell_lensed = self.cosmo.c_ell["lensed_scalar"]["c_ell"][: self.nell]
+            self.c_ell_lensed = c_ell_lensed.T.astype(self.r_dtype)
 
-        self.c_ell = self.cosmo.c_ell["unlensed_scalar"]["c_ell"][: self.nell].T
-        # ic_ell = np.zeros_like(self.c_ell)
-        # ic_ell[self.pol_idxs(), self.lmin :] = (
-        #     1 / self.c_ell[self.pol_idxs(), self.lmin :]
-        # )
+        c_ell = self.cosmo.c_ell["unlensed_scalar"]["c_ell"][: self.nell].T
+        self.c_ell = c_ell.astype(self.r_dtype)
 
         pols = self.pol_idxs()
         self.cov = self.b_ell**2 * self.c_ell + self.n_ell
+        # self.cov = self.c_ell
         self.cov = remove_mono_dipole(self.cov)
-        self.icov = np.zeros_like(self.cov)
-        self.icov[pols, self.lmin :] = 1 / self.cov[pols, self.lmin :]
-
-        # icov = np.zeros_like(self.cov)
-        # icov[pols, self.lmin :] = 1 / self.cov[pols, self.lmin :]
-        # inoise = np.full(self.n_ell.shape, 1e-16)
-        # inoise[pols, self.lmin :] = 1 / self.n_ell[pols, self.lmin :]
-        # self.inoise = inoise
-        # icov = self.get_itotcov_ell(self.icov, inoise, self.b_ell)
-        # self.icov2 = icov[pols, pols]
-
-    # def calculate_icov(self, S, P, N, s):
-    #     """
-    #     Calculate icov based on the given equation:
-    #     x^icov = S^{-1} (S^{-1} + P^H N^{-1} P)^{-1} P^H N^{-1} P s
-
-    #     Parameters:
-    #     S (numpy.ndarray): Signal covariance matrix
-    #     P (numpy.ndarray): Observation matrix (P = M Y B)
-    #     N (numpy.ndarray): Noise covariance matrix
-    #     s (numpy.ndarray): Spherical harmonic coefficients of the signal
-
-    #     Returns:
-    #     numpy.ndarray: The calculated icov
-    #     """
-    #     # print(
-    #     #     f"S shape: {S.shape}, P shape: {P.shape}, N shape: {N.shape}, s shape: {s.shape}"
-    #     # )
-    #     # Calculate inverse matrices
-    #     S_inv = 1 / S  # linalg.inv(S)
-    #     N_inv = 1 / N  # linalg.inv(N)
-
-    #     # Calculate P^H (Hermitian transpose of P)
-    #     P_H = P.conj()  # .T
-
-    #     # Calculate P^H N^{-1} P
-    #     PH_Ninv_P = P_H * N_inv * P
-
-    #     # Calculate (S^{-1} + P^H N^{-1} P)^{-1}
-    #     inner_term = 1 / (S_inv + PH_Ninv_P)
-
-    #     # Calculate P^H N^{-1} P s
-    #     # PH_Ninv_P_s = PH_Ninv_P * s
-    #     PH_Ninv_P_s = hp.almxfl(s[0], PH_Ninv_P[0])
-
-    #     # Calculate the final result
-    #     # print(
-    #     #     f"S_inv shape: {S_inv.shape}, inner_term shape: {inner_term.shape}, PH_Ninv_P_s shape: {PH_Ninv_P_s.shape}"
-    #     # )
-    #     # icov = S_inv * inner_term * PH_Ninv_P_s
-    #     icov = hp.almxfl(PH_Ninv_P_s, (S_inv * inner_term)[0])
-    #     icov = np.nan_to_num(icov, nan=0.0, posinf=0.0, neginf=0.0)
-    #     return np.array([icov])
+        self.icov = np.zeros_like(self.cov[pols])
+        self.icov[:, self.lmin :] = 1 / self.cov[pols, self.lmin :]
 
     def get_ksw(self, shape, step=True, step_alms=None):
         ns = self.cosmo_params["ns"]
@@ -187,7 +132,6 @@ class Generator(Core):
         # respectively. ^H denotes the Hermitian transpose.
         ksw = KSW(
             self.cosmo.red_bispectra,
-            # lambda a: self.calculate_icov(self.cov, self.b_ell, self.n_ell, a),
             lambda a: self.icov_func(a),
             self.lmax,
             self.pols,
@@ -211,64 +155,12 @@ class Generator(Core):
 
     def icov_func(self, alm, icov=None):
         if icov is None:
-            # return self.calculate_icov(self.cov, self.b_ell, self.n_ell, alm)
             icov = self.icov
 
         ret = np.zeros_like(alm)
         for pol in range(ret.shape[0]):
             ret[pol] = hp.almxfl(alm[pol], icov[pol])
         return ret
-
-    # @staticmethod
-    # def get_itotcov_ell(icov_signal_ell, icov_noise_ell=None, b_ell=None):
-    #     """
-    #     Combine signal and noise power spectra into total inverse
-    #     isotropic covariance: S^-1 (S^-1 + B N^-1 B)^-1 B N^-1 B
-    #     = (S + B^-1 N B^-1)^-1.
-
-    #     Taken from Adri's KSW code
-
-    #     Parameters
-    #     ----------
-    #     icov_signal_ell : (npol, npol, nell) or (npol, nell) array
-    #         Inverse signal covariance
-    #     icov_noise_ell : (npol, npol, nell) or (npol, nell) array
-    #         Inverse noise covariance matrix
-    #     b_ell : (npol, nell) array
-    #         Beam transfer function.
-
-    #     Returns
-    #     -------
-    #     itotcov_ell : (npol, npol, nell) array
-    #         Total inverse covariance matrix.
-    #     """
-    #     if icov_noise_ell is None:
-    #         return icov_signal_ell.copy()
-
-    #     # Check if icov_signal_ell is (npol, nell) and convert to (npol, npol, nell)
-    #     if icov_signal_ell.ndim == 2:
-    #         npol, _ = icov_signal_ell.shape
-    #         icov_signal_ell = (
-    #             icov_signal_ell[:, np.newaxis, :] * np.eye(npol)[:, :, np.newaxis]
-    #         )
-
-    #     # Check if icov_noise_ell is (npol, nell) and convert to (npol, npol, nell)
-    #     if icov_noise_ell.ndim == 2:
-    #         npol, _ = icov_noise_ell.shape
-    #         icov_noise_ell = (
-    #             icov_noise_ell[:, np.newaxis, :] * np.eye(npol)[:, :, np.newaxis]
-    #         )
-
-    #     if b_ell is not None:
-    #         b_ell = b_ell * np.eye(b_ell.shape[0])[:, :, np.newaxis]
-    #         in_mat = np.einsum("ijl, jkl, kol -> iol", b_ell, icov_noise_ell, b_ell)
-    #     else:
-    #         in_mat = icov_noise_ell
-
-    #     imat = np.linalg.inv((icov_signal_ell + in_mat).T).T
-    #     itotcov_ell = np.einsum("ijl, jkl -> ikl", imat, in_mat)
-    #     itotcov_ell = np.einsum("ijl, jkl -> ikl", icov_signal_ell, itotcov_ell)
-    #     return itotcov_ell
 
     def generate_alm(self, nsims=None, c_ells=None) -> np.ndarray:
         """
@@ -353,7 +245,9 @@ class Generator(Core):
         )(self.ells)
 
         bl_div_cl = np.zeros_like(beta_l)
-        bl_div_cl[:, self.lmin :] = beta_l[:, self.lmin :] * self.icov.T[None, self.lmin :, pol_idxs]
+        bl_div_cl[:, self.lmin :] = (
+            beta_l[:, self.lmin :] * self.icov.T[None, self.lmin :, pol_idxs]
+        )
 
         # ensure all arrays are c contiguous, they wont be since we are using the interpolator which returns f contiguous
         alpha_l = np.ascontiguousarray(alpha_l)
@@ -365,7 +259,9 @@ class Generator(Core):
         # so we give it a temp folder to use, which wont have that problem
         temp_folder = os.environ.get("SCRATCH", None)
         self.logger.debug("Using temp folder for alm_nl generation: %s", temp_folder)
-        parallel = Parallel(self.slurm.n_cpus, return_as="generator", temp_folder=temp_folder)
+        parallel = Parallel(
+            self.slurm.n_cpus, return_as="generator", temp_folder=temp_folder
+        )
         alm_nl = np.zeros_like(alms[:, pol_idxs])
 
         self.logger.debug("Starting...")
@@ -497,6 +393,47 @@ class Generator(Core):
             }
             save_data(self.file, sdata)
             self.logger.info("Finished %s!", shape)
+
+    def compute_fisher_shapes(self, shapes):
+        estimator = self.get_ksw(shapes[0], step=False)  # shape here doesnt matter
+        if len(shapes) == 1:
+            return [estimator.compute_fisher_isotropic(self.icov, comm=mpi_comm)]
+
+        tr_ell_k = self.cosmo.transfer["tr_ell_k"]
+        k = self.cosmo.transfer["k"]
+        ells_sparse = self.cosmo.transfer["ells"]
+        ps = self.cosmo_params["pivot_scalar"]
+        ns = self.cosmo_params["ns"]
+        As = self.cosmo.camb_params.InitPower.As
+
+        red_bispectra = []
+        amp_factor = 2 * (2 * np.pi**2 * As) ** 2 * (3 / 5)
+
+        for shape in shapes:
+            match shape:
+                case "local":
+                    shape = Shape.prim_local(ns, pivot=ps)
+                case "equilateral":
+                    shape = Shape.prim_equilateral(ns, pivot=ps)
+                case "orthogonal":
+                    shape = Shape.prim_orthogonal(ns, pivot=ps)
+                case _:
+                    raise ValueError(f"Unknown shape {shape}")
+
+            # this is cosmology.add_prim_reduced_bispectrum
+            f_k = shape.get_f_k(k)
+            amps = np.asarray(shape.amps).copy()
+            amps *= amp_factor
+
+            red_bisp = radial_func(f_k, tr_ell_k, k, self.radii, ells_sparse)
+            factors, rule, weights = self.cosmo._parse_prim_reduced_bispec(
+                red_bisp, self.radii, shape.rule, amps
+            )
+            red_bispectra.append(
+                ReducedBispectrum(factors, rule, weights, ells_sparse, shape.name)
+            )
+
+        return estimator.compute_fisher_multi(self.icov, red_bispectra, comm=mpi_comm)
 
 
 if __name__ == "__main__":
