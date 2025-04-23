@@ -101,7 +101,6 @@ class Generator(Core):
 
         pols = self.pol_idxs()
         self.cov = self.b_ell**2 * self.c_ell + self.n_ell
-        # self.cov = self.c_ell
         self.cov = remove_mono_dipole(self.cov)
         self.icov = np.zeros_like(self.cov[pols])
         self.icov[:, self.lmin :] = 1 / self.cov[pols, self.lmin :]
@@ -120,7 +119,7 @@ class Generator(Core):
             case _:
                 raise ValueError(f"Unknown shape {shape}")
 
-        #  hack to remove the previous bispectrum
+        #  hack to remove the previous bispectrum, if there is one
         self.cosmo.red_bispectra = []
         self.cosmo.add_prim_reduced_bispectrum(shape, self.radii)
 
@@ -353,14 +352,22 @@ class Generator(Core):
         """
         pol_idxs = self.pol_idxs()
 
+        # here we get the linear terms
         alm_l = self.generate_alm()
         alm_l_lensed = self.lens_alms(alm_l)
+
+        # we grab the fisher matrix here to save it, and calculate the marginal likelihoods
+        fisher_mat = self.compute_fisher_shapes(self.shapes)
+        marg_likes = np.sqrt(np.diag(np.linalg.inv(fisher_mat)))
+        self.logger.debug("Marginal likelihoods: %s", marg_likes)
 
         sdata = {
             "alm_l": {
                 "unlensed": alm_l[:, pol_idxs].astype(self.c_dtype),
                 "lensed": alm_l_lensed[:, pol_idxs].astype(self.c_dtype),
             },
+            "fisher_matrix": fisher_mat.astype(self.r_dtype),
+            "marginal_likelihoods": marg_likes.astype(self.r_dtype),
         }
         save_data(self.file, sdata)
 
