@@ -356,25 +356,32 @@ class Generator(Core):
         alm_l = self.generate_alm()
         alm_l_lensed = self.lens_alms(alm_l)
 
-        # we grab the fisher matrix here to save it, and calculate the marginal likelihoods
-        fisher_mat = self.compute_fisher_shapes(self.shapes)
-        marg_likes = np.sqrt(np.diag(np.linalg.inv(fisher_mat)))
-        self.logger.debug("Marginal likelihoods: %s", marg_likes)
-
+        # go ahead and save the data here
         sdata = {
             "alm_l": {
                 "unlensed": alm_l[:, pol_idxs].astype(self.c_dtype),
                 "lensed": alm_l_lensed[:, pol_idxs].astype(self.c_dtype),
             },
-            "fisher_matrix": fisher_mat.astype(self.r_dtype),
-            "marginal_likelihoods": marg_likes.astype(self.r_dtype),
         }
         save_data(self.file, sdata)
 
-        for shape in self.shapes:
-            self.logger.info("Starting %s", shape)
+        if self.slurm.is_main:
+            # we grab the fisher matrix here to save it, and calculate the marginal likelihoods
+            self.logger.debug("Computing fisher matrix for shapes: %s", self.shapes)
+            fisher_mat = self.compute_fisher_shapes(self.shapes)
+            marg_likes = np.sqrt(np.diag(np.linalg.inv(fisher_mat)))
+            self.logger.debug("Marginal likelihoods: %s", marg_likes)
+            
+            sdata = {
+                "fisher_matrix": fisher_mat.astype(self.r_dtype),
+                "marginal_likelihoods": marg_likes.astype(self.r_dtype),
+            }
+            save_data(self.file, sdata)
 
+        for shape in self.shapes:
+            self.logger.debug("Starting %s", shape)
             if shape == "local":
+                # use old method for local shape
                 alm_nl = self.generate_alm_nl(alm_l)
             else:
                 alm_nl = self.generate_alm_nl_shape(alm_l, shape)

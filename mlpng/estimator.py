@@ -50,8 +50,8 @@ class Estimator(Generator):
                 self.num_estimates,
             )
             with h5py.File(self.file, "r", swmr=True, locking=False) as data:
-                alm_l = np.array(data["alm_l"][l_str])  # type: ignore
-                alm_nl = np.array(data["alm_nl"][l_str][shape])  # type: ignore
+                alm_l = np.array(data["alm_l"][l_str][:self.num_estimates])  # type: ignore
+                alm_nl = np.array(data["alm_nl"][l_str][shape][:self.num_estimates])  # type: ignore
                 fnl = self.rng.uniform(
                     self.fnl_min, self.fnl_max, (self.num_estimates, 1, 1)
                 )
