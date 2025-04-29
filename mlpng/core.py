@@ -402,7 +402,8 @@ class Core:
         """
         self.slurm = Slurm()
 
-        self.seed = self._get("seed", 1992)
+        self.seed = self._get("seed", np.random.randint(0, 2**32 - 1))
+        self.logger.info("Using seed: %s", self.seed)
         self.rng = np.random.default_rng(self.seed)
         np.random.seed(self.seed)
 
