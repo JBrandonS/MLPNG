@@ -175,8 +175,7 @@ class Core:
         parser.add_argument(
             "--pols",
             type=str,
-            nargs="+",
-            help="Polarizations to consider, Right now only T is fully tested",
+            help="Polarizations to consider, options are T, E, TE; Right now only T is fully tested",
         )
         parser.add_argument(
             "--phi_scale",
@@ -450,7 +449,7 @@ class Core:
         self.ells = np.arange(self.nell)
 
         # setup the polarization which should support --pols [T|TE]
-        self.pols = tuple(self._get("pols", ["T"]))
+        self.pols = list(self._get("pols", "T").upper())
         self.npols = len(self.pols)
         self.use_t = "T" in self.pols
         self.use_e = "E" in self.pols
