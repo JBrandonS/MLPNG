@@ -3,7 +3,7 @@ import argparse
 import json
 import logging
 import os
-
+import h5py
 import healpy as hp
 import numpy as np
 
@@ -401,9 +401,11 @@ class Core:
             AssertionError: If the number of patches is not even.
         """
         self.slurm = Slurm()
+        self.logger.debug("slurm: %s", self.slurm)
 
-        self.seed = self._get("seed", np.random.randint(0, 2**32 - 1))
-        self.logger.info("Using seed: %s", self.seed)
+        self.seed = self._get("seed", np.random.randint(1, 2**30))
+        self.seed += self.slurm.array_index
+        self.logger.debug("Using seed: %s", self.seed)
         self.rng = np.random.default_rng(self.seed)
         np.random.seed(self.seed)
 
@@ -458,8 +460,8 @@ class Core:
         self.use_wandb = self._get("wandb", False)
         self.use_tb = self._get("tensorboard", False)
 
-        self.isotropic = True  # self._get("isotropic", True)
-        self.logger.warning("Forcing isotropic mode")
+        # TODO: ONLY used in the estimator line 72, remove?
+        self.isotropic = self._get("isotropic", True)
 
         # setup our precision types to be consistent
         if self._get("double_precision", False):
@@ -472,7 +474,6 @@ class Core:
             self.precision = "single"
 
         # setup some derived parameters
-        # self.total_sims = self.ndups * self.nsims * self.npols * self.narray
         self.total_sims = self.nsims * self.narray
 
         # setup some info parameters
@@ -595,12 +596,6 @@ class Core:
         pol_str = "".join(self.pols)
         tstr = f"_{self.slurm.array_index}" if self.slurm.array_index > 0 else ""
 
-        # simplify the fnl range string if abs(min) and max are the same
-        # if self.fnl_max == abs(self.fnl_min):
-        #     fstr = f"{self.fnl_max}"
-        # else:
-        #     fstr = f"{self.fnl_min}-{self.fnl_max}"
-
         # finally we build our string
         base_name = f"l{self.lmax}_n{self.nside}"
         base = self._get("base_name", base_name)
@@ -682,3 +677,41 @@ class Core:
     def should_plot(self):
         """Determine if plotting should be performed based on the `plot` setting and the SLURM job status."""
         return self.plot and self.slurm.is_main
+
+    def shapes_str(self):
+        """Returns a string representation of the shapes used in the simulation.
+        If there is only one shape, it returns that shape as a string, i.e 'local'.
+        If there are multiple shapes, it returns a concatenated string of the first letter of each shape, e.g. 'leo'.
+        """
+        if len(self.shapes) == 1:
+            return self.shapes[0]
+        return "".join([s[0] for s in self.shapes])
+
+    def get_likelihoods(self):
+        """Get the marginal likelihoods for the shapes used in the simulation.
+
+        If there is only one shape this will return the fisher error for the shape,
+        otherwise, will return the marginal likelihoods for all shapes.
+        Returns:
+            list: A list of marginal likelihoods for each shape.
+        """
+        with h5py.File(self.file, mode="r", swmr=True, locking=False) as f:
+            if len(self.shapes) == 1:
+                # just get the fisher error for the shape
+                like = [np.sqrt(1 / f["fisher"][self.shapes[0]][0])]
+            else:
+                # here we generate a list of indices based on the shapes values
+                indxs = []
+                for s in self.shapes:
+                    match s:
+                        case "local":
+                            indxs.append(0)
+                        case "equilateral":
+                            indxs.append(1)
+                        case "orthogonal":
+                            indxs.append(2)
+                        case _:
+                            self.logger.warning("Unknown shape %s, ignoring", s)
+
+                like = f.get("marginal_likelihoods")[indxs]
+        return like
