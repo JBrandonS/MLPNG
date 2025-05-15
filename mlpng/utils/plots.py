@@ -1,5 +1,4 @@
 import logging
-
 import healpy as hp
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,33 +11,45 @@ from .utils import trim_alms
 
 logger = logging.getLogger(__name__)
 
+plt.rc("font", family="serif")
+plt.rc("mathtext", **{"default": "regular"})
+plt.style.use("seaborn-v0_8-paper")
+plt.rc("xtick", **{"direction": "in"})
+plt.rc("ytick", **{"direction": "in"})
+plt.rc("figure", **{"figsize": (12, 9)})
+
+
 def finalize_plot(
+    finalize: bool = True,
     title: str | None = None,
     tight_layout: bool = True,
     legend: bool = True,
-    grid: bool = True,
+    grid: bool = False,
     save_file: str | None = None,
     show: bool = False,
     close: bool = True,
 ):
     """
     Finalize the plot by adding a legend, grid, tight layout, saving the file, showing the plot and closing it.
+
+    This is used to keep from having to copy the code, also allows for standarization across calls via kwargs.
     """
-    if title:
-        plt.title(title)
-    if legend:
-        plt.legend()
-    if grid:
-        plt.grid()
-    if tight_layout:
-        plt.tight_layout()
-    if save_file is not None:
-        logger.debug("Saving plot to '%s'", save_file)
-        plt.savefig(save_file)
-    if show:
-        plt.show()
-    if close:
-        plt.close()
+    if finalize:
+        if title:
+            plt.title(title)
+        if legend:
+            plt.legend()
+        if grid:
+            plt.grid()
+        if tight_layout:
+            plt.tight_layout()
+        if save_file is not None:
+            logger.debug("Saving plot to '%s'", save_file)
+            plt.savefig(save_file)
+        if show:
+            plt.show()
+        if close:
+            plt.close()
 
 
 def plot_cl(
@@ -110,7 +121,7 @@ def plot_cl(
 
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
-    finalize_plot(title, **kwargs)
+    finalize_plot(title=title, **kwargs)
 
 
 def plot_cl_alm(
@@ -181,67 +192,115 @@ def plot_predictions(
     truth: np.ndarray,
     preds: np.ndarray,
     title: str = "Predictions",
-    fisher: float | None = None,
+    x_limit=None,
+    data_label=None,
+    truth_color="red",
+    sigma: float | None = None,
+    sigma_color="blue",
+    show_sigma_legend=False,
+    show_n_sigma=4,
     **kwargs,
 ):
-    """
-    Plots the true labels against the predicted labels. If provided will plot the expected deviations from the provided fisher
-    and scaled_variance.
+    if x_limit is not None:
+        mask_idx = np.abs(truth) <= x_limit
+        truth_ = np.where(mask_idx, truth, np.nan)
+        preds_ = np.where(mask_idx, preds, np.nan)
+    else:
+        truth_ = truth
+        preds_ = preds
 
-    Args:
-        truth (array-like): The true labels.
-        preds (array-like): The predicted labels.
-        title (str, optional): The title of the plot. Defaults to "Predictions".
-        fisher (float, optional): The Fisher value. Defaults to None.
-        save_file (str, optional): The file path to save the plot. Defaults to None.
-    """
     df = pd.DataFrame(
         {
-            "True Fnl": np.array(truth).flatten(),
-            "Predicted Fnl": np.array(preds).flatten(),
+            "True Fnl": np.array(truth_).flatten(),
+            "Predicted Fnl": np.array(preds_).flatten(),
         }
     )
 
-    # Create a scatter plot with seaborn
-    plt.figure(figsize=(16, 12))
     sns.scatterplot(
-        data=df, x="True Fnl", y="Predicted Fnl", label="Estimates", alpha=0.5
+        data=df, x="True Fnl", y="Predicted Fnl", label=data_label, alpha=0.5
     )
 
     # Truth line
-    line = [min(truth), max(truth)]
-    plt.plot(line, line, color="red", linestyle="--", label="Truth")
+    line = [np.nanmin(truth_), np.nanmax(truth_)]
+    plt.plot(line, line, color=truth_color, linestyle="--")
+    if sigma is not None:
+        plt.plot(line, line + sigma, color=sigma_color, linestyle="--")
+        plt.plot(line, line - sigma, color=sigma_color, linestyle="--")
 
-    if fisher is not None:
-        std_dev = np.sqrt(1 / fisher)
-        title += f", Fisher: {fisher:.2f}, Fisher Error: {std_dev:.2f}"
+    if show_sigma_legend:
+        add_sigma_legend(truth_, preds_, sigma, data_label, show_n_sigma)
 
-        plt.plot(
-            line,
-            line + std_dev,
-            color="blue",
-            linestyle="--",
-            label="Fisher",
+    finalize_plot(title=title, **kwargs)
+
+
+def plot_predictions_combined(
+    truth: np.ndarray,
+    preds: np.ndarray,
+    shape_strs: list[str],
+    likelihoods: np.ndarray,
+    title: str = "Predictions",
+    x_limit=None,
+    show_sigma_legend=True,
+    show_n_sigma=4,
+    **kwargs,
+):
+    sns.set_palette("bright")
+    palette = sns.color_palette("dark")
+
+    for i, (t, p, sigma, label) in enumerate(
+        zip(truth.T, preds.T, likelihoods, shape_strs)
+    ):
+        plot_predictions(
+            t,
+            p,
+            title=f"{title}",
+            sigma=sigma,
+            data_label=label,
+            x_limit=x_limit,
+            truth_color="red",
+            sigma_color=palette[i],
+            show_sigma_legend=False,
+            finalize=False,
         )
-        plt.plot(line, line - std_dev, color="blue", linestyle="--")
 
-        # lets also print the number of points within 1 sigma
-        diff = np.array(preds).flatten() - np.array(truth).flatten()
-        diff = np.abs(diff)
-        bbox = dict(boxstyle="round", fc="blanchedalmond", ec="orange", alpha=0.5)
-        for i in range(1, 4):
-            within = np.sum(diff < i * std_dev) / len(diff) * 100
-            plt.text(
-                0.95,
-                0.1 - (i - 1) * 0.025,
-                f"{within:.2f}% within {i} $\\sigma$",
-                bbox=bbox,
-                ha="right",
-                va="bottom",
-                transform=plt.gca().transAxes,
-            )
+    if show_sigma_legend:
+        if x_limit is not None:
+            mask_idx = np.abs(truth) <= x_limit
+            truth_ = np.where(mask_idx, truth, np.nan)
+            preds_ = np.where(mask_idx, preds, np.nan)
+        else:
+            truth_ = truth
+            preds_ = preds
+        add_sigma_legend(truth_.T, preds_.T, likelihoods, shape_strs, show_n_sigma)
 
-    finalize_plot(title, **kwargs)
+    finalize_plot(title=title, **kwargs)
+
+
+def add_sigma_legend(truth, preds, sigma, labels, n_sigma=4):
+    truth_ = np.atleast_2d(truth)
+    preds_ = np.atleast_2d(preds)
+    sigma_ = np.atleast_1d(sigma)
+    labels_ = np.atleast_1d(labels)
+    row_labels = [f"{i} $\\sigma$" for i in range(1, n_sigma + 1)]
+
+    data = []
+    for i in range(1, n_sigma + 1):
+        row = []
+        for j in range(len(labels_)):
+            diff = np.array(preds_[j]).flatten() - np.array(truth_[j]).flatten()
+            diff = np.abs(diff[~np.isnan(diff)])
+            within = np.sum(diff < i * sigma_[j]) / len(diff) * 100
+            row.append(f"{within:.2f}")
+        data.append(row)
+
+    plt.table(
+        data,
+        colWidths=[0.07] * n_sigma,
+        rowLabels=row_labels,
+        colLabels=labels_,
+        loc="best",
+        zorder=10,
+    )
 
 
 def plot_histogram(truth: np.ndarray, preds: np.ndarray, **kwargs):
@@ -461,6 +520,24 @@ def plot_elsner_vs(
     plt.legend()
 
 
+def plot_metrics(history, metrics=["loss"], **kwargs):
+    num_metrics = len(metrics)
+    _, axs = plt.subplots(num_metrics, figsize=(15, 6 * num_metrics))
+
+    if num_metrics == 1:
+        axs = [axs]
+
+    for i, metric in enumerate(metrics):
+        axs[i].semilogy(history.history[metric])
+        axs[i].semilogy(history.history[f"val_{metric}"])
+        axs[i].set_title(f"{metric}")
+        axs[i].set_ylabel(metric)
+        axs[i].set_xlabel("Epoch")
+        axs[i].legend(["Train", "Validation"], loc="upper right")
+
+    finalize_plot(legend=False, **kwargs)
+
+
 def make_alm_plots(core, shape, alm_l=None, alm_ng=None, alms=None, lensed=False):
     """
     Generate and save various alm plots for comparison and testing.
@@ -534,19 +611,45 @@ def make_alm_plots(core, shape, alm_l=None, alm_ng=None, alms=None, lensed=False
         )
 
 
-def plot_metrics(history, save_file=None, metrics=["loss"], **kwargs):
-    num_metrics = len(metrics)
-    _, axs = plt.subplots(num_metrics, figsize=(15, 6 * num_metrics))
+def make_trainer_plots(
+    core, plot_dir, run_name, history, metrics, truth, preds, likelihoods
+):
+    # and make our plots
+    plot_metrics(
+        history,
+        metrics=["loss"] + [f"rmse_{s}" for s in core.shapes],
+        save_file=core.get_plot_file(f"{run_name}-loss", plot_dir),
+    )
 
-    if num_metrics == 1:
-        axs = [axs]
+    plot_predictions_combined(
+        truth,
+        preds,
+        likelihoods=likelihoods,
+        shape_strs=core.shapes,
+        title="Predictions",
+        save_file=core.get_plot_file(f"{run_name}-predictions", plot_dir),
+    )
 
-    for i, metric in enumerate(metrics):
-        axs[i].semilogy(history.history[metric])
-        axs[i].semilogy(history.history[f"val_{metric}"])
-        axs[i].set_title(f"{metric}")
-        axs[i].set_ylabel(metric)
-        axs[i].set_xlabel("Epoch")
-        axs[i].legend(["Train", "Validation"], loc="upper right")
+    # plot a reduced range which should better approach the CR bound
+    plot_predictions_combined(
+        truth,
+        preds,
+        likelihoods=likelihoods,
+        shape_strs=core.shapes,
+        x_limit=250.0,
+        save_file=core.get_plot_file(f"{run_name}-redux", plot_dir),
+    )
 
-    finalize_plot(save_file=save_file, legend=False, **kwargs)
+    # individual predictions for each shape
+    for s in range(truth.shape[1]):
+        s_str = core.shapes[s]
+        plot_predictions(
+            truth[:, s],
+            preds[:, s],
+            sigma=likelihoods[s],
+            data_label=s_str,
+            show_sigma_legend=True,
+            title=f"{s_str} RMSE: {metrics[1 + s]:.3f}",
+            save_file=core.get_plot_file(f"{run_name}-preds-{s_str}", plot_dir),
+            legend=False,
+        )

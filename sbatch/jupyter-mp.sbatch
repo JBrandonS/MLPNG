@@ -54,8 +54,8 @@ while [ $# -gt 0 ]; do
 done
 
 module purge
-module load conda gcc/13.2.0 cuda/12.4.1-vz7djzz hpc-x/2.17.1 openblas/0.3.26-sauswx6 amdlibflame/4.2-5lac6gu nccl/2.21.5-1-nnpmvmq cudnn/8.9.7.29-12-lo4uzx3
-module list
+module load miniforge gcc openblas
+conda activate ds25
 
 conda activate "$conda_env"
 

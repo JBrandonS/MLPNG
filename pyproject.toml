@@ -1,0 +1,63 @@
+[project]
+name = "MLPNG"
+version = "0.0.1"
+authors = [{ name = "Brandon Stevenson", email = "stevensonb@smu.edu" }]
+description = "Machine Learning for predicting the primordial non-Gaussianity (MLPNG) in the Cosmic Microwave Background."
+readme = "README.md"
+requires-python = "<3.12"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+keywords = [
+    "MLPNG",
+    "Machine Learning",
+    "Cosmology",
+    "CMB",
+    "Cosmic Microwave Background",
+    "Neural Networks",
+    "Deep Learning",
+]
+
+# some of these may not be needed for both
+dependencies = [
+    "tqdm",
+    "pandas",
+    "matplotlib",
+    "cython",
+    "seaborn",
+    "joblib",
+    "numpy",
+    "scipy<=1.15",
+    "h5py",
+    "healpy",
+    "astropy",
+    "pixell",
+    "ducc0",
+    "lenspyx",
+    "camb",
+]
+
+[project.optional-dependencies]
+data = [
+    "mpi4py",
+    "optweight @ git+https://github.com/AdriJD/optweight.git@master", # still need to fix this one, mpi.h error, needs cython first
+    "ksw @ git+https://github.com/JBrandonS/ksw.git@master",
+]
+gpu = [
+    "scikit-learn",
+    "tensorflow[and-cuda]<2.16",
+    "tensorboard",
+    "PyGSP @ git+https://github.com/jafluri/pygsp.git@sphere-graphs",
+    "deepsphere @ git+https://github.com/JBrandonS/deepsphere-cosmo-tf2.git@master",
+]
+
+[project.urls]
+Homepage = "https://github.com/JBrandonS/MLPNG"
+Issues = "https://github.com/JBrandonS/MLPNG/issues"
+
+[tool.setuptools]
+packages = ["mlpng"]

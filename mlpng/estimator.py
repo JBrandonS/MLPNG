@@ -12,8 +12,8 @@ mpi_rank = mpi_comm.Get_rank()
 mpi_size = mpi_comm.Get_size()
 mpi_root = mpi_rank == 0
 
-class Estimator(Generator):
 
+class Estimator(Generator):
     def __init__(self, log_level=None, **kwargs):
         if log_level is None:
             log_level = logging.DEBUG if mpi_root else logging.ERROR
@@ -23,9 +23,9 @@ class Estimator(Generator):
 
         # the KSW code requires the total_sims to be >= mpi_size
         # best usage would have total_sims % mpi_size == 0, but not required
-        assert (
-            self.num_estimates >= mpi_size
-        ), "total_sims < mpi_size, lower ntasks or increase sims"
+        assert self.num_estimates >= mpi_size, (
+            "total_sims < mpi_size, lower ntasks or increase sims"
+        )
 
         self.logger.info(
             "Computing %s estimates in %.2f batches",
@@ -50,28 +50,30 @@ class Estimator(Generator):
                 self.num_estimates,
             )
             with h5py.File(self.file, "r", swmr=True, locking=False) as data:
-                alm_l = np.array(data["alm_l"][l_str][:self.num_estimates])  # type: ignore
-                alm_nl = np.array(data["alm_nl"][l_str][shape][:self.num_estimates])  # type: ignore
+                alm_l = np.array(data["alm_l"][l_str][shape][: self.num_estimates])
+                alm_nl = np.array(data["alm_nl"][l_str][shape][: self.num_estimates])
                 fnl = self.rng.uniform(
                     self.fnl_min, self.fnl_max, (self.num_estimates, 1, 1)
                 )
 
                 # make our alms
-                alm = alm_l + fnl * alm_nl  # type: ignore
+                alm = alm_l + fnl * alm_nl
 
                 self.logger.debug("Computing estimates for %s %s", l_str, shape)
                 ksw = self.get_ksw(shape)
                 fisher = ksw.compute_fisher()
                 self.logger.debug("Fisher: %s, std: %s", fisher, 1 / np.sqrt(fisher))
+
                 estimates, _, _, _ = ksw.compute_estimate_batch(
                     lambda idx: self.icov_func(alm[idx]),
                     range(self.num_estimates),
                     comm=mpi_comm,
                     fisher=fisher,
                     theta_batch=theta_batch,
-                    lin_term=0 if self.isotropic else None,
+                    lin_term=None,
                 )
 
+            mpi_comm.Barrier()
             if mpi_root:
                 # save the data, this will append to the alm_file
                 sdata = {"estimates": {l_str: {shape: estimates}}}
@@ -92,12 +94,15 @@ class Estimator(Generator):
                         estimates,
                         save_file=self.get_plot_file(f"{base}_hist"),
                     )
-            mpi_comm.Barrier()
+
             self.logger.debug("Finished %s", shape)
+
         self.logger.info("Finished estimating %s", l_str)
+
 
 if __name__ == "__main__":
     estimator = Estimator()
+
     estimator.run(False)
 
     if estimator.lensing:

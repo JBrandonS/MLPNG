@@ -1,9 +1,9 @@
-import os
 import logging
 import sys
 import h5py
 import numpy as np
 import healpy as hp
+import warnings
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,9 @@ def setup_logging(
     Returns:
         logger (logging.Logger): The configured logger object.
     """
+    if not sys.warnoptions:
+        warnings.simplefilter("ignore")
+
     if scripts_level is None:
         scripts_level = level
 
@@ -47,7 +50,7 @@ def setup_logging(
     return log
 
 
-def recursive_save(file, path, data, verbose=False):
+def recursive_save(file, path, data, verbose=True):
     """
     Recursively save a dictionary to an HDF5 file.
 
@@ -102,7 +105,7 @@ def recursive_save(file, path, data, verbose=False):
             file.create_dataset(npath, data=value)
 
 
-def save_data(file_path, data_dict, mode="a", verbose=False):
+def save_data(file_path, data_dict, mode="a", verbose=True):
     """
     Save data to an HDF5 file.
 
@@ -253,7 +256,7 @@ def try_init_wandb(
             "Please install with `pip install wandb`. "
             "See: https://docs.wandb.ai/quickstart"
         )
-        return
+        return None
 
     if patch_tb:
         if patch_logdir is None:

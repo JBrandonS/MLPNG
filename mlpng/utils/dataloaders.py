@@ -7,7 +7,6 @@ import numpy as np
 import healpy as hp
 import tensorflow as tf
 from joblib import Parallel, delayed
-import itertools
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +14,8 @@ logger = logging.getLogger(__name__)
 class ALMDataset:
     @classmethod
     def fromCore(cls, core, **kwargs):
+        # These values can be overridden by providing them in kwargs
+        # or by using the core object
         file_path = kwargs.pop("file_path", core.file)
         shapes = kwargs.pop("shapes", core.shapes)
         x_shape = kwargs.pop("x_shape", core.alm_shape[1:])
@@ -75,16 +76,6 @@ class ALMDataset:
 
     def __len__(self):
         return self.end_idx - self.start_idx
-
-    def get_fisher(self, shapes=None, lensed=False):
-        if shapes is None:
-            shapes = self.shapes
-
-        fishers = []
-        with h5py.File(self.file_path, mode="r", swmr=True, locking=False) as f:
-            for shape in shapes:
-                fishers.append(f["fisher"][shape][0])
-        return np.array(fishers)
 
     def split(
         self,
@@ -148,14 +139,17 @@ class ALMDataset:
         test.end_idx = test_end
 
         logger.debug(
-            "Splitting '%s' into train: %d:%d, val: %d:%d, test: %d:%d",
+            "Splitting '%s' into train: %d:%d (%d), val: %d:%d (%d), test: %d:%d (%d)",
             self.file_path,
             train.start_idx,
             train.end_idx,
+            len(train),
             val.start_idx,
             val.end_idx,
+            len(val),
             test.start_idx,
             test.end_idx,
+            len(test),
         )
 
         if to_tf:
@@ -288,9 +282,9 @@ class ALMDataset:
         )
 
         with h5py.File(self.file_path, mode="r", swmr=True, locking=False) as f:
-            alm_l = np.array([f["alm_l"][self.l_str][indices]])  # type: ignore
+            alm_l = np.array([f["alm_l"][self.l_str][indices]])
             alm_nl = np.array(
-                [f["alm_nl"][self.l_str][s][indices] for s in self.shapes]  # type: ignore
+                [f["alm_nl"][self.l_str][s][indices] for s in self.shapes]
             )
 
         alms = alm_l + np.einsum("i...,i...->...", fnls, alm_nl)
@@ -329,9 +323,10 @@ class MapDataset(ALMDataset):
             core, x_shape=x_shape, x_dtype=x_dtype, nside=nside, **kwargs
         )
 
-    def __init__(self, file_path, nside, rotate=True, **kwargs):
+    def __init__(self, file_path, nside, rotate=True, gaussian_mask=True, **kwargs):
         self.nside = nside
         self.rotate = rotate
+        self.gaussian_mask = gaussian_mask
         super().__init__(file_path=file_path, **kwargs)
 
     @staticmethod
@@ -346,9 +341,9 @@ class MapDataset(ALMDataset):
                     np.random.uniform(0, 360),
                 ],
             )
-            alm = rotator.rotate_alm(alm)
+            alm_rotated = rotator.rotate_alm(alm)
 
-        m = hp.alm2map(alm, nside, pol=False)
+        m = hp.alm2map(alm_rotated, nside, pol=False)
         return hp.reorder(m, r2n=True)
 
     @staticmethod
@@ -366,12 +361,14 @@ class MapDataset(ALMDataset):
             high=self.fnl_max,
             size=(len(self.shapes), duplicates, batch_size, 1, 1),
         )
-        fnls = self._mask_fnls(fnls)
+
+        if self.gaussian_mask:
+            fnls = self._mask_fnls(fnls)
 
         with h5py.File(self.file_path, mode="r", swmr=True, locking=False) as f:
-            alm_l = np.array([f["alm_l"][self.l_str][indices]])  # type: ignore
+            alm_l = np.array([f["alm_l"][self.l_str][indices]])
             alm_nl = np.array(
-                [f["alm_nl"][self.l_str][s][indices] for s in self.shapes]  # type: ignore
+                [f["alm_nl"][self.l_str][s][indices] for s in self.shapes]
             )
 
         alms = alm_l + np.einsum("i...,i...->...", fnls, alm_nl)
@@ -379,14 +376,14 @@ class MapDataset(ALMDataset):
         # number of CPUs, accounting for slurm, use 1 less to avoid overloading
         n_cpus = len(os.sched_getaffinity(0)) // 4 - 1
         n_jobs = min(n_cpus, duplicates * batch_size)
-        with Parallel(n_jobs, pre_dispatch="n_jobs") as p:  # , prefer="threads"
+        with Parallel(n_jobs, pre_dispatch="n_jobs", prefer="threads") as p:
             maps = p(
                 delayed(self._alm_to_map)(sim, self.rotate, self.nside)
                 for batches in alms
                 for sim in batches
             )
 
-        maps = np.transpose(maps, (0, 2, 1))  # type: ignore
+        maps = np.transpose(maps, (0, 2, 1))
         fnls = fnls.transpose(1, 2, 3, 4, 0)
         fnls = np.reshape(fnls, (duplicates * batch_size, len(self.shapes)))
         return maps, fnls
