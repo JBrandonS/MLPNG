@@ -550,9 +550,7 @@ def make_alm_plots(core, shape, alm_l=None, alm_ng=None, alms=None, lensed=False
     """
     logger.debug("Generating alm plots")
     sim = core.rng.integers(core.nsims)  # get random sim idx
-    l_str = f"_{shape}"
-    if lensed:
-        l_str += "_lensed"
+    l_str = f"_{shape}_lensed" if lensed else f"_{shape}_unlensed"
 
     # plot a few comparison with different functions to get views
     idx = core.rng.integers(1, 1001)

@@ -76,7 +76,7 @@ def recursive_save(file, path, data, verbose=True):
                 grp = file[npath]
             else:
                 grp = file.create_group(npath)
-            recursive_save(grp, npath, value)
+            recursive_save(grp, npath, value, verbose)
 
         elif isinstance(value, np.ndarray):
             # logger.debug("Processing ndarray: %s", key)
@@ -128,6 +128,56 @@ def save_data(file_path, data_dict, mode="a", verbose=True):
         logger.debug("Finished saving data to '%s'", file_path)
 
 
+def get_ksw_save_data(ksw):
+    """
+    Extracts the data to be saved from a KSW object.
+
+    Mostly this is just a modified ksw.estimator.write_state
+
+    Parameters:
+        ksw (KSW): The KSW object containing the data.
+
+    Returns:
+        dict: A dictionary containing the data to be saved.
+    """
+
+    mc_idx = np.asarray([ksw.mc_idx], dtype=np.int64)
+
+    if ksw.__mc_gt_sq is None:
+        mc_gt_sq = np.asarray([np.nan], dtype=np.float64)
+    else:
+        mc_gt_sq = np.asarray([ksw.__mc_gt_sq], dtype=np.float64)
+
+    if ksw.__mc_gt is None:
+        mc_gt = np.asarray([np.nan], dtype=ksw.cdtype)
+    else:
+        mc_gt = ksw.__mc_gt
+
+    return {"mc_idx": mc_idx, "mc_gt_sq": mc_gt_sq, "mc_gt": mc_gt}
+
+
+def get_ksw_from_data(data):
+    """
+    Extracts the KSW object from the saved data.
+
+    TODO: Needs testing
+
+    Parameters:
+        data (dict): The dictionary containing the saved data.
+
+    Returns:
+        KSW: The KSW object reconstructed from the saved data.
+    """
+    from mlpng.estimators.ksw import KSW
+
+    mc_idx = data["mc_idx"][0]
+    mc_gt_sq = data["mc_gt_sq"][0]
+    mc_gt = data["mc_gt"]
+
+    ksw = KSW(mc_idx=mc_idx, mc_gt_sq=mc_gt_sq, mc_gt=mc_gt)
+    return ksw
+
+
 def remove_mono_dipole(alm, inplace=False):
     """
     Remove the monopole and dipole terms from the alms.
@@ -157,12 +207,22 @@ def remove_mono_dipole(alm, inplace=False):
 
 
 def print_errors(truth, preds, fisher, n_sigma=5):
+    """
+    Print the errors between the truth and predictions, along with statistics.
+    Parameters:
+        truth (np.ndarray): The ground truth values.
+        preds (np.ndarray): The predicted values.
+        fisher (float): The Fisher information value.
+        n_sigma (int, optional): The number of standard deviations to consider. Default is 5.
+    """
+
     truth = truth.flatten()
     preds = preds.flatten()
 
     diff = preds - truth
     std_dev = np.sqrt(1 / fisher)
     sem = std_dev / np.sqrt(len(diff))
+
     logger.info("Standard deviation from fisher: %s, SEM: %s", std_dev, sem)
     logger.info("Mean error: %s, Median error: %s", np.mean(diff), np.median(diff))
     for i in range(n_sigma):
