@@ -1,3 +1,4 @@
+import os
 import logging
 import h5py
 import numpy as np
@@ -42,6 +43,11 @@ class Estimator(Generator):
         l_str = "lensed" if lensing else "unlensed"
         theta_batch = int(np.floor(1.5 * self.lmax + 1)) // mpi_size
 
+        with h5py.File(self.file, "r", swmr=True, locking=False) as data:
+            alm_l = np.array(data["alm_l"][l_str][: self.num_estimates])
+            icov = np.array(data["icov"][l_str])
+            self.icov = icov
+
         for shape in self.shapes:
             self.logger.info(
                 "Estimating for %s %s, using %s estimates",
@@ -49,50 +55,54 @@ class Estimator(Generator):
                 shape,
                 self.num_estimates,
             )
+
             with h5py.File(self.file, "r", swmr=True, locking=False) as data:
-                alm_l = np.array(data["alm_l"][l_str][shape][: self.num_estimates])
                 alm_nl = np.array(data["alm_nl"][l_str][shape][: self.num_estimates])
-                fnl = self.rng.uniform(
-                    self.fnl_min, self.fnl_max, (self.num_estimates, 1, 1)
-                )
 
-                # make our alms
-                alm = alm_l + fnl * alm_nl
+            fnl = self.rng.uniform(
+                self.fnl_min, self.fnl_max, (self.num_estimates, 1, 1)
+            )
 
-                self.logger.debug("Computing estimates for %s %s", l_str, shape)
-                ksw = self.get_ksw(shape)
-                fisher = ksw.compute_fisher()
-                self.logger.debug("Fisher: %s, std: %s", fisher, 1 / np.sqrt(fisher))
+            # make our alms
+            alm = alm_l + fnl * alm_nl
 
-                estimates, _, _, _ = ksw.compute_estimate_batch(
-                    lambda idx: self.icov_func(alm[idx]),
-                    range(self.num_estimates),
-                    comm=mpi_comm,
-                    fisher=fisher,
-                    theta_batch=theta_batch,
-                    lin_term=None,
-                )
+            ksw = self.get_ksw(shape, step_alms=alm_l, lensed=lensing)
+            fisher = ksw.compute_fisher()
+            self.logger.debug("Fisher: %s, std: %s", fisher, 1 / np.sqrt(fisher))
 
-            mpi_comm.Barrier()
+            estimates, _, _, _ = ksw.compute_estimate_batch(
+                lambda idx: self.icov_func(alm[idx], icov=icov, lensed=lensing),
+                range(self.num_estimates),
+                comm=mpi_comm,
+                fisher=fisher,
+                theta_batch=theta_batch,
+            )
+
+            mpi_comm.Barrier()  # ensure all ranks are done before saving
             if mpi_root:
                 # save the data, this will append to the alm_file
                 sdata = {"estimates": {l_str: {shape: estimates}}}
-                save_data(self.file, sdata, mode="a", verbose=True)
+                save_data(self.file, sdata, mode="a", verbose=False)
 
+                plot_dir = os.path.join(self.dirs["plot"], str(self.name), "ksw")
                 fnl = fnl.flatten()
+                self.logger.debug(
+                    "estimates shape: %s, fnl shape: %s", estimates.shape, fnl.shape
+                )
+
                 print_errors(fnl, estimates, fisher)
                 if self.plot:
                     base = f"ksw_{shape}_{l_str}"
                     plot_predictions(
                         fnl,
                         estimates,
-                        fisher=fisher,  # type: ignore
-                        save_file=self.get_plot_file(f"{base}_preds"),
+                        sigma=1 / np.sqrt(fisher),  # type: ignore
+                        save_file=self.get_plot_file(f"{base}_preds", plot_dir),
                     )
                     plot_histogram(
                         fnl,
                         estimates,
-                        save_file=self.get_plot_file(f"{base}_hist"),
+                        save_file=self.get_plot_file(f"{base}_hist", plot_dir),
                     )
 
             self.logger.debug("Finished %s", shape)
