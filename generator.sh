@@ -9,35 +9,29 @@
 # these must be in settings/ and have the .json extension
 SETTINGS=(
   # "n32"
-  # "n64"
+  "n64"
   # "n128"
   # "n256"
   
   # these can only be run with nsims < 1000, due to time or memory
-  "n512"
-  "n1024"
+  # "n512"
+  # "n1024"
 
   # these need to use high memory nodes, change sbatch/generator.sbatch to sbatch/generator-hm.sbatch in the main loop below
-  "n2048"
-  "n4096"
+  # "n2048"
+  # "n4096"
 
   # "elsner"
-  "planck"
+  # "planck"
 )
 
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
 ARGS=(
-  "--nsims" "100"
-  # "--force_gen"
+  "--nsims" "1000"
   "--pols" "T"
-  # "--base_name" "+_ortho"
-  # "--fnl_range" "-100" "100"
-  # "--shape" "local"
-  # "--shape" "equilateral"
-  # "--shape" "orthogonal"
-  # "--no-save_alms"
-  # "--phi_scale" "1"
-  # "--lensing"
+  "--shapes" "local"
+  "--force_generation"
+  "--phi_scale" "666"
   "--narray" "1"
 )
 
@@ -80,9 +74,9 @@ submit_job() {
   fi
 
   if [ -z "$job_id" ]; then # no job_id found, just run the job
-    job_id=$(sbatch "${arr_args[@]}" "${SLURM_ARGS[@]}" "$sbatch" "${ARGS[@]}" "$settings" | awk '{print $4}')
+    job_id=$(sbatch "${arr_args[@]}" "${SLURM_ARGS[@]}" "$sbatch" "$settings" "${ARGS[@]}" | awk '{print $4}')
   else # job_id found, run the job with a dependency on the previous job
-    job_id=$(sbatch "${arr_args[@]}" "${SLURM_ARGS[@]}" --dependency=afterok:"$job_id" "$sbatch" "${ARGS[@]}" "$settings" | awk '{print $4}')
+    job_id=$(sbatch "${arr_args[@]}" "${SLURM_ARGS[@]}" --dependency=afterok:"$job_id" "$sbatch" "$settings" "${ARGS[@]}" | awk '{print $4}')
   fi
 
   # acts as our return value
@@ -105,5 +99,5 @@ for x in "${SETTINGS[@]}"; do
   job_id=$(submit_job "$job_id" "sbatch/combiner.sbatch" "$settings")
 
   # Run the estimator on the combined data
-  job_id=$(submit_job "$job_id" "sbatch/estimator.sbatch" "$settings")
+  # job_id=$(submit_job "$job_id" "sbatch/estimator.sbatch" "$settings")
 done
