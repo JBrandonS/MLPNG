@@ -170,7 +170,7 @@ class Core:
         parser.add_argument(
             "--num_estimates",
             type=int,
-            help="Number of estimates to compute",
+            help="Number of estimates to compute, if using --estimate",
         )
         parser.add_argument(
             "--pols",
@@ -206,9 +206,9 @@ class Core:
             help="Force data generation, delete files if existing",
         )
         parser.add_argument(
-            "--force_ksw",
+            "--estimate",
             action=argparse.BooleanOptionalAction,
-            help="Force KSW estimator to run",
+            help="Use KSW estimator to run tests",
         )
         parser.add_argument(
             "--double_precision",
@@ -221,14 +221,14 @@ class Core:
             help="Enable or disable plotting",
         )
         parser.add_argument(
-            "--isotropic",
-            action=argparse.BooleanOptionalAction,
-            help="Enable or disable isotropic mode, not fully supported rn",
-        )
-        parser.add_argument(
             "--save_alms",
             action=argparse.BooleanOptionalAction,
             help="Save the combined alms, otherwise will need to create them on the fly",
+        )
+        parser.add_argument(
+            "--save_ksw",
+            action=argparse.BooleanOptionalAction,
+            help="Save the ksw states",
         )
 
         # ML trainer settings
@@ -369,7 +369,6 @@ class Core:
             nsims (int): Number of simulations to run.
             narray (int): Number of arrays.
             force_gen (bool): Flag to force generation.
-            force_ksw (bool): Flag to force KSW.
             num_estimates (int): Number of estimates.
             plot (bool): Flag to enable or disable plotting.
             lmin (int): Minimum multipole moment.
@@ -425,14 +424,16 @@ class Core:
         self.phi_scale = self._get("phi_scale", 1)
 
         self.force_gen = self._get("force_generation", False)
-        self.force_ksw = self._get("force_ksw", False)
         self.mc_steps = self._get("mc_steps", 300)
+        self.estimate = self._get("estimate", True)
         self.num_estimates = self._get(
             "num_estimates",
             min(self.nsims * self.narray, 1000),
         )
+
         self.plot = self._get("plot", True)
         self.save_alms = self._get("save_alms", False)
+        self.save_ksw = self._get("save_ksw", False)
 
         if self.slurm.task_count > 0 and self.slurm.task_count != self.narray:
             raise ValueError(
@@ -458,9 +459,6 @@ class Core:
 
         self.use_wandb = self._get("wandb", False)
         self.use_tb = self._get("tensorboard", False)
-
-        # TODO: ONLY used in the estimator line 72, remove?
-        self.isotropic = self._get("isotropic", True)
 
         # setup our precision types to be consistent
         if self._get("double_precision", False):
@@ -565,14 +563,17 @@ class Core:
         and analysis based on the object's configuration. It ensures that the necessary directories
         exist and constructs filenames that incorporate various settings such as lensing, noise,
         polarization, and simulation parameters.
+
         The following directories are created and stored in the `self.dirs` dictionary:
         - base: The base directory for data storage.
         - plot: The directory for storing plot files.
         - data: The directory for storing data files.
         - mc: The directory for storing Monte Carlo files (if `force_ksw` is True).
+
         The following filenames are constructed and stored:
         - self.file: The main data file.
         - self.mc_file: The Monte Carlo file (if `force_ksw` is True).
+
         The filenames incorporate various settings such as:
         - `lmax` and `nside` for resolution.
         - `lensing` and `noise` settings.
@@ -600,7 +601,7 @@ class Core:
         base = self._get("base_name", base_name)
         if base.startswith("+"):
             base = f"{base_name}{base[1:]}"
-        self.name = f"{base}_{pol_str}_{total_sims}"  # _f{fstr}"
+        self.name = f"{base}_{pol_str}_{total_sims}_p{self.phi_scale}"  # _f{fstr}"
 
         self.dirs = {}
         self.dirs["base"] = self._get("base_dir", "data")
@@ -627,7 +628,7 @@ class Core:
             self.use_t,
             self.use_e,
             keep_b and self.use_e,
-            keep_te and (self.use_t and self.use_e and not self.isotropic),
+            keep_te and (self.use_t and self.use_e),  # and not self.isotropic),
         ]
         idxs = np.array([i for i, v in enumerate(conditions) if v])
         if pretrimmed and not self.use_t:
