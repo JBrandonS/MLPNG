@@ -9,6 +9,7 @@ from scipy.interpolate import interp1d
 from tqdm.auto import trange
 import lenspyx
 from lenspyx import utils_hp
+import matplotlib.pyplot as plt
 
 import camb
 from ksw import Cosmology, Shape, KSW, ReducedBispectrum
@@ -24,6 +25,9 @@ from .utils import (
     get_ksw_save_data,
     plot_predictions,
     plot_histogram,
+    plot_cl_vs,
+    plot_cl,
+    plot_cl_alm,
 )
 
 
@@ -84,19 +88,19 @@ def trap_generator(gen, radii):
 class Generator(Core):
     """..."""
 
-    def __init__(self, argv=None, log_level=logging.DEBUG):
+    def __init__(self, argv=None, log_level=logging.DEBUG, verbose=False):
         super().__init__(argv, log_level=log_level)
         self.logger = setup_logging("mlpng.generator", level=log_level)
 
         self.theta_batch = int(np.floor(1.5 * self.lmax + 1)) // self.slurm.n_cpus
 
-        camb_params = camb.set_params(**self.cosmo_params, verbose=False)
-        self.cosmo: Cosmology = Cosmology(camb_params, False)
+        camb_params = camb.set_params(**self.cosmo_params, verbose=verbose)
+        self.cosmo: Cosmology = Cosmology(camb_params, verbose=verbose)
 
         # need to run camb to get the transfer functions
         # we need at least lmax of 300 for this transfer code
         camb_lmax = max(self.lmax + self.lmax_buffer, 300)
-        self.cosmo.compute_transfer(camb_lmax, False)
+        self.cosmo.compute_transfer(camb_lmax, verbose=verbose)
         self.cosmo.compute_c_ell()
 
         c_ell = self.cosmo.c_ell["unlensed_scalar"]["c_ell"][: self.nell]
@@ -110,16 +114,27 @@ class Generator(Core):
         self.icov[:, self.lmin :] = 1 / self.cov[pols, self.lmin :]
 
         if self.lensing:
-            c_ell_lensed = self.cosmo.c_ell["lensed_scalar"]["c_ell"][: self.nell]
-            self.c_ell_lensed = c_ell_lensed.T.astype(self.r_dtype)
+            c_ell_lens = self.cosmo.c_ell["lensed_scalar"]["c_ell"][: self.nell]
+            self.c_ell_lens = c_ell_lens.T.astype(self.r_dtype)
+            self.c_ell_lens *= self.phi_scale  # scale the lensing potential
 
-            cov_lensed = self.b_ell**2 * self.c_ell_lensed + self.n_ell
-            self.cov_lensed = remove_mono_dipole(cov_lensed)
+            cov_lens = self.b_ell**2 * self.c_ell_lens + self.n_ell
+            self.cov_lens = remove_mono_dipole(cov_lens)
 
-            self.icov_lensed = np.zeros_like(self.cov[pols])
-            self.icov_lensed[:, self.lmin :] = 1 / self.cov_lensed[pols, self.lmin :]
+            self.icov_lens = np.zeros_like(self.cov_lens[pols])
+            self.icov_lens[:, self.lmin :] = 1 / self.cov_lens[pols, self.lmin :]
 
-    def get_ksw(self, shape_str, step=True, step_alms=None, n_steps=None, lensed=False):
+            self.cl_phi = self.cosmo.c_ell["lenspotential"]["c_ell"]
+            self.cl_phi = self.cl_phi[: self.nell, 0].astype(self.r_dtype)
+
+    def get_ksw(
+        self,
+        shape_str,
+        step=True,
+        step_alms=None,
+        n_steps=None,
+        c_ells=None,
+    ):
         """
         This function returns a KSW estimator for the given shape and parameters.
 
@@ -129,12 +144,24 @@ class Generator(Core):
             step_alms: The alms to use for the step batch. If None, will generate new alms.
             n_steps: The number of steps to use for the step batch. If None, will use the core's mc_steps. If step_alms is provided,
                 the smaller value between n_steps and the number of step_alms is used.
-            lensed: If True, will use the lensed inverse covariance.
+            icov: The inverse covariance matrix to use. If None, will use the core's icov.
         Returns:
             ksw: The KSW estimator for the given shape and parameters.
         """
         ns = self.cosmo_params["ns"]
         ps = self.cosmo_params["pivot_scalar"]
+
+        if c_ells is not None:
+            icov = np.zeros_like(c_ells)
+            icov[..., self.lmin :] = 1 / c_ells[..., self.lmin :]
+        else:
+            icov = self.icov
+
+        if np.sum(np.isnan(icov)) > 0:
+            self.logger.error(
+                "Inverse covariance has NaN values, this will cause issues with the KSW estimator. Atempting fix."
+            )
+            icov = np.nan_to_num(icov, nan=0.0)
 
         match shape_str:
             case "local":
@@ -158,7 +185,7 @@ class Generator(Core):
         # respectively. ^H denotes the Hermitian transpose.
         ksw = KSW(
             self.cosmo.red_bispectra,
-            lambda a: self.icov_func(a, lensed=lensed),
+            lambda a: self.icov_func(a, icov=icov),
             self.lmax,
             self.pols,
             self.precision,
@@ -167,37 +194,35 @@ class Generator(Core):
         if step:
             nsteps = n_steps if n_steps is not None else self.mc_steps
             if step_alms is None:
-                step_alms = self.generate_alm(nsims=nsteps)
+                step_alms = self.generate_alm(nsteps, c_ells)
             else:
                 nsteps = min(nsteps, step_alms.shape[0])
 
             self.logger.debug(
-                "Initalizing KSW for %s %s with %s steps",
-                "unlensed" if not lensed else "lensed",
+                "Initalizing KSW for %s with %s steps",
                 shape_str,
                 nsteps,
             )
             ksw.step_batch(
-                lambda i: self.icov_func(step_alms[i, self.pol_idxs()], lensed=lensed),
+                lambda i: self.icov_func(step_alms[i, self.pol_idxs()], icov=icov),
                 range(nsteps),
                 theta_batch=self.theta_batch,
             )
 
         return ksw
 
-    def icov_func(self, alm, icov=None, lensed=False):
+    def icov_func(self, alm, icov=None):
         """
         This function applies the inverse covariance to the alms for use with the KSW estimator.
 
         Parameters:
             alm: The input alm array.
-            icov: The inverse covariance matrix to use. If None, will use the core's icov or icov_lensed.
-            lensed: If True and icov is None, will use the lensed inverse covariance.
+            icov: The inverse covariance matrix to use. If None, will use the core's icov.
         Returns:
             ret: The alms after applying the inverse covariance.
         """
         if icov is None:
-            icov = self.icov if not lensed else self.icov_lensed
+            icov = self.icov
 
         ret = np.zeros_like(alm)
         for pol in range(ret.shape[0]):
@@ -226,7 +251,7 @@ class Generator(Core):
         sims = remove_mono_dipole(np.array(sims))
         return np.ascontiguousarray(sims)  # ensure contiguous memory
 
-    def generate_alm_nl(self, alms):
+    def generate_alm_nl(self, alms, icov=None):
         """
         This function calculates the non-gaussian alms using the given core and the gaussian alms.
 
@@ -237,6 +262,8 @@ class Generator(Core):
         Returns:
             alm_nl: The calculated almng array.
         """
+
+        icov = icov if icov is not None else self.icov
 
         pol_idxs = self.pol_idxs()
         transfer = self.cosmo.transfer
@@ -287,15 +314,11 @@ class Generator(Core):
         )(self.ells)
 
         bl_div_cl = np.zeros_like(beta_l)
-        bl_div_cl[:, self.lmin :] = (
-            beta_l[:, self.lmin :] * self.icov.T[None, self.lmin :]
-        )
+        bl_div_cl[:, self.lmin :] = beta_l[:, self.lmin :] * icov.T[None, self.lmin :]
 
         # ensure all arrays are c contiguous, they wont be since we are using the interpolator which returns f contiguous
         alpha_l = np.ascontiguousarray(alpha_l)
         bl_div_cl = np.ascontiguousarray(bl_div_cl)
-
-        # TODO: Not seeing the parallel improvements I'd like. Look at reworking this to slice along the sim axis too
 
         # This uses joblib.parallel to generate the patches in parallel
         # by default (temp_folder=None) this will use a ram disk /dev/shm
@@ -304,7 +327,9 @@ class Generator(Core):
         temp_folder = os.environ.get("SCRATCH", None)
         self.logger.debug("Using temp folder for alm_nl generation: %s", temp_folder)
         parallel = Parallel(
-            self.slurm.n_cpus, return_as="generator", temp_folder=temp_folder
+            self.slurm.n_cpus,
+            return_as="generator",
+            temp_folder=temp_folder,
         )
         alm_nl = np.zeros_like(alms[:, pol_idxs])
 
@@ -324,19 +349,19 @@ class Generator(Core):
             # here we use our function to calculate the integral
             alm_nl[sim] = trap_generator(gen, self.radii)
 
+        self.logger.debug("done")
         return alm_nl
 
-    def lens_alms(self, alm):
+    def lens_alms(self, alm, verbose=False):
         """This function lenses the alms using the lenspyx library."""
+        lmax = self.lmax + self.lmax_buffer
+        fl = np.sqrt(np.arange(lmax + 1) * np.arange(1, lmax + 2))
 
-        # cl_phi is PP PT PE, we only want the phi phi part
-        cl_phi = self.cosmo._camb_data.get_lens_potential_cls(self.lmax, "muK", True)
-        cl_phi *= self.phi_scale  # scale for testing
-        plm = utils_hp.synalm(cl_phi[:, 0], self.lmax, mmax=None)
+        alm_phi = hp.synalm(self.cl_phi, new=True, verbose=verbose)
+        alm_phi *= self.phi_scale  # scale the lensing potential by phi_scale
 
-        # transform the lensing potential into spin-1 deflection field
-        fl = np.sqrt(np.arange(self.nell) * np.arange(1, self.nell + 1))
-        dlm = utils_hp.almxfl(plm, fl, mmax=None, inplace=False)
+        dlm = hp.almxfl(alm_phi, fl)
+        # plot_cl_alm(self, dlm, title="dlm", show=True)
 
         geom_info = ("healpix", {"nside": self.nside})
         geom = lenspyx.get_geom(geom_info)
@@ -350,14 +375,13 @@ class Generator(Core):
         for sim in range(self.nsims):
             # we have to split the lensing into the T and EB components
             if self.use_t:
-                # TODO: This accepts a array of alms, do we need the sim loop?
                 lenmap = lenspyx.alm2lenmap(
                     alm[sim, 0],
                     dlm,
                     geometry=geom_info,
                     nthreads=self.slurm.n_cpus,
                 )
-                lenmap = np.ascontiguousarray(lenmap)  # convert from tuple to array
+                lenmap = np.ascontiguousarray(lenmap)
 
                 alm_lensed[sim, 0] = geom.map2alm(
                     lenmap,
@@ -386,7 +410,7 @@ class Generator(Core):
 
         return alm_lensed
 
-    def generate_alm_nl_shape(self, alms, shape, lensed, ksw=None):
+    def generate_alm_nl_shape(self, alms, shape, icov=None, ksw=None):
         """
         This function generates the non-gaussian alms for a given shape using SZ MC method via KSW
 
@@ -400,133 +424,17 @@ class Generator(Core):
         pols = self.pol_idxs()
 
         if ksw is None:
-            ksw = self.get_ksw(shape, step_alms=alms, lensed=lensed)
+            ksw = self.get_ksw(shape, step_alms=alms, icov=icov)
 
         alm_ng = np.zeros_like(alms[:, pols])
         for i in trange(self.nsims, desc=f"alm_ng {shape}"):
-            icov = self.icov_func(alms[i, pols], lensed=lensed)
-            alm_ng[i] = ksw.compute_ng_sim(icov, theta_batch=self.theta_batch)
+            icov_ = self.icov_func(alms[i, pols], icov=icov)
+            alm_ng[i] = ksw.compute_ng_sim(icov_, theta_batch=self.theta_batch)
 
         alm_ng = remove_mono_dipole(alm_ng)
         return np.ascontiguousarray(alm_ng)
 
-    def run(self, verbose=True):
-        """This function runs the generator, generating the alms and calculating the non-gaussian alms."""
-
-        pol_idxs = self.pol_idxs()
-
-        # get the unlensed alms, go ahead and save them and then run the full calculations
-        alm_l = self.generate_alm()
-        sdata = {"alm_l": {"unlensed": alm_l[:, pol_idxs].astype(self.c_dtype)}}
-        save_data(self.file, sdata, verbose=verbose)
-
-        self._run(alm_l, False, verbose=verbose)
-
-        if self.lensing:
-            # now we lens the alms and save them
-            self.logger.debug("Lensing alms...")
-            alm_l = self.lens_alms(alm_l)
-
-            # go ahead and save the data here
-            sdata = {"alm_l": {"lensed": alm_l[:, pol_idxs].astype(self.c_dtype)}}
-            save_data(self.file, sdata, verbose=verbose)
-
-            self._run(alm_l, lensed=True, verbose=verbose)
-
-    def _run(self, alm_l, lensed, verbose=True):
-        """
-        This function runs the generator for a given set of alms, calculating the non-gaussian alms and fisher matrices.
-
-        Parameters:
-            alm_l: The input alm array.
-            lensed: If True, will use the lensed cov in the ksw code.
-        """
-
-        l_str = "lensed" if lensed else "unlensed"
-        pol_idxs = self.pol_idxs()
-
-        if self.slurm.is_main:
-            # we grab the fisher matrix here to save it, and calculate the marginal likelihoods
-            self.logger.debug(
-                "Computing fisher matrix for %s shapes: %s", l_str, self.shapes
-            )
-
-            fisher_mat = np.array(
-                self.compute_fisher_shapes(self.shapes, lensed=lensed)
-            )
-            if len(self.shapes) > 1:
-                marg_likes = np.sqrt(np.diag(np.linalg.inv(fisher_mat)))
-            else:
-                marg_likes = np.sqrt(1 / fisher_mat)
-            self.logger.debug("Marginal likelihoods: %s", marg_likes)
-
-            sdata = {
-                "fisher_matrix": {l_str: fisher_mat.astype(self.r_dtype)},
-                "marginal_likelihoods": {l_str: marg_likes.astype(self.r_dtype)},
-            }
-            save_data(self.file, sdata, verbose=verbose)
-
-        for shape in self.shapes:
-            self.logger.debug("Starting %s %s", l_str, shape)
-            ksw = self.get_ksw(shape, step_alms=alm_l, lensed=lensed)
-
-            self.logger.debug("Computing %s alm_nl for shape %s", l_str, shape)
-            if shape == "local":
-                # use hanson method for local shape
-                alm_nl = self.generate_alm_nl(alm_l)
-            else:
-                # for the shapes we just use the KSW method
-                alm_nl = self.generate_alm_nl_shape(alm_l, shape, lensed, ksw)
-
-            fisher = ksw.compute_fisher()
-
-            sdata = {
-                "alm_nl": {l_str: {shape: alm_nl.astype(self.c_dtype)}},
-                "fisher": {l_str: {shape: [fisher.astype(self.r_dtype)]}},
-            }
-            if self.save_ksw:
-                sdata["ksw"] = {l_str: {shape: get_ksw_save_data(ksw)}}
-            save_data(self.file, sdata, verbose=verbose)
-
-            if self.should_plot():
-                self.logger.debug("Making alm plots for %s", shape)
-                make_alm_plots(self, shape, alm_l[:, pol_idxs], alm_nl, lensed=lensed)
-
-            if self.slurm.is_main and self.estimate:
-                self.logger.debug("Computing estimates for %s %s", l_str, shape)
-                fnl = self.rng.uniform(self.fnl_min, self.fnl_max, (self.nsims, 1, 1))
-
-                # make our alms
-                alm = alm_l + fnl * alm_nl
-
-                n_estimates = min(self.nsims, self.num_estimates)
-                estimates, _, _, _ = ksw.compute_estimate_batch(
-                    lambda idx: self.icov_func(alm[idx, pol_idxs], lensed=lensed),
-                    range(n_estimates),
-                    fisher=fisher,
-                )
-
-                print_errors(fnl, estimates, fisher)
-                if self.should_plot():
-                    base = f"est_{shape}_{l_str}"
-                    plot_dir = os.path.join(
-                        self.dirs["plot"], str(self.name), "estimates"
-                    )
-                    plot_predictions(
-                        fnl,
-                        estimates,
-                        sigma=1 / np.sqrt(fisher),  # type: ignore
-                        save_file=self.get_plot_file(f"{base}_preds", plot_dir),
-                    )
-                    plot_histogram(
-                        fnl,
-                        estimates,
-                        save_file=self.get_plot_file(f"{base}_hist", plot_dir),
-                    )
-
-            self.logger.info("Finished %s %s!", l_str, shape)
-
-    def compute_fisher_shapes(self, shapes, lensed=False):
+    def compute_fisher_shapes(self, shapes, icov=None):
         """
         This function computes the fisher matrix for the given shapes.
 
@@ -537,13 +445,14 @@ class Generator(Core):
             fisher: The computed fisher matrix for the given shapes.
         """
 
+        icov_ = icov if icov is not None else self.icov
+
         # shape here doesn't matter, we dont step so this is fast
-        estimator = self.get_ksw(shapes[0], step=False, lensed=lensed)
-        icov = self.icov_lensed if lensed else self.icov
+        estimator = self.get_ksw(shapes[0], step=False, c_ells=1 / icov_)
 
         # if we only are using 1 shape we just compute the fisher for that shape
-        if len(shapes) == 1:
-            return [estimator.compute_fisher_isotropic(icov)]
+        # if len(shapes) == 1:
+        #     return [estimator.compute_fisher_isotropic(icov_)]
 
         # get a lot of standard parameters from the cosmology
         tr_ell_k = self.cosmo.transfer["tr_ell_k"]
@@ -580,7 +489,132 @@ class Generator(Core):
                 ReducedBispectrum(factors, rule, weights, ells_sparse, shape.name)
             )
 
-        return estimator.compute_fisher_multi(icov, red_bispectra)
+        return estimator.compute_fisher_multi(icov_, red_bispectra)
+
+    def run(self, verbose=False):
+        """This function runs the generator, generating the alms and calculating the non-gaussian alms."""
+
+        pol_idxs = self.pol_idxs()
+
+        # get the unlensed alms, go ahead and save them and then run the full calculations
+        alm_l = self.generate_alm()
+        sdata = {"alm_l": {"unlensed": alm_l[:, pol_idxs].astype(self.c_dtype)}}
+        save_data(self.file, sdata, verbose=verbose)
+
+        # self._run(alm_l, False, verbose=verbose)
+
+        if self.lensing:
+            # now we lens the alms and save them
+            self.logger.debug("Lensing alms...")
+            alm_lens = self.lens_alms(alm_l)
+
+            # go ahead and save the data here
+            sdata = {"alm_l": {"lensed": alm_l[:, pol_idxs].astype(self.c_dtype)}}
+            save_data(self.file, sdata, verbose=verbose)
+
+            self._run(alm_lens, lensed=True, c_ells=self.c_ell_lens, verbose=verbose)
+
+    def _run(self, alm_l, lensed, c_ells=None, verbose=False):
+        """
+        This function runs the generator for a given set of alms, calculating the non-gaussian alms and fisher matrices.
+
+        Parameters:
+            alm_l: The input alm array.
+            lensed: If True, will use the lensed cov in the ksw code.
+        """
+
+        l_str = "lensed" if lensed else "unlensed"
+        pol_idxs = self.pol_idxs()
+        icov = self.icov_lens if lensed else self.icov
+
+        if self.slurm.is_main:
+            # we grab the fisher matrix here to save it, and calculate the marginal likelihoods
+            self.logger.debug(
+                "Computing fisher matrix for %s shapes: %s", l_str, self.shapes
+            )
+
+        fisher_mat = np.array(self.compute_fisher_shapes(self.shapes, icov=icov))
+        if len(self.shapes) > 1:
+            marg_likes = np.sqrt(np.diag(np.linalg.inv(fisher_mat)))
+        else:
+            marg_likes = np.sqrt(1 / fisher_mat)
+        self.logger.debug("Marginal likelihoods: %s", marg_likes)
+
+        sdata = {
+            "fisher_matrix": {l_str: fisher_mat.astype(self.r_dtype)},
+            "marginal_likelihoods": {l_str: marg_likes.astype(self.r_dtype)},
+        }
+        save_data(self.file, sdata, verbose=verbose)
+
+        for shape in self.shapes:
+            self.logger.debug("Starting %s %s", l_str, shape)
+            ksw = self.get_ksw(
+                shape,
+                c_ells=c_ells,
+            )
+
+            fisher = ksw.compute_fisher()
+            self.logger.debug("fisher: %s, std div: %s", fisher, 1 / np.sqrt(fisher))
+
+            self.logger.debug("Computing %s alm_nl for shape %s", l_str, shape)
+            if shape == "local":
+                # use hanson method for local shape
+                alm_nl = self.generate_alm_nl(alm_l, icov=icov)
+            else:
+                # for the shapes we just use the KSW method
+                alm_nl = self.generate_alm_nl_shape(alm_l, shape, icov, ksw)
+
+            sdata = {
+                "alm_nl": {l_str: {shape: alm_nl.astype(self.c_dtype)}},
+                "fisher": {l_str: {shape: [fisher.astype(self.r_dtype)]}},
+            }
+            if self.save_ksw:
+                sdata["ksw"] = {l_str: {shape: get_ksw_save_data(ksw)}}
+            save_data(self.file, sdata, verbose=verbose)
+
+            # if self.should_plot():
+            #     self.logger.debug("Making alm plots for %s", shape)
+            #     make_alm_plots(
+            #         self,
+            #         shape,
+            #         alm_l[:, pol_idxs],
+            #         alm_nl,
+            #         lensed=lensed,
+            #         # show=True,
+            #         # save=False,
+            #     )
+
+            if self.slurm.is_main and self.estimate:
+                self.logger.debug("Computing estimates for %s %s", l_str, shape)
+                fnl = self.rng.uniform(self.fnl_min, self.fnl_max, (self.nsims, 1, 1))
+
+                # make our alms
+                alm = alm_l + fnl * alm_nl
+
+                n_estimates = min(self.nsims, self.num_estimates)
+                estimates, _, _, _ = ksw.compute_estimate_batch(
+                    lambda idx: self.icov_func(alm=alm[idx, pol_idxs], icov=icov),
+                    range(n_estimates),
+                    fisher=fisher,
+                )
+
+                print_errors(fnl, estimates, fisher)
+                if self.should_plot():
+                    base = f"est_{shape}_{l_str}"
+                    plot_dir = os.path.join(self.dirs["plot"], self.name, "estimates")
+                    plot_predictions(
+                        fnl,
+                        estimates,
+                        sigma=1 / np.sqrt(fisher),  # type: ignore
+                        save_file=self.get_plot_file(f"{base}_preds", plot_dir),
+                    )
+                    plot_histogram(
+                        fnl,
+                        estimates,
+                        save_file=self.get_plot_file(f"{base}_hist", plot_dir),
+                    )
+
+            self.logger.info("Finished %s %s!", l_str, shape)
 
 
 if __name__ == "__main__":
