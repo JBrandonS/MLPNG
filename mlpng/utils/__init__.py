@@ -1,3 +1,7 @@
+import os
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+
 from .utils import (
     setup_logging,
     save_data,
@@ -21,6 +25,7 @@ from .plots import (
     plot_metrics,
     make_alm_plots,
     make_trainer_plots,
+    plot_cl_vs,
 )
 
 from .slurm import Slurm
@@ -51,4 +56,5 @@ __all__ = [
     "make_trainer_plots",
     "get_ksw_from_data",
     "get_ksw_save_data",
+    "plot_cl_vs",
 ]

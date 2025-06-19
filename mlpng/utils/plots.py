@@ -52,6 +52,44 @@ def finalize_plot(
             plt.close()
 
 
+def plot_map(maps, zoom=False, **kwargs):
+    if zoom:
+        hp.mollzoom(maps)
+    else:
+        hp.mollview(maps)
+    finalize_plot(**kwargs)
+
+
+def plot_map_alm(
+    core,
+    alm: np.ndarray | list[np.ndarray],
+    lmax: int | None = None,
+    title: str = "Map from alm",
+    **kwargs,
+):
+    """
+    Plot a map from alm coefficients.
+
+    Parameters:
+        alm (array-like): The alm coefficients.
+        lmax (int, optional): The maximum multipole moment. If not provided, it will be determined from the length of alm.
+        title (str, optional): The title of the plot.
+        **kwargs: Additional keyword arguments to be passed to the plot function.
+
+    Returns:
+        None
+    """
+    lmax = lmax if lmax else hp.Alm.getlmax(np.shape(alm)[-1])
+    if len(np.shape(alm)) > 1:
+        maps = []
+        for single_alm in alm:
+            maps.append(hp.alm2map(single_alm, core.nside, lmax=lmax))
+    else:
+        maps = hp.alm2map(alm, core.nside)
+
+    plot_map(maps, title=title, **kwargs)
+
+
 def plot_cl(
     core,
     c_ells,
@@ -60,7 +98,7 @@ def plot_cl(
     title="Angular power spectrum from cl",
     labels=None,
     xlabel=r"$\ell$",
-    ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}$",
+    ylabel=None,
     scale=True,
     plot_func=plt.semilogy,
     plot_camb=False,
@@ -72,6 +110,10 @@ def plot_cl(
         lmax = core.lmax
     if lmin is None:
         lmin = core.lmin
+    if ylabel is None:
+        ylabel = r"$C_{\ell}$"
+    if scale:
+        ylabel = f"$\\ell(\\ell+1)/2\\pi\\;${ylabel}"
 
     ells = np.arange(lmin, lmax + 1)
     scale = (ells * (ells + 1) / 2 / np.pi) if scale else 1
@@ -147,9 +189,9 @@ def plot_cl_alm(
     if len(np.shape(alm)) > 1:
         cls = []
         for single_alm in alm:
-            cls.append(curvedsky.alm2cl(single_alm))
+            cls.append(hp.alm2cl(single_alm))
     else:
-        cls = np.array([curvedsky.alm2cl(alm)])
+        cls = np.array([hp.alm2cl(alm)])
     plot_cl(core, cls, lmax=lmax, title=title, **kwargs)
 
 
@@ -186,6 +228,37 @@ def plot_cl_map(
         cls = [curvedsky.alm2cl(alm)]
 
     plot_cl(core, cls, lmax=lmax, title=title, **kwargs)
+
+
+def plot_cl_vs(
+    core,
+    c_ell_a: np.ndarray | list[np.ndarray],
+    c_ell_b: np.ndarray | list[np.ndarray],
+    title="Angular power spectrum comparison",
+    labels=["unlensed", "lensed"],
+    xlabel=r"$\ell$",
+    ylabel=None,
+    scale=True,
+    plot_func=plt.semilogy,
+    plot_diff_func=plt.plot,
+    file_base=None,
+    **kwargs,
+):
+    if ylabel is None:
+        ylabel = r"$\ell(\ell+1)/2\pi\;C_{\ell}$" if scale else r"$C_{\ell}$"
+
+    ells = np.arange(2, core.nell)
+    scale = (ells * (ells + 1) / 2 / np.pi) if scale else 1
+
+    plot_func(ells, scale * c_ell_a[2:], label=labels[0], linestyle=":")
+    plot_func(ells, scale * c_ell_b[2:], label=labels[1], linestyle="--")
+    save_file = file_base + "_vs.png" if file_base else None
+    finalize_plot(title=title, save_file=save_file, **kwargs)
+
+    delta = (c_ell_b - c_ell_a) / c_ell_a
+    plot_diff_func(ells, delta[2:], label="Difference", linestyle="--")
+    save_file = file_base + "_diff.png" if file_base else None
+    finalize_plot(title=f"{title} - Difference", save_file=save_file, **kwargs)
 
 
 def plot_predictions(
