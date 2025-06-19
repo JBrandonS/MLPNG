@@ -173,6 +173,11 @@ class Core:
             help="Number of estimates to compute, if using --estimate",
         )
         parser.add_argument(
+            "--mc_steps",
+            type=int,
+            help="Number of steps to use for initializing the KSW estimator",
+        )
+        parser.add_argument(
             "--pols",
             type=str,
             help="Polarizations to consider, options are T, E, TE; Right now only T is fully tested",
@@ -628,7 +633,7 @@ class Core:
             self.use_t,
             self.use_e,
             keep_b and self.use_e,
-            keep_te and (self.use_t and self.use_e),  # and not self.isotropic),
+            keep_te and (self.use_t and self.use_e),
         ]
         idxs = np.array([i for i, v in enumerate(conditions) if v])
         if pretrimmed and not self.use_t:
