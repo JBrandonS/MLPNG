@@ -26,6 +26,7 @@ from .plots import (
     make_alm_plots,
     make_trainer_plots,
     plot_cl_vs,
+    plot_map_alm,
 )
 
 from .slurm import Slurm
@@ -57,4 +58,5 @@ __all__ = [
     "get_ksw_from_data",
     "get_ksw_save_data",
     "plot_cl_vs",
+    "plot_map_alm",
 ]
