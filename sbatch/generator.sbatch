@@ -2,10 +2,10 @@
 #SBATCH --job-name=generator
 #SBATCH --partition=standard-s
 #SBATCH --ntasks=1
-#SBATCH --mem=500G
+#SBATCH --mem=256G
 #SBATCH --cpus-per-task=64
 #SBATCH --output=data/logs/generator/%A/%j.log
-#SBATCH --array=1-100
+#SBATCH --array=1-1
 #SBATCH --time=1-00:00:00
 #SBATCH --account=jrmeyers_ml_cmb_0001
 
@@ -17,10 +17,8 @@ echo "Running generator on $(hostname) with cli $*"
 module purge
 module load conda gcc/11.2.0 intel-oneapi-mkl/2022.2.1-c4efjsy fftw/3.3.10-gz7qiki openmpi/4.1.6-a4ksrza
 module list
-# eval "$(conda shell.bash hook)"
+
 conda activate mlpng
 
-# mkdir -p data/profiles/generator
-# time srun python -m cProfile -o data/profiles/generator/$SLURM_JOB_ID.prof -m mlpng.generator "$@"
 time srun python -m mlpng.generator "$@"
-# time srun python -m mlpng.elsner_generator "$@"
+# time srun python -m mlpng.scale_test "$@"

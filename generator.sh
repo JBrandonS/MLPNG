@@ -10,8 +10,8 @@
 SETTINGS=(
   # "n32"
   "n64"
-  # "n128"
-  # "n256"
+  "n128"
+  "n256"
   
   # these can only be run with nsims < 1000, due to time or memory
   # "n512"
@@ -31,7 +31,7 @@ ARGS=(
   "--pols" "T"
   "--shapes" "local"
   "--force_generation"
-  "--phi_scale" "666"
+  "--phi_scale" "10"
   "--narray" "1"
 )
 
@@ -99,5 +99,5 @@ for x in "${SETTINGS[@]}"; do
   job_id=$(submit_job "$job_id" "sbatch/combiner.sbatch" "$settings")
 
   # Run the estimator on the combined data
-  # job_id=$(submit_job "$job_id" "sbatch/estimator.sbatch" "$settings")
+  job_id=$(submit_job "$job_id" "sbatch/estimator.sbatch" "$settings")
 done

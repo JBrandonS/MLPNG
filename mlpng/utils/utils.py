@@ -105,7 +105,7 @@ def recursive_save(file, path, data, verbose=True):
             file.create_dataset(npath, data=value)
 
 
-def save_data(file_path, data_dict, mode="a", verbose=True):
+def save_data(file_path, data_dict, mode="a", verbose=False):
     """
     Save data to an HDF5 file.
 
