@@ -9,7 +9,7 @@ from tqdm.auto import tqdm
 from . import Core
 from .utils import setup_logging
 
-logger = setup_logging("mlpng.combiner", logging.INFO)
+logger = setup_logging("mlpng.combiner", logging.DEBUG)
 
 
 def extract_number(filename):
@@ -26,43 +26,54 @@ def extract_number(filename):
     return int(matches[-2]) if matches else 0
 
 
-def recursive_copy(hf_source, hf_dest, num_files, index):
+def recursive_copy(hf_source, hf_dest, key_positions, path=""):
     """
-    Recursively copies datasets from `hf_source` to `hf_dest` with specified index range.
+    Recursively copies datasets from `hf_source` to `hf_dest`, appending data for each key, supporting nested groups.
 
     Args:
-        hf_source (h5py.File): The source HDF5 file object.
-        hf_dest (h5py.File): The destination HDF5 file object.
-        num_files (int): The total number of files to be combined, used to inform dataset generation.
-        index (int): The index of the current file being copied.
+        hf_source (h5py.File or h5py.Group): The source HDF5 file/group object.
+        hf_dest (h5py.File or h5py.Group): The destination HDF5 file/group object.
+        key_positions (dict): Tracks the current write position for each key (by full path).
+        path (str): Current path in the HDF5 hierarchy.
 
     Returns:
         None
     """
     for key in hf_source.keys():
-        # get the number of data points in the dataset, stored in the 0th dimension
-        num_elem = hf_source[key].shape[0]
-        # get the shape of the actual data
-        data_shape = hf_source[key].shape[1:]
-        logger.debug("%s: Found non-scalar dataset of shape: %s", key, data_shape)
-
-        if key not in hf_dest:
-            ds_shape = (num_files * num_elem,) + data_shape
-            dtype = hf_source[key].dtype
-
+        full_key = f"{path}/{key}" if path else key
+        if isinstance(hf_source[key], h5py.Group):
+            if key not in hf_dest:
+                hf_dest.create_group(key)
+            logger.debug("Copying group '%s', at path: %s", key, full_key)
+            recursive_copy(hf_source[key], hf_dest[key], key_positions, full_key)
+        elif isinstance(hf_source[key], h5py.Dataset):
+            data = hf_source[key][...]
             logger.debug(
-                "%s: Creating dataset with shape %s, and dtype %s", key, ds_shape, dtype
+                "Copying dataset '%s' with shape %s and dtype %s at path %s",
+                key,
+                data.shape,
+                data.dtype,
+                full_key,
             )
-            hf_dest.create_dataset(key, shape=ds_shape, dtype=dtype)
+            num_elem = data.shape[0]
+            data_shape = data.shape[1:]
+            dtype = data.dtype
 
-        logger.debug(
-            "%s: Copying data to index range %s",
-            key,
-            (index * num_elem, (index + 1) * num_elem),
-        )
-        logger.debug("%s: Data type of hf_source: %s", key, hf_source[key].dtype)
-        logger.debug("%s: Data type of hf_dest: %s", key, hf_dest[key].dtype)
-        hf_dest[key][index * num_elem : (index + 1) * num_elem] = hf_source[key]
+            if key not in hf_dest:
+                ds_shape = (0,) + data_shape
+                hf_dest.create_dataset(
+                    key,
+                    shape=ds_shape,
+                    maxshape=(None,) + data_shape,
+                    dtype=dtype,
+                )
+                key_positions[full_key] = 0
+            if full_key not in key_positions:
+                key_positions[full_key] = 0
+            pos = key_positions[full_key]
+            hf_dest[key].resize((pos + num_elem,) + data_shape)
+            hf_dest[key][pos : pos + num_elem] = data
+            key_positions[full_key] += num_elem
 
 
 def combine_data(directory, base_name, ext=".hdf5", remove_files=True, expected=100):
@@ -113,16 +124,17 @@ def combine_data(directory, base_name, ext=".hdf5", remove_files=True, expected=
     files_to_combine = sorted(files_to_combine, key=extract_number)
 
     # Create a new h5py file to hold all the combined data
+    logger.info("Saving combined data to %s", nc_file)
+    key_positions = {}
     with h5py.File(nc_file, "x") as hf_combined:
-        for idx, file in tqdm(
-            enumerate(files_to_combine), desc="Processing files", total=expected
-        ):
-            logger.info("Processing file %s", file)
+        for file in tqdm(files_to_combine, desc="Processing files", total=expected):
+            logger.debug("Processing file %s", file)
             with h5py.File(file, "r") as hf:
-                recursive_copy(hf, hf_combined, expected, idx)
+                recursive_copy(hf, hf_combined, key_positions, "")
 
     # Move the combined file to remove the .nc extension
     # This will also override any existing file with the same name
+    logger.debug("Moving combined file to %s", os.path.join(directory, base_name + ext))
     os.replace(
         nc_file,
         os.path.join(directory, base_name + ext),
@@ -133,10 +145,6 @@ def combine_data(directory, base_name, ext=".hdf5", remove_files=True, expected=
             os.remove(file)
 
 
-def main():
+if __name__ == "__main__":
     core = Core()
     combine_data(core.dirs["data"], core.name, ".hdf5", expected=core.narray)
-
-
-if __name__ == "__main__":
-    sys.exit(main())

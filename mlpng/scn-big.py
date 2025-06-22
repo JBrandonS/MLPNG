@@ -4,24 +4,28 @@ import math
 import logging
 import healpy as hp
 import numpy as np
+import matplotlib.pyplot as plt
 
+# some fucking bullshit mad this just stop working unless I point to deepsphere... wtf!
 sys.path.append("/users/stevensonb/Research/tools/deepsphere-cosmo-tf2")
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import tensorflow as tf
-from tensorflow.keras.layers import (
+from tensorflow.keras.layers import ( 
     Dense,
     Dropout,
     Flatten,
+    ReLU,
     LeakyReLU,
+    AlphaDropout,
 )
-from tensorflow.keras.callbacks import (
+from tensorflow.keras.callbacks import (  
     EarlyStopping,
     TerminateOnNaN,
     TensorBoard,
 )
-from tensorflow.keras.optimizers import AdamW
-from tensorflow.keras.optimizers.schedules import ExponentialDecay
+from tensorflow.keras.optimizers import AdamW 
+from tensorflow.keras.optimizers.schedules import CosineDecayRestarts  
 
 from deepsphere import HealpyGCNN
 from deepsphere.healpy_layers import (
@@ -38,25 +42,38 @@ from mlpng.utils import (
 from mlpng.utils.dataloaders import MapDataset
 from mlpng.utils.callbacks import RMSELoss, rmse_metrics
 
+if not sys.warnoptions:
+    import warnings
 
-logger = setup_logging(__name__, level=logging.DEBUG)
+    warnings.simplefilter("ignore")
+
+logger = setup_logging("mlpng.scn_shapes", level=logging.DEBUG)
 
 
 def get_model(input_shape, max_batch_size=32, n_out=1):
-    """This is the jorik model from the paper, add links to the paper and code if available."""
     nside = hp.npix2nside(input_shape[1])
     layers = []
 
     n_layers = math.floor(math.log(nside, 2))
     for i in range(n_layers):
-        fout = 32
+        # fout = 32  # 128
+        fout = 2 ** (6 + i)
         layers.append(
             HealpyChebyshev(
                 K=2,
-                Fout=fout,  # this is not mentioned in paper
-                # use_bias=True,  # this is not mentioned in paper
-                use_bn=True,  # this is not mentioned in paper
-                activation=LeakyReLU(0.3),
+                Fout=fout,
+                # use_bias=True,
+                use_bn=True,
+                activation="relu",
+            )
+        )
+        layers.append(
+            HealpyChebyshev(
+                K=2,
+                Fout=fout,
+                # use_bias=True,
+                use_bn=True,
+                activation="relu",
             )
         )
         layers.append(Dropout(0.1))
@@ -64,8 +81,12 @@ def get_model(input_shape, max_batch_size=32, n_out=1):
 
     layers.append(Flatten())
     layers.append(Dropout(0.3))
-    layers.append(Dense(32, activation=LeakyReLU(0.3)))
-    layers.append(Dense(32, activation=LeakyReLU(0.3)))
+    layers.append(Dense(512, activation="relu"))
+    layers.append(Dense(256))
+    layers.append(Dense(128, activation="relu"))
+    layers.append(Dense(64))
+    layers.append(Dense(32, activation="relu"))
+    layers.append(Dense(16))
     layers.append(Dense(n_out))
 
     model = HealpyGCNN(
@@ -84,49 +105,46 @@ def get_model(input_shape, max_batch_size=32, n_out=1):
 def main():
     batch_size = 64
     max_epochs = 300
-    run_name = "jorik-bias"
+    run_name = "big-mask-highlr"
 
     core = Core()
     shapes = core.shapes
 
-    # here we grab out dataset, splitting and duplicating based on paper
     ds = MapDataset.fromCore(core)
     train, val, test = ds.split(
-        0.4,
+        0.8,
         0.1,
-        0.5,
+        0.1,
         to_tf=True,
         batch_size=batch_size,
-        duplicates=[25, 10, 2],
-        cache_file=f"{core.name}-050625-{run_name}-{core.shapes_str()}",
+        duplicates=[25, 10, 5],
+        cache_file=f"{core.name}-043025-{run_name}-{core.shapes_str()}",
         gen_batch_size=16,
     )
-
     # the paper does not rotate the test set
     test.rotate = False
 
     # calculate the number of steps per epoch and decay steps for use later
-    epoch_steps = math.ceil(core.total_sims * 0.4 * 25 // batch_size)
-    decay_steps = epoch_steps * 1
+    epoch_steps = math.ceil(core.total_sims * 0.8 * 25 // batch_size)
+    decay_steps = epoch_steps * 2
 
     # get this data that we will need later, also serves to create the test data
     # this allows us to have the full cached dataset by the end of the first epoch
-    # if the cache exists this is very fast, might need to change this for very large datasets
+    # if the cache exists this is very fast
     logger.debug("Creating test cache")
     y_test = np.concatenate([y for _, y in test])
-    logger.debug("Finished creating test cache")
 
     strategy = tf.distribute.MirroredStrategy()  # use mirrored strategy for multi-GPU
     with strategy.scope():
-        learning_rate = 5e-4
-        learning_rate = ExponentialDecay(
-            learning_rate, decay_steps, 0.95, staircase=True
+        learning_rate = 5e-3
+        learning_rate = CosineDecayRestarts(
+            learning_rate, decay_steps, t_mul=2.0, m_mul=0.9, alpha=0.001
         )
 
         model = get_model((None, core.npix, core.npols), batch_size, len(shapes))
 
         model.compile(
-            optimizer=AdamW(learning_rate),
+            optimizer=AdamW(learning_rate, weight_decay=0.0001),
             loss=RMSELoss(),
             metrics=rmse_metrics(shapes),
         )
@@ -149,7 +167,6 @@ def main():
                 write_steps_per_second=True,
             )
         )
-
     if core.use_wandb:
         try_init_wandb(
             config={

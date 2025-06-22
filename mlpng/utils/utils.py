@@ -1,9 +1,9 @@
-import os
 import logging
 import sys
 import h5py
 import numpy as np
 import healpy as hp
+import warnings
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,9 @@ def setup_logging(
     Returns:
         logger (logging.Logger): The configured logger object.
     """
+    if not sys.warnoptions:
+        warnings.simplefilter("ignore")
+
     if scripts_level is None:
         scripts_level = level
 
@@ -47,7 +50,62 @@ def setup_logging(
     return log
 
 
-def save_data(file_path, data_dict, mode="a"):
+def recursive_save(file, path, data, verbose=True):
+    """
+    Recursively save a dictionary to an HDF5 file.
+
+    Args:
+        file (h5py.File): The HDF5 file object.
+        path (str): The path in the HDF5 file to save the dictionary.
+        dict (dict): The dictionary to save.
+
+    Returns:
+        None
+    """
+    for key, value in data.items():
+        npath = f"{path}/{key}"
+        if verbose:
+            logger.debug("Processing path: %s", npath)
+
+        if isinstance(value, dict):
+            if verbose:
+                logger.debug("Processing dict: %s", key)
+
+            # check if group exists, if not create it
+            if npath in file:
+                grp = file[npath]
+            else:
+                grp = file.create_group(npath)
+            recursive_save(grp, npath, value, verbose)
+
+        elif isinstance(value, np.ndarray):
+            # logger.debug("Processing ndarray: %s", key)
+            if npath in file:
+                if verbose:
+                    logger.debug("Appending %s/%s data to existing", path, key)
+                # Resize the dataset to accommodate the new data
+                file[npath].resize(
+                    (file[npath].shape[0] + value.shape[0],) + value.shape[1:]
+                )
+                file[npath][-value.shape[0] :] = value
+            else:
+                if verbose:
+                    logger.debug("Creating new dataset: %s/%s", path, key)
+                file.create_dataset(
+                    npath, data=value, maxshape=(None,) + value.shape[1:]
+                )
+        else:
+            if verbose:
+                logger.debug(
+                    "Creating dataset for key %s of type %s at %s",
+                    key,
+                    type(value),
+                    path,
+                )
+            file.create_dataset(npath, data=value)
+
+
+def save_data(file_path, data_dict, mode="a", verbose=False):
     """
     Save data to an HDF5 file.
 
@@ -62,96 +120,62 @@ def save_data(file_path, data_dict, mode="a"):
     Returns:
         None
     """
-    logger.info("Saving data to '%s'", file_path)
+    if verbose:
+        logger.info("Saving data to '%s'", file_path)
     with h5py.File(file_path, mode) as hf:
-        for key, value in data_dict.items():
-            logger.debug("%s: Processing key", key)
-            if isinstance(value, dict):
-                logger.debug("%s: Processing dict", key)
-                grp = hf.create_group(key)
-                for k, v in value.items():
-                    logger.debug("%s: Processing subkey %s", key, k)
-                    grp.create_dataset(k, data=np.array(v))
-
-                continue
-
-            if isinstance(value, np.ndarray):
-                logger.debug("%s: Processing ndarray", key)
-                if key in hf:
-                    logger.debug("%s: Appending to existing", key)
-                    # Resize the dataset to accommodate the new data
-                    hf[key].resize(  # type: ignore
-                        (hf[key].shape[0] + value.shape[0],) + value.shape[1:]  # type: ignore
-                    )  # type: ignore
-                    # Append the new data
-                    hf[key][-value.shape[0] :] = value  # type: ignore
-                else:
-                    # Create a new dataset for this key
-                    logger.debug("%s: Creating new dataset", key)
-                    hf.create_dataset(
-                        key, data=value, maxshape=(None,) + value.shape[1:]
-                    )
-            else:
-                # For other data types, create a dataset
-                logger.debug("Creating dataset for key %s of type %s", key, type(value))
-                hf.create_dataset(key, data=value)
+        recursive_save(hf, "", data_dict, verbose=verbose)
+    if verbose:
+        logger.debug("Finished saving data to '%s'", file_path)
 
 
-def load_data(data_file, keys):
+def get_ksw_save_data(ksw):
     """
-    Load data from an HDF5 file.
+    Extracts the data to be saved from a KSW object.
 
-    Args:
-        data_file (str): The path to the HDF5 file.
-        keys (str or list): The key(s) of the data to load.
-
-    Returns:
-        dict: A dictionary containing the loaded data, where the keys are the provided key(s) and the values are the corresponding data arrays.
-
-    Raises:
-        ValueError: If any of the provided keys are not found in the HDF5 file.
-    """
-    logger.info("Loading data '%s' from '%s'", keys, data_file)
-
-    if isinstance(keys, str):
-        keys = [keys]
-
-    data = {}
-    with h5py.File(data_file, "r", swmr=True, locking=False) as hdf:
-        for key in keys:
-            logger.debug("%s: Loading", key)
-            kv = hdf.get(key, None)
-            if kv is None:
-                raise ValueError(f"Key {key} not found in {data_file}")
-            logger.debug(
-                "%s: Loaded, %s", key, kv.shape if isinstance(kv, np.ndarray) else kv
-            )
-            data[key] = kv[()]  # type: ignore
-
-    logger.info("Finished loading data from %s", data_file)
-    return data
-
-
-def get_fisher(file, name="fisher"):
-    """
-    Load the fisher matrix from an HDF5 file.
+    Mostly this is just a modified ksw.estimator.write_state
 
     Parameters:
-    - file (str): The path to the HDF5 file.
+        ksw (KSW): The KSW object containing the data.
 
     Returns:
-    - fisher (numpy.ndarray or None): The loaded fisher matrix, or None if it couldn't be loaded.
+        dict: A dictionary containing the data to be saved.
     """
-    try:
-        with h5py.File(file, "r", swmr=True, locking=False) as hdf:
-            fisher = float(hdf.get(name, [None])[0])  # type: ignore
-            logger.info(
-                "Loaded fisher: %s, with error: %s", fisher, np.sqrt(1 / fisher)
-            )
-    except Exception as e:
-        logger.error("Could not load fisher matrix: %s", e)
-        raise e
-    return fisher
+
+    mc_idx = np.asarray([ksw.mc_idx], dtype=np.int64)
+
+    if ksw.__mc_gt_sq is None:
+        mc_gt_sq = np.asarray([np.nan], dtype=np.float64)
+    else:
+        mc_gt_sq = np.asarray([ksw.__mc_gt_sq], dtype=np.float64)
+
+    if ksw.__mc_gt is None:
+        mc_gt = np.asarray([np.nan], dtype=ksw.cdtype)
+    else:
+        mc_gt = ksw.__mc_gt
+
+    return {"mc_idx": mc_idx, "mc_gt_sq": mc_gt_sq, "mc_gt": mc_gt}
+
+
+def get_ksw_from_data(data):
+    """
+    Extracts the KSW object from the saved data.
+
+    TODO: Needs testing
+
+    Parameters:
+        data (dict): The dictionary containing the saved data.
+
+    Returns:
+        KSW: The KSW object reconstructed from the saved data.
+    """
+    from mlpng.estimators.ksw import KSW
+
+    mc_idx = data["mc_idx"][0]
+    mc_gt_sq = data["mc_gt_sq"][0]
+    mc_gt = data["mc_gt"]
+
+    ksw = KSW(mc_idx=mc_idx, mc_gt_sq=mc_gt_sq, mc_gt=mc_gt)
+    return ksw
 
 
 def remove_mono_dipole(alm, inplace=False):
@@ -183,12 +207,22 @@ def remove_mono_dipole(alm, inplace=False):
 
 
 def print_errors(truth, preds, fisher, n_sigma=5):
+    """
+    Print the errors between the truth and predictions, along with statistics.
+    Parameters:
+        truth (np.ndarray): The ground truth values.
+        preds (np.ndarray): The predicted values.
+        fisher (float): The Fisher information value.
+        n_sigma (int, optional): The number of standard deviations to consider. Default is 5.
+    """
+
     truth = truth.flatten()
     preds = preds.flatten()
 
     diff = preds - truth
     std_dev = np.sqrt(1 / fisher)
     sem = std_dev / np.sqrt(len(diff))
+
     logger.info("Standard deviation from fisher: %s, SEM: %s", std_dev, sem)
     logger.info("Mean error: %s, Median error: %s", np.mean(diff), np.median(diff))
     for i in range(n_sigma):
@@ -282,7 +316,7 @@ def try_init_wandb(
             "Please install with `pip install wandb`. "
             "See: https://docs.wandb.ai/quickstart"
         )
-        return
+        return None
 
     if patch_tb:
         if patch_logdir is None:

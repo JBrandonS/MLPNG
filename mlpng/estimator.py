@@ -1,14 +1,10 @@
-import sys
-import logging
 import os
-import healpy as hp
-
+import logging
 import h5py
 import numpy as np
 from mpi4py import MPI
 
-from . import Core, get_itotcov_ell
-from .generator import generate_alm
+from .generator import Generator
 from .utils import save_data, setup_logging, print_errors
 from .utils.plots import plot_histogram, plot_predictions
 
@@ -17,155 +13,107 @@ mpi_rank = mpi_comm.Get_rank()
 mpi_size = mpi_comm.Get_size()
 mpi_root = mpi_rank == 0
 
-# estimator will run multiple jobs per id which get sent to the same log file,
-# so we only want to log the root to keep from spamming the log
-if mpi_root:
-    logger = setup_logging(name=f"mlpng.estimator_{mpi_rank}", level=logging.DEBUG)
-else:
-    logger = setup_logging(name=f"mlpng.estimator_{mpi_rank}", level=logging.ERROR)
 
-def main():
-    core = Core()
+class Estimator(Generator):
+    def __init__(self, log_level=None, **kwargs):
+        if log_level is None:
+            log_level = logging.DEBUG if mpi_root else logging.ERROR
 
-    # the KSW code requires the total_sims to be >= mpi_size
-    # best usage would have total_sims % mpi_size == 0, but not required
-    assert (
-        core.num_estimates >= mpi_size
-    ), "total_sims < mpi_size, lower ntasks or increase sims"
+        super().__init__(log_level=log_level, **kwargs)
+        self.logger = setup_logging(name=f"mlpng.estimator_{mpi_rank}", level=log_level)
 
-    logger.info(
-        "Computing %s estimates in %.2f batches",
-        core.num_estimates,
-        core.num_estimates / mpi_size,
-    )
-    if core.num_estimates % mpi_size != 0:
-        logger.warning(
-            "num_estimates is not divisible by mpi_size, "
-            "this will lead to uneven workloads."
+        # the KSW code requires the total_sims to be >= mpi_size
+        # best usage would have total_sims % mpi_size == 0, but not required
+        assert self.num_estimates >= mpi_size, (
+            "total_sims < mpi_size, lower ntasks or increase sims"
         )
 
-    # early loading to fail fast if the file does not exist
-    data = h5py.File(core.file, "r", swmr=True, locking=False)
+        self.logger.info(
+            "Computing %s estimates in %.2f batches",
+            self.num_estimates,
+            self.num_estimates / mpi_size,
+        )
+        if self.num_estimates % mpi_size != 0:
+            self.logger.warning(
+                "num_estimates is not divisible by mpi_size, "
+                "this will lead to uneven workloads."
+            )
 
-    core.init_estimator()
+    def run(self, lensing=False):
+        l_str = "lensed" if lensing else "unlensed"
+        theta_batch = int(np.floor(1.5 * self.lmax + 1)) // mpi_size
 
-    # The default theta_batch size is 25, which is really small, we want to increase it
-    theta_batch = int(np.floor(1.5 * core.lmax + 1)) // mpi_size
-    logger.debug("Using theta_batch %s", theta_batch)
+        with h5py.File(self.file, "r", swmr=True, locking=False) as data:
+            alm_l = np.array(data["alm_l"][l_str][: self.num_estimates])
+            icov = np.array(data["icov"][l_str])
+            self.icov = icov
 
-    if core.isotropic:
-        logger.debug("Using isotropic fisher from data")
-        fisher = data["fisher_iso"][0]
-    else:
-        logger.debug("Computing fisher")
-        if os.path.exists(core.mc_file):
-            logger.info("Loading KSW state from %s", core.mc_file)
-            core.estimator.start_from_read_state(core.mc_file, comm=mpi_comm)
-        else:
-            alm_steps = generate_alm(core, nsims=core.mc_steps)
+        for shape in self.shapes:
+            self.logger.info(
+                "Estimating for %s %s, using %s estimates",
+                l_str,
+                shape,
+                self.num_estimates,
+            )
 
-            logger.info("Initializing KSW with %s steps", core.mc_steps)
-            core.estimator.step_batch(
-                lambda i: core.icov_func(alm_steps[i, core.pol_idxs()]),
-                range(core.mc_steps),
-                mpi_comm,
+            with h5py.File(self.file, "r", swmr=True, locking=False) as data:
+                alm_nl = np.array(data["alm_nl"][l_str][shape][: self.num_estimates])
+
+            fnl = self.rng.uniform(
+                self.fnl_min, self.fnl_max, (self.num_estimates, 1, 1)
+            )
+
+            # make our alms
+            alm = alm_l + fnl * alm_nl
+
+            ksw = self.get_ksw(shape, step_alms=alm_l, lensed=lensing)
+            fisher = ksw.compute_fisher()
+            self.logger.debug("Fisher: %s, std: %s", fisher, 1 / np.sqrt(fisher))
+
+            estimates, _, _, _ = ksw.compute_estimate_batch(
+                lambda idx: self.icov_func(alm[idx], icov=icov, lensed=lensing),
+                range(self.num_estimates),
+                comm=mpi_comm,
+                fisher=fisher,
                 theta_batch=theta_batch,
             )
 
-            # save the mc state if we are using the mc file
-            if core.slurm.is_main:
-                logger.info("Saving KSW state to %s", core.mc_file)
-                core.estimator.write_state(core.mc_file, comm=mpi_comm)
+            mpi_comm.Barrier()  # ensure all ranks are done before saving
+            if mpi_root:
+                # save the data, this will append to the alm_file
+                sdata = {"estimates": {l_str: {shape: estimates}}}
+                save_data(self.file, sdata, mode="a", verbose=False)
 
-        fisher = core.estimator.compute_fisher()
-    logger.info("Fisher: %s, standard deviation: %s", fisher, 1 / np.sqrt(fisher))
-
-    # Finally we can get our estimates
-    alms = data["alm"]
-
-    logger.debug("Computing estimates with alms of shape %s, dtype: %s", alms.shape, alms.dtype)
-    logger.debug("Right now the code will only use the first duplicate background")
-    estimates, _, _, _ = core.estimator.compute_estimate_batch(
-        lambda idx: core.icov_func(alms[idx, 0]),
-        range(core.num_estimates),
-        comm=mpi_comm,
-        fisher=fisher,
-        theta_batch=theta_batch,
-        lin_term=0 if core.isotropic else None,
-    )
-
-    if mpi_root:
-        fnls = np.array(data["fnl"][: core.num_estimates])[:, 0].flatten()
-        print_errors(fnls, estimates, fisher)
-
-        # save the data, this will append to the alm_file
-        sdata = {}
-        sdata["fisher"] = fisher
-        sdata["estimate"] = estimates
-        sdata["error"] = (estimates - fnls) * np.sqrt(fisher)
-
-        # We need to close the data file before we can write to it as it is opened in read-only
-        data.close()
-
-        logger.info("Appending estimator data to %s", core.file)
-        save_data(core.file, sdata, mode="a")
-
-        if core.plot:
-            plot_predictions(
-                fnls,
-                estimates,
-                fisher=fisher,
-                save_file=core.get_plot_file("ksw_preds"),
-            )
-            plot_histogram(fnls, estimates, save_file=core.get_plot_file("ksw_hist"))
-
-    if core.lensing:
-        # We need to open the data file again to get the lensed alms
-        data = h5py.File(core.file, "r", swmr=True, locking=False)
-        alms = data["alm_lensed"]  # [:, :, core.pol_idxs()]
-
-        logger.debug(
-            "Computing lensed estimates with alms of shape %s, dtype: %s",
-            alms.shape,
-            alms.dtype,
-        )
-        estimates, _, _, _ = core.estimator.compute_estimate_batch(
-            lambda idx: core.icov_func(alms[idx, 0]),
-            range(core.num_estimates),
-            comm=mpi_comm,
-            fisher=fisher,
-            theta_batch=theta_batch,
-            lin_term=0 if core.isotropic else None,
-        )
-
-        if mpi_root:
-            fnls = np.array(data["fnl"][: core.num_estimates])[:, 0].flatten()
-            print_errors(fnls, estimates, fisher)
-
-            # save the data, this will append to the alm_file
-            sdata = {}
-            sdata["estimate_lensed"] = estimates
-            sdata["error_lensed"] = (estimates - fnls) * np.sqrt(fisher)
-
-            # We need to close the data file before we can write to it as it is opened in read-only
-            data.close()
-
-            logger.info("Appending estimator data to %s", core.file)
-            save_data(core.file, sdata, mode="a")
-
-            if core.plot:
-                plot_predictions(
-                    fnls,
-                    estimates,
-                    fisher=fisher,
-                    save_file=core.get_plot_file("ksw_lensed_preds"),
-                )
-                plot_histogram(
-                    fnls, estimates, save_file=core.get_plot_file("ksw_lensed_hist")
+                plot_dir = os.path.join(self.dirs["plot"], str(self.name), "ksw")
+                fnl = fnl.flatten()
+                self.logger.debug(
+                    "estimates shape: %s, fnl shape: %s", estimates.shape, fnl.shape
                 )
 
-    logger.info("Finished %s!", mpi_rank)
+                print_errors(fnl, estimates, fisher)
+                if self.plot:
+                    base = f"ksw_{shape}_{l_str}"
+                    plot_predictions(
+                        fnl,
+                        estimates,
+                        sigma=1 / np.sqrt(fisher),  # type: ignore
+                        save_file=self.get_plot_file(f"{base}_preds", plot_dir),
+                    )
+                    plot_histogram(
+                        fnl,
+                        estimates,
+                        save_file=self.get_plot_file(f"{base}_hist", plot_dir),
+                    )
+
+            self.logger.debug("Finished %s", shape)
+
+        self.logger.info("Finished estimating %s", l_str)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    estimator = Estimator()
+
+    estimator.run(False)
+
+    if estimator.lensing:
+        estimator.run(True)

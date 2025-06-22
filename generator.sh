@@ -9,10 +9,11 @@
 # these must be in settings/ and have the .json extension
 SETTINGS=(
   # "n32"
-  # "n64"
+  "n64"
   "n128"
-  # "n256"
+  "n256"
   
+  # these can only be run with nsims < 1000, due to time or memory
   # "n512"
   # "n1024"
 
@@ -28,11 +29,10 @@ SETTINGS=(
 ARGS=(
   "--nsims" "1000"
   "--pols" "T"
-  "--base_name" "+_ps1"
-  "--fnl_range" "-1000" "1000"
-  "--no-save_alms"
-  "--phi_scale" "1"
-  "--narray" "100"
+  "--shapes" "local"
+  "--force_generation"
+  "--phi_scale" "10"
+  "--narray" "1"
 )
 
 # override the slurm array settings for narray, only used in data generation
@@ -74,9 +74,9 @@ submit_job() {
   fi
 
   if [ -z "$job_id" ]; then # no job_id found, just run the job
-    job_id=$(sbatch "${arr_args[@]}" "${SLURM_ARGS[@]}" "$sbatch" "${ARGS[@]}" "$settings" | awk '{print $4}')
+    job_id=$(sbatch "${arr_args[@]}" "${SLURM_ARGS[@]}" "$sbatch" "$settings" "${ARGS[@]}" | awk '{print $4}')
   else # job_id found, run the job with a dependency on the previous job
-    job_id=$(sbatch "${arr_args[@]}" "${SLURM_ARGS[@]}" --dependency=afterok:"$job_id" "$sbatch" "${ARGS[@]}" "$settings" | awk '{print $4}')
+    job_id=$(sbatch "${arr_args[@]}" "${SLURM_ARGS[@]}" --dependency=afterok:"$job_id" "$sbatch" "$settings" "${ARGS[@]}" | awk '{print $4}')
   fi
 
   # acts as our return value

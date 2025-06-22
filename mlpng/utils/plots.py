@@ -1,6 +1,4 @@
-import os
 import logging
-
 import healpy as hp
 import matplotlib.pyplot as plt
 import numpy as np
@@ -13,44 +11,94 @@ from .utils import trim_alms
 
 logger = logging.getLogger(__name__)
 
+plt.rc("font", family="serif")
+plt.rc("mathtext", **{"default": "regular"})
+plt.style.use("seaborn-v0_8-paper")
+plt.rc("xtick", **{"direction": "in"})
+plt.rc("ytick", **{"direction": "in"})
+plt.rc("figure", **{"figsize": (12, 9)})
+
+
 def finalize_plot(
+    finalize: bool = True,
     title: str | None = None,
     tight_layout: bool = True,
     legend: bool = True,
-    grid: bool = True,
+    grid: bool = False,
     save_file: str | None = None,
     show: bool = False,
     close: bool = True,
 ):
     """
     Finalize the plot by adding a legend, grid, tight layout, saving the file, showing the plot and closing it.
+
+    This is used to keep from having to copy the code, also allows for standarization across calls via kwargs.
     """
-    if title:
-        plt.title(title)
-    if legend:
-        plt.legend()
-    if grid:
-        plt.grid()
-    if tight_layout:
-        plt.tight_layout()
-    if save_file is not None:
-        logger.debug("Saving plot to '%s'", save_file)
-        plt.savefig(save_file)
-    if show:
-        plt.show()
-    if close:
-        plt.close()
+    if finalize:
+        if title:
+            plt.title(title)
+        if legend:
+            plt.legend()
+        if grid:
+            plt.grid()
+        if tight_layout:
+            plt.tight_layout()
+        if save_file is not None:
+            logger.debug("Saving plot to '%s'", save_file)
+            plt.savefig(save_file)
+        if show:
+            plt.show()
+        if close:
+            plt.close()
+
+
+def plot_map(maps, zoom=False, **kwargs):
+    if zoom:
+        hp.mollzoom(maps)
+    else:
+        hp.mollview(maps)
+    finalize_plot(**kwargs)
+
+
+def plot_map_alm(
+    core,
+    alm: np.ndarray | list[np.ndarray],
+    lmax: int | None = None,
+    title: str = "Map from alm",
+    **kwargs,
+):
+    """
+    Plot a map from alm coefficients.
+
+    Parameters:
+        alm (array-like): The alm coefficients.
+        lmax (int, optional): The maximum multipole moment. If not provided, it will be determined from the length of alm.
+        title (str, optional): The title of the plot.
+        **kwargs: Additional keyword arguments to be passed to the plot function.
+
+    Returns:
+        None
+    """
+    lmax = lmax if lmax else hp.Alm.getlmax(np.shape(alm)[-1])
+    if len(np.shape(alm)) > 1:
+        maps = []
+        for single_alm in alm:
+            maps.append(hp.alm2map(single_alm, core.nside, lmax=lmax))
+    else:
+        maps = hp.alm2map(alm, core.nside)
+
+    plot_map(maps, title=title, **kwargs)
 
 
 def plot_cl(
     core,
-    cls,
+    c_ells,
     lmin=None,
     lmax=None,
     title="Angular power spectrum from cl",
     labels=None,
     xlabel=r"$\ell$",
-    ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}$",
+    ylabel=None,
     scale=True,
     plot_func=plt.semilogy,
     plot_camb=False,
@@ -62,10 +110,14 @@ def plot_cl(
         lmax = core.lmax
     if lmin is None:
         lmin = core.lmin
+    if ylabel is None:
+        ylabel = r"$C_{\ell}$"
+    if scale:
+        ylabel = f"$\\ell(\\ell+1)/2\\pi\\;${ylabel}"
 
     ells = np.arange(lmin, lmax + 1)
     scale = (ells * (ells + 1) / 2 / np.pi) if scale else 1
-    cls = np.atleast_2d(cls)[:, lmin : lmax + 1]
+    c_ells = np.atleast_2d(c_ells)[:, lmin : lmax + 1]
 
     if labels is not None:
         if isinstance(labels, str):
@@ -73,13 +125,13 @@ def plot_cl(
 
         if len(labels) != core.npols:
             raise ValueError(
-                f"Number of labels must match number of Cl arrays. Got {len(labels)} labels and {core.npols} Cl arrays of shape {np.shape(cls)}."
+                f"Number of labels must match number of Cl arrays. Got {len(labels)} labels and {core.npols} Cl arrays of shape {np.shape(c_ells)}."
             )
     else:
         labels = [f"{core.pols[i]}" for i in range(core.npols)]
 
     for pol in range(core.npols):
-        plot_func(ells, scale * cls[pol, :], label=labels[pol], linestyle=":")
+        plot_func(ells, scale * c_ells[pol, :], label=labels[pol], linestyle=":")
 
         # we need to get the correct pol for the camb and noise
         cpol = core.pol_idxs()[pol]
@@ -111,7 +163,7 @@ def plot_cl(
 
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
-    finalize_plot(title, **kwargs)
+    finalize_plot(title=title, **kwargs)
 
 
 def plot_cl_alm(
@@ -137,9 +189,9 @@ def plot_cl_alm(
     if len(np.shape(alm)) > 1:
         cls = []
         for single_alm in alm:
-            cls.append(curvedsky.alm2cl(single_alm))
+            cls.append(hp.alm2cl(single_alm))
     else:
-        cls = np.array([curvedsky.alm2cl(alm)])
+        cls = np.array([hp.alm2cl(alm)])
     plot_cl(core, cls, lmax=lmax, title=title, **kwargs)
 
 
@@ -178,71 +230,150 @@ def plot_cl_map(
     plot_cl(core, cls, lmax=lmax, title=title, **kwargs)
 
 
+def plot_cl_vs(
+    core,
+    c_ell_a: np.ndarray | list[np.ndarray],
+    c_ell_b: np.ndarray | list[np.ndarray],
+    title="Angular power spectrum comparison",
+    labels=["unlensed", "lensed"],
+    xlabel=r"$\ell$",
+    ylabel=None,
+    scale=True,
+    plot_func=plt.semilogy,
+    plot_diff_func=plt.plot,
+    file_base=None,
+    **kwargs,
+):
+    if ylabel is None:
+        ylabel = r"$\ell(\ell+1)/2\pi\;C_{\ell}$" if scale else r"$C_{\ell}$"
+
+    ells = np.arange(2, core.nell)
+    scale = (ells * (ells + 1) / 2 / np.pi) if scale else 1
+
+    plot_func(ells, scale * c_ell_a[2:], label=labels[0], linestyle=":")
+    plot_func(ells, scale * c_ell_b[2:], label=labels[1], linestyle="--")
+    save_file = file_base + "_vs.png" if file_base else None
+    finalize_plot(title=title, save_file=save_file, **kwargs)
+
+    delta = (c_ell_b - c_ell_a) / c_ell_a
+    plot_diff_func(ells, delta[2:], label="Difference", linestyle="--")
+    save_file = file_base + "_diff.png" if file_base else None
+    finalize_plot(title=f"{title} - Difference", save_file=save_file, **kwargs)
+
+
 def plot_predictions(
     truth: np.ndarray,
     preds: np.ndarray,
     title: str = "Predictions",
-    fisher: float | None = None,
+    x_limit=None,
+    data_label=None,
+    truth_color="red",
+    sigma: float | None = None,
+    sigma_color="blue",
+    show_sigma_legend=False,
+    show_n_sigma=4,
     **kwargs,
 ):
-    """
-    Plots the true labels against the predicted labels. If provided will plot the expected deviations from the provided fisher
-    and scaled_variance.
+    if x_limit is not None:
+        mask_idx = np.abs(truth) <= x_limit
+        truth_ = np.where(mask_idx, truth, np.nan)
+        preds_ = np.where(mask_idx, preds, np.nan)
+    else:
+        truth_ = truth
+        preds_ = preds
 
-    Args:
-        truth (array-like): The true labels.
-        preds (array-like): The predicted labels.
-        title (str, optional): The title of the plot. Defaults to "Predictions".
-        fisher (float, optional): The Fisher value. Defaults to None.
-        save_file (str, optional): The file path to save the plot. Defaults to None.
-    """
     df = pd.DataFrame(
         {
-            "True Fnl": np.array(truth).flatten(),
-            "Predicted Fnl": np.array(preds).flatten(),
+            "True Fnl": np.array(truth_).flatten(),
+            "Predicted Fnl": np.array(preds_).flatten(),
         }
     )
 
-    # Create a scatter plot with seaborn
-    plt.figure(figsize=(16, 12))
     sns.scatterplot(
-        data=df, x="True Fnl", y="Predicted Fnl", label="Estimates", alpha=0.5
+        data=df, x="True Fnl", y="Predicted Fnl", label=data_label, alpha=0.5
     )
 
     # Truth line
-    line = [min(truth), max(truth)]
-    plt.plot(line, line, color="red", linestyle="--", label="Truth")
+    line = [np.nanmin(truth_), np.nanmax(truth_)]
+    plt.plot(line, line, color=truth_color, linestyle="--")
+    if sigma is not None:
+        plt.plot(line, line + sigma, color=sigma_color, linestyle="--")
+        plt.plot(line, line - sigma, color=sigma_color, linestyle="--")
 
-    if fisher is not None:
-        std_dev = np.sqrt(1 / fisher)
-        title += f", Fisher: {fisher:.2f}, Fisher Error: {std_dev:.2f}"
+    if show_sigma_legend:
+        add_sigma_legend(truth_, preds_, sigma, data_label, show_n_sigma)
 
-        plt.plot(
-            line,
-            line + std_dev,
-            color="blue",
-            linestyle="--",
-            label="Fisher",
+    finalize_plot(title=title, **kwargs)
+
+
+def plot_predictions_combined(
+    truth: np.ndarray,
+    preds: np.ndarray,
+    shape_strs: list[str],
+    likelihoods: np.ndarray,
+    title: str = "Predictions",
+    x_limit=None,
+    show_sigma_legend=True,
+    show_n_sigma=4,
+    **kwargs,
+):
+    sns.set_palette("bright")
+    palette = sns.color_palette("dark")
+
+    for i, (t, p, sigma, label) in enumerate(
+        zip(truth.T, preds.T, likelihoods, shape_strs)
+    ):
+        plot_predictions(
+            t,
+            p,
+            title=f"{title}",
+            sigma=sigma,
+            data_label=label,
+            x_limit=x_limit,
+            truth_color="red",
+            sigma_color=palette[i],
+            show_sigma_legend=False,
+            finalize=False,
         )
-        plt.plot(line, line - std_dev, color="blue", linestyle="--")
 
-        # lets also print the number of points within 1 sigma
-        diff = np.array(preds).flatten() - np.array(truth).flatten()
-        diff = np.abs(diff)
-        bbox = dict(boxstyle="round", fc="blanchedalmond", ec="orange", alpha=0.5)
-        for i in range(1, 4):
-            within = np.sum(diff < i * std_dev) / len(diff) * 100
-            plt.text(
-                0.95,
-                0.1 - (i - 1) * 0.025,
-                f"{within:.2f}% within {i} $\\sigma$",
-                bbox=bbox,
-                ha="right",
-                va="bottom",
-                transform=plt.gca().transAxes,
-            )
+    if show_sigma_legend:
+        if x_limit is not None:
+            mask_idx = np.abs(truth) <= x_limit
+            truth_ = np.where(mask_idx, truth, np.nan)
+            preds_ = np.where(mask_idx, preds, np.nan)
+        else:
+            truth_ = truth
+            preds_ = preds
+        add_sigma_legend(truth_.T, preds_.T, likelihoods, shape_strs, show_n_sigma)
 
-    finalize_plot(title, **kwargs)
+    finalize_plot(title=title, **kwargs)
+
+
+def add_sigma_legend(truth, preds, sigma, labels, n_sigma=4):
+    truth_ = np.atleast_2d(truth)
+    preds_ = np.atleast_2d(preds)
+    sigma_ = np.atleast_1d(sigma)
+    labels_ = np.atleast_1d(labels)
+    row_labels = [f"{i} $\\sigma$" for i in range(1, n_sigma + 1)]
+
+    data = []
+    for i in range(1, n_sigma + 1):
+        row = []
+        for j in range(len(labels_)):
+            diff = np.array(preds_[j]).flatten() - np.array(truth_[j]).flatten()
+            diff = np.abs(diff[~np.isnan(diff)])
+            within = np.sum(diff < i * sigma_[j]) / len(diff) * 100
+            row.append(f"{within:.2f}")
+        data.append(row)
+
+    plt.table(
+        data,
+        colWidths=[0.07] * n_sigma,
+        rowLabels=row_labels,
+        colLabels=labels_,
+        loc="best",
+        zorder=10,
+    )
 
 
 def plot_histogram(truth: np.ndarray, preds: np.ndarray, **kwargs):
@@ -385,16 +516,16 @@ def plot_elsner_comp(
         elsner_l = trim_alms(elsner_l, lmax)
         elsner_nl = trim_alms(elsner_nl, lmax)
 
-    npols = alm_l.shape[0]
+    npols = core.npols
     _, axes = plt.subplots(3, npols, figsize=(16, 12))
     if len(axes.shape) == 1:
         # fix for single pol
         axes = axes[:, np.newaxis]
 
     for data in [(alm_l, alm_nl, "alm"), (elsner_l, elsner_nl, "elsner")]:
-        for pol in range(data[0].shape[0]):
+        for pol in range(core.npols):
             ratio = np.ma.mean(np.ma.abs(data[0][pol]) / np.ma.abs(data[1][pol]))
-            logger.info("Mean ratio of %s %s: %s", data[2], core.pols[pol], ratio)
+            logger.debug("Mean ratio of %s %s: %s", data[2], core.pols[pol], ratio)
 
     for pol in range(core.npols):
         plt.sca(axes[0, pol])
@@ -462,78 +593,7 @@ def plot_elsner_vs(
     plt.legend()
 
 
-def make_alm_plots(core, alm_l=None, alm_ng=None, alms=None, lensed=False):
-    """
-    Generate and save various alm plots for comparison and testing.
-
-    Parameters:
-        core (object): Core object containing necessary methods and attributes for plotting.
-        alm_l (array): Array of linear alm values.
-        alm_ng (array): Array of non-Gaussian alm values.
-        alms (array): Array of full alm values.
-    """
-    logger.debug("Generating alm plots")
-    sim = core.rng.integers(core.nsims)  # get random sim idx
-    lstr = "_lensed" if lensed else ""
-
-    # plot a few comparison with different functions to get views
-    idx = core.rng.integers(1, 1001)
-    if alm_l is not None and alm_ng is not None:
-        plot_elsner_comp(
-            core,
-            alm_l[sim],
-            alm_ng[sim],
-            index=idx,
-            save_file=core.get_plot_file(f"ecomp{lstr}"),
-            plot_func=plt.plot,
-        )
-        plot_elsner_comp(
-            core,
-            alm_l[sim],
-            alm_ng[sim],
-            index=idx,
-            save_file=core.get_plot_file(f"ecomp_log{lstr}"),
-            plot_func=plt.loglog,
-        )
-        plot_elsner_comp(
-            core,
-            alm_l[sim],
-            alm_ng[sim],
-            index=idx,
-            save_file=core.get_plot_file(f"ecomp_semilogy{lstr}"),
-            plot_func=plt.semilogy,
-        )
-
-    if alms is not None:
-        plot_cl_alm(
-            core,
-            alms[sim],
-            save_file=core.get_plot_file(f"{sim}_alm{lstr}"),
-            ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}$",
-            plot_camb=True,
-            plot_full_camb=True,
-        )
-
-    if alm_l is not None:
-        plot_cl_alm(
-            core,
-            alm_l[sim],
-            save_file=core.get_plot_file(f"{sim}_alm_l{lstr}"),
-            ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}^{L}$",
-            plot_camb=True,
-            plot_full_camb=True,
-        )
-
-    if alm_ng is not None:
-        plot_cl_alm(
-            core,
-            alm_ng[sim],
-            save_file=core.get_plot_file(f"{sim}_alm_ng{lstr}"),
-            ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}^{NG}$",
-        )
-
-
-def plot_metrics(history, save_file=None, metrics=["loss"], **kwargs):
+def plot_metrics(history, metrics=["loss"], **kwargs):
     num_metrics = len(metrics)
     _, axs = plt.subplots(num_metrics, figsize=(15, 6 * num_metrics))
 
@@ -548,4 +608,119 @@ def plot_metrics(history, save_file=None, metrics=["loss"], **kwargs):
         axs[i].set_xlabel("Epoch")
         axs[i].legend(["Train", "Validation"], loc="upper right")
 
-    finalize_plot(save_file=save_file, legend=False, **kwargs)
+    finalize_plot(legend=False, **kwargs)
+
+
+def make_alm_plots(core, shape, alm_l=None, alm_ng=None, alms=None, lensed=False):
+    """
+    Generate and save various alm plots for comparison and testing.
+
+    Parameters:
+        core (object): Core object containing necessary methods and attributes for plotting.
+        alm_l (array): Array of linear alm values.
+        alm_ng (array): Array of non-Gaussian alm values.
+        alms (array): Array of full alm values.
+    """
+    logger.debug("Generating alm plots")
+    sim = core.rng.integers(core.nsims)  # get random sim idx
+    l_str = f"_{shape}_lensed" if lensed else f"_{shape}_unlensed"
+
+    # plot a few comparison with different functions to get views
+    idx = core.rng.integers(1, 1001)
+    if alm_l is not None and alm_ng is not None:
+        plot_elsner_comp(
+            core,
+            alm_l[sim],
+            alm_ng[sim],
+            index=idx,
+            save_file=core.get_plot_file(f"ecomp{l_str}"),
+            plot_func=plt.plot,
+        )
+        plot_elsner_comp(
+            core,
+            alm_l[sim],
+            alm_ng[sim],
+            index=idx,
+            save_file=core.get_plot_file(f"ecomp_log{l_str}"),
+            plot_func=plt.loglog,
+        )
+        plot_elsner_comp(
+            core,
+            alm_l[sim],
+            alm_ng[sim],
+            index=idx,
+            save_file=core.get_plot_file(f"ecomp_semilogy{l_str}"),
+            plot_func=plt.semilogy,
+        )
+
+    if alms is not None:
+        plot_cl_alm(
+            core,
+            alms[sim],
+            save_file=core.get_plot_file(f"{sim}_alm{l_str}"),
+            ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}$",
+            plot_camb=True,
+            plot_full_camb=True,
+        )
+
+    if alm_l is not None:
+        plot_cl_alm(
+            core,
+            alm_l[sim],
+            save_file=core.get_plot_file(f"{sim}_alm_l{l_str}"),
+            ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}^{L}$",
+            plot_camb=True,
+            plot_full_camb=True,
+        )
+
+    if alm_ng is not None:
+        plot_cl_alm(
+            core,
+            alm_ng[sim],
+            save_file=core.get_plot_file(f"{sim}_alm_ng{l_str}"),
+            ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}^{NG}$",
+        )
+
+
+def make_trainer_plots(
+    core, plot_dir, run_name, history, metrics, truth, preds, likelihoods
+):
+    # and make our plots
+    plot_metrics(
+        history,
+        metrics=["loss"] + [f"rmse_{s}" for s in core.shapes],
+        save_file=core.get_plot_file(f"{run_name}-loss", plot_dir),
+    )
+
+    plot_predictions_combined(
+        truth,
+        preds,
+        likelihoods=likelihoods,
+        shape_strs=core.shapes,
+        title="Predictions",
+        save_file=core.get_plot_file(f"{run_name}-predictions", plot_dir),
+    )
+
+    # plot a reduced range which should better approach the CR bound
+    plot_predictions_combined(
+        truth,
+        preds,
+        likelihoods=likelihoods,
+        shape_strs=core.shapes,
+        x_limit=250.0,
+        save_file=core.get_plot_file(f"{run_name}-redux", plot_dir),
+    )
+
+    # individual predictions for each shape
+    for s in range(truth.shape[1]):
+        s_str = core.shapes[s]
+        plot_predictions(
+            truth[:, s],
+            preds[:, s],
+            sigma=likelihoods[s],
+            data_label=s_str,
+            show_sigma_legend=True,
+            title=f"{s_str} RMSE: {metrics[1 + s]:.3f}",
+            save_file=core.get_plot_file(f"{run_name}-preds-{s_str}", plot_dir),
+            legend=False,
+        )

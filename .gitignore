@@ -6,6 +6,8 @@ data-shared
 logs
 settings/runs/
 
+*.egg-info/
+
 .**/
 .history
 .ipynb_checkpoints
@@ -17,6 +19,3 @@ settings/runs/
 *.pyc
 *.pdf
 *.html
-
-# some personalized settings
-*.toml
