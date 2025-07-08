@@ -178,6 +178,41 @@ def get_ksw_from_data(data):
     return ksw
 
 
+def get_data(file_path, key, idxs=None):
+    """
+    Retrieve data from an HDF5 file. With error checking to keep the linter happy.
+
+    Args:
+        file_path (str): The path to the HDF5 file.
+        key (str): The key to retrieve data from the file.
+
+    Returns:
+        np.ndarray: The data retrieved from the file.
+    """
+    with h5py.File(file_path, "r", swmr=True, locking=False) as hf:
+        if key in hf:
+            data = hf[key]
+
+            # handle a few possible errors in the keys
+            if isinstance(data, h5py.Group):
+                raise KeyError(
+                    f"Key '{key}' refers to a group, not a dataset. Please provide the full path to a dataset within this group. Group keys: {list(data.keys())}"
+                )
+            elif not isinstance(data, h5py.Dataset):
+                raise TypeError(
+                    f"Key '{key}' does not refer to a dataset but instead a {type(data)}. Please provide a valid dataset key."
+                )
+
+            ret = data[:] if idxs is None else data[idxs]
+            return np.array(ret)
+        else:
+            # key isn't found in dataset, so we strip the leading path and print with possible keys for clear logging
+            sub = "/".join(key.split("/")[:-1])
+            raise KeyError(
+                f"Key '{key}' not found in file '{file_path}'. Possible subgroups for {sub} are {list(hf[sub].keys())}"
+            )
+
+
 def remove_mono_dipole(alm, inplace=False):
     """
     Remove the monopole and dipole terms from the alms.
