@@ -147,4 +147,5 @@ def combine_data(directory, base_name, ext=".hdf5", remove_files=True, expected=
 
 if __name__ == "__main__":
     core = Core()
+    
     combine_data(core.dirs["data"], core.name, ".hdf5", expected=core.narray)

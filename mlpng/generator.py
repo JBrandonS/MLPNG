@@ -117,7 +117,7 @@ class Generator(Core):
         if self.lensing:
             c_ell_lens = self.cosmo.c_ell["lensed_scalar"]["c_ell"][: self.nell]
             self.c_ell_lens = c_ell_lens.T.astype(self.r_dtype)
-            self.c_ell_lens *= self.phi_scale  # scale the lensing potential
+            # self.c_ell_lens *= self.phi_scale  # scale the lensing potential
 
             cov_lens = self.b_ell**2 * self.c_ell_lens + self.n_ell
             self.cov_lens = remove_mono_dipole(cov_lens)
@@ -523,14 +523,14 @@ class Generator(Core):
                     self,
                     alm_lens[0],
                     title="lensed alms",
-                    save_file=self.get_plot_file("alm_lens"),
+                    save_file=self.get_plot_file("alm_l_lens"),
                     plot_camb=True,
                 )
                 plot_map_alm(
                     self,
                     alm_lens[0, 0],
                     title="lensed alms",
-                    save_file=self.get_plot_file("alm_lens_map"),
+                    save_file=self.get_plot_file("alm_l_map_lens"),
                 )
 
             # go ahead and save the data here
@@ -550,7 +550,6 @@ class Generator(Core):
         c_ells = self.c_ell_lens if lensed else self.c_ell
         icov = self.icov_lens if lensed else self.icov
         l_str = "lensed" if lensed else "unlensed"
-
         pol_idxs = self.pol_idxs()
 
         if self.slurm.is_main:
@@ -603,8 +602,6 @@ class Generator(Core):
                     alm_l[:, pol_idxs],
                     alm_nl,
                     lensed=lensed,
-                    # show=True,
-                    # save=False,
                 )
 
             if self.slurm.is_main and self.estimate:
