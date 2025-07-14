@@ -13,7 +13,7 @@ import tensorflow as tf
 
 tf.get_logger().setLevel(logging.ERROR)
 
-from tensorflow.keras.layers import Dense, Dropout, Flatten
+from tensorflow.keras.layers import Dense, Dropout, Flatten, LeakyReLU
 from tensorflow.keras.callbacks import EarlyStopping, TerminateOnNaN, TensorBoard
 from tensorflow.keras.optimizers import AdamW
 from tensorflow.keras.optimizers.schedules import CosineDecayRestarts
@@ -29,7 +29,7 @@ from mlpng.utils.callbacks import RMSELoss, rmse_metrics
 logger = setup_logging("mlpng.scn_new", level=logging.DEBUG)
 
 
-def get_model(input_shape, max_batch_size=32, n_out=1, activation="gelu"):
+def get_model(input_shape, max_batch_size=32, n_out=1, activation="leakyrelu"):
     nside = hp.npix2nside(input_shape[1])
     layers = []
 
@@ -42,7 +42,7 @@ def get_model(input_shape, max_batch_size=32, n_out=1, activation="gelu"):
                 Fout=fout,
                 # use_bias=True,
                 use_bn=True,
-                activation=activation,
+                activation=LeakyReLU(0.3),
             )
         )
         layers.append(
@@ -51,7 +51,7 @@ def get_model(input_shape, max_batch_size=32, n_out=1, activation="gelu"):
                 Fout=fout,
                 # use_bias=True,
                 use_bn=True,
-                activation=activation,
+                activation=LeakyReLU(0.3),
             )
         )
         if i < 4:
@@ -61,7 +61,7 @@ def get_model(input_shape, max_batch_size=32, n_out=1, activation="gelu"):
 
     layers.append(Flatten())
     layers.append(Dropout(0.3))
-    layers.append(Dense(256, activation=activation))
+    layers.append(Dense(256, activation=LeakyReLU(0.3)))
     # layers.append(Dense(128, activation="relu"))
     layers.append(Dense(32))
     layers.append(Dense(n_out))
@@ -82,7 +82,7 @@ def get_model(input_shape, max_batch_size=32, n_out=1, activation="gelu"):
 def main():
     batch_size = 64
     max_epochs = 300
-    run_name = "new-bias+4do+gm-gelu"
+    run_name = "new-bias+4do+gm-leakyrelu"
 
     core = Core()
     shapes = core.shapes
