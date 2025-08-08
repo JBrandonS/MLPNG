@@ -13,9 +13,14 @@ settings/runs/
 .ipynb_checkpoints
 .pytest_cache
 .vscode
+build/
 
 # compiled files
 *.out
 *.pyc
 *.pdf
 *.html
+*.so
+
+# Cython files
+mlpng/bispectrum/bispectrum.c

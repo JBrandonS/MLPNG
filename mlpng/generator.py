@@ -117,7 +117,6 @@ class Generator(Core):
         if self.lensing:
             c_ell_lens = self.cosmo.c_ell["lensed_scalar"]["c_ell"][: self.nell]
             self.c_ell_lens = c_ell_lens.T.astype(self.r_dtype)
-            # self.c_ell_lens *= self.phi_scale  # scale the lensing potential
 
             cov_lens = self.b_ell**2 * self.c_ell_lens + self.n_ell
             self.cov_lens = remove_mono_dipole(cov_lens)
