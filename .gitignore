@@ -24,3 +24,6 @@ build/
 
 # Cython files
 mlpng/bispectrum/bispectrum.c
+
+docs/
+tools.toolsets.json
