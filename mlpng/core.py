@@ -692,7 +692,7 @@ class Core:
             return self.shapes[0]
         return "".join([s[0] for s in self.shapes])
 
-    def get_likelihoods(self):
+    def get_likelihoods(self, lensed):
         """Get the marginal likelihoods for the shapes used in the simulation.
 
         If there is only one shape this will return the fisher error for the shape,
@@ -700,10 +700,11 @@ class Core:
         Returns:
             list: A list of marginal likelihoods for each shape.
         """
+        l_str = "lensed" if lensed else "unlensed"
         with h5py.File(self.file, mode="r", swmr=True, locking=False) as f:
             if len(self.shapes) == 1:
                 # just get the fisher error for the shape
-                like = [np.sqrt(1 / f["fisher"][self.shapes[0]][0])]
+                like = [np.sqrt(1 / f["fisher"][l_str][self.shapes[0]][0])]
             else:
                 # here we generate a list of indices based on the shapes values
                 indxs = []
@@ -717,6 +718,5 @@ class Core:
                             indxs.append(2)
                         case _:
                             self.logger.warning("Unknown shape %s, ignoring", s)
-
-                like = f.get("marginal_likelihoods")[indxs]
+                like = f.get("marginal_likelihoods")[l_str][np.array(indxs)]
         return like
