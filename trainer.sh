@@ -15,8 +15,9 @@ SBATCH_FILE="sbatch/trainer.sbatch"
 # The settings files to use for the sims. These should be found in settings/*.json
 SETTINGS=(
     # "n32"
-    # "n64"
-    "n128"
+    "n64"
+    # "n128"
+    # "n256"
 )
 
 # CLI args to change the command ran, helps prevent needing to change the settings file for small / test changes
@@ -25,6 +26,8 @@ SETTINGS=(
 # some additional args are allowed for the trainer see scripts/models/modelcore.py
 ARGS=(
     "--nsims" "10000"
+    "--phi_scale" "1"
+    "--shapes" "local"
     # "--tensorboard"
     # "--wandb"
 )
@@ -32,9 +35,9 @@ ARGS=(
 # The AI models to train on the data, see scripts/trainer.py and scripts/models/ for more info
 # these models should be registered with @register_model
 MODELS=(
-    # "scn-jorik"
+    "scn-jorik"
     # "scn-big"
-    "scn-new"
+    # "scn-new"
 )
 
 # loops through all the SETTINGS files and for each submits a slurm job for each MODEL

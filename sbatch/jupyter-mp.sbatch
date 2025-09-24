@@ -55,11 +55,16 @@ done
 
 module purge
 module load miniforge gcc openblas
-conda activate ds25
-
 conda activate "$conda_env"
 
-nvidia-smi
-nvcc --version
+echo "Starting Jupyter Notebook..."
+echo "  - Conda env: $conda_env"
+echo "  - $(which python)"
+echo "  - $(which jupyter)"
+echo "  - Module list:"
+module list
+echo "  - $(nvidia-smi)"
+echo "  - $(nvcc --version)"
+echo ""
 
 time srun jupyter notebook --ip=0.0.0.0

@@ -203,13 +203,13 @@ def get_data(file_path, key, idxs=None):
                     f"Key '{key}' does not refer to a dataset but instead a {type(data)}. Please provide a valid dataset key."
                 )
 
-            ret = data[:] if idxs is None else data[idxs]
-            return np.array(ret)
+            # finally get the data, load in the idxs if provided and return as np array
+            return np.array(data[:] if idxs is None else data[idxs])
         else:
             # key isn't found in dataset, so we strip the leading path and print with possible keys for clear logging
             sub = "/".join(key.split("/")[:-1])
             raise KeyError(
-                f"Key '{key}' not found in file '{file_path}'. Possible subgroups for {sub} are {list(hf[sub].keys())}"
+                f"Key '{key}' not found in file '{file_path}'. Possible subgroups for {sub} are {list(hf[sub].keys())}" # type: ignore
             )
 
 

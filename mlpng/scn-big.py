@@ -11,7 +11,7 @@ sys.path.append("/users/stevensonb/Research/tools/deepsphere-cosmo-tf2")
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import tensorflow as tf
-from tensorflow.keras.layers import ( 
+from tensorflow.keras.layers import (
     Dense,
     Dropout,
     Flatten,
@@ -19,13 +19,13 @@ from tensorflow.keras.layers import (
     LeakyReLU,
     AlphaDropout,
 )
-from tensorflow.keras.callbacks import (  
+from tensorflow.keras.callbacks import (
     EarlyStopping,
     TerminateOnNaN,
     TensorBoard,
 )
-from tensorflow.keras.optimizers import AdamW 
-from tensorflow.keras.optimizers.schedules import CosineDecayRestarts  
+from tensorflow.keras.optimizers import AdamW
+from tensorflow.keras.optimizers.schedules import CosineDecayRestarts
 
 from deepsphere import HealpyGCNN
 from deepsphere.healpy_layers import (
@@ -208,7 +208,7 @@ def main():
             metrics,
             y_test,
             preds,
-            core.get_likelihoods(),
+            core.get_likelihoods(False),
         )
 
 

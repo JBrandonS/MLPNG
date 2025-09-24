@@ -84,17 +84,18 @@ def get_model(input_shape, max_batch_size=32, n_out=1):
 def main():
     batch_size = 64
     max_epochs = 300
-    run_name = "jorik-bias"
+    lensed = True
+    run_name = "jorik-818"
 
     core = Core()
     shapes = core.shapes
 
     # here we grab out dataset, splitting and duplicating based on paper
-    ds = MapDataset.fromCore(core)
+    ds = MapDataset.fromCore(core, lensed=lensed)
     train, val, test = ds.split(
-        0.4,
-        0.1,
-        0.5,
+        train_size=0.4,
+        val_size=0.1,
+        test_size=0.5,
         to_tf=True,
         batch_size=batch_size,
         duplicates=[25, 10, 2],
@@ -191,7 +192,7 @@ def main():
             metrics,
             y_test,
             preds,
-            core.get_likelihoods(),
+            core.get_likelihoods(lensed),
         )
 
 

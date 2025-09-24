@@ -11,6 +11,7 @@ from .utils import (
     try_init_wandb,
     get_ksw_from_data,
     get_ksw_save_data,
+    get_data,
 )
 
 from .plots import (
@@ -59,4 +60,5 @@ __all__ = [
     "get_ksw_save_data",
     "plot_cl_vs",
     "plot_map_alm",
+    "get_data",
 ]

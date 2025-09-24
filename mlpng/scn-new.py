@@ -16,7 +16,7 @@ tf.get_logger().setLevel(logging.ERROR)
 from tensorflow.keras.layers import Dense, Dropout, Flatten, LeakyReLU
 from tensorflow.keras.callbacks import EarlyStopping, TerminateOnNaN, TensorBoard
 from tensorflow.keras.optimizers import AdamW
-from tensorflow.keras.optimizers.schedules import CosineDecayRestarts
+from tensorflow.keras.optimizers.schedules import CosineDecayRestarts, ExponentialDecay
 
 from deepsphere import HealpyGCNN
 from deepsphere.healpy_layers import HealpyChebyshev, HealpyPool
@@ -29,7 +29,7 @@ from mlpng.utils.callbacks import RMSELoss, rmse_metrics
 logger = setup_logging("mlpng.scn_new", level=logging.DEBUG)
 
 
-def get_model(input_shape, max_batch_size=32, n_out=1, activation="leakyrelu"):
+def get_model(input_shape, max_batch_size=32, n_out=1, activation=LeakyReLU(0.3)):
     nside = hp.npix2nside(input_shape[1])
     layers = []
 
@@ -42,7 +42,7 @@ def get_model(input_shape, max_batch_size=32, n_out=1, activation="leakyrelu"):
                 Fout=fout,
                 # use_bias=True,
                 use_bn=True,
-                activation=LeakyReLU(0.3),
+                activation=activation,
             )
         )
         layers.append(
@@ -51,18 +51,17 @@ def get_model(input_shape, max_batch_size=32, n_out=1, activation="leakyrelu"):
                 Fout=fout,
                 # use_bias=True,
                 use_bn=True,
-                activation=LeakyReLU(0.3),
+                activation=activation,
             )
         )
-        if i < 4:
-            # apply dropout only to the first few layers as the data gets too small
-            layers.append(Dropout(0.1))
+        # if i < 4:
+        # apply dropout only to the first few layers as the data gets too small
+        layers.append(Dropout(0.1))
         layers.append(HealpyPool(1, "AVG"))
 
     layers.append(Flatten())
     layers.append(Dropout(0.3))
-    layers.append(Dense(256, activation=LeakyReLU(0.3)))
-    # layers.append(Dense(128, activation="relu"))
+    layers.append(Dense(32, activation=activation))
     layers.append(Dense(32))
     layers.append(Dense(n_out))
 
@@ -80,33 +79,28 @@ def get_model(input_shape, max_batch_size=32, n_out=1, activation="leakyrelu"):
 
 
 def main():
-    batch_size = 64
-    max_epochs = 300
-    run_name = "new-bias+4do+gm-leakyrelu"
+    batch_size = 128
+    max_epochs = 100
+    lensed = True
+    run_name = "new-818"
 
     core = Core()
     shapes = core.shapes
 
-    ds = MapDataset.fromCore(core, gaussian_mask=True)
+    ds = MapDataset.fromCore(core, gaussian_mask=True, lensed=lensed)
     train, val, test = ds.split(
-        0.4,
-        0.1,
-        0.5,
+        train_size=0.8,
+        val_size=0.1,
+        test_size=0.1,
         to_tf=True,
         batch_size=batch_size,
         duplicates=[25, 10, 2],
-        cache_file=f"{core.name}-051425-{run_name}-{core.shapes_str()}",
+        cache_file=f"{core.name}-070825-{run_name}-{core.shapes_str()}",
         gen_batch_size=64,
     )
 
-    val.gaussian_mask = False
-    test.gaussian_mask = False
-
-    # the paper does not rotate the test set
-    test.rotate = False
-
     # calculate the number of steps per epoch and decay steps for use later
-    epoch_steps = math.ceil(core.total_sims * 0.4 * 25 // batch_size)
+    epoch_steps = math.ceil(core.total_sims * 0.8 * 25 // batch_size)
     decay_steps = epoch_steps * 2
 
     # get this data that we will need later, also serves to create the test data
@@ -117,15 +111,18 @@ def main():
 
     strategy = tf.distribute.MirroredStrategy()  # use mirrored strategy for multi-GPU
     with strategy.scope():
-        learning_rate = 5e-5
-        learning_rate = CosineDecayRestarts(
-            learning_rate, decay_steps, t_mul=2.0, m_mul=0.9, alpha=0.001
+        learning_rate = 5e-4
+        # learning_rate = CosineDecayRestarts(
+        #     learning_rate, decay_steps, t_mul=2.0, m_mul=0.9, alpha=0.001
+        # )
+        learning_rate = ExponentialDecay(
+            learning_rate, decay_steps, 0.9, staircase=True
         )
 
         model = get_model((None, core.npix, core.npols), batch_size, len(shapes))
 
         model.compile(
-            optimizer=AdamW(learning_rate, weight_decay=0.01),
+            optimizer=AdamW(learning_rate, weight_decay=0.001),
             loss=RMSELoss(),
             metrics=rmse_metrics(shapes),
         )
@@ -135,7 +132,7 @@ def main():
     # create the callbacks
     callbacks = [
         TerminateOnNaN(),
-        EarlyStopping(monitor="val_loss", patience=16, restore_best_weights=True),
+        EarlyStopping(monitor="val_loss", patience=100, restore_best_weights=True),
     ]
 
     # if wanted we create a tensorboard and wandb callback, use the CLI to set these
@@ -189,7 +186,7 @@ def main():
             metrics,
             y_test,
             preds,
-            core.get_likelihoods(),
+            core.get_likelihoods(lensed),
         )
 
 

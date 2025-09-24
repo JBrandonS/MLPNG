@@ -8,32 +8,26 @@ import healpy as hp
 import tensorflow as tf
 from joblib import Parallel, delayed
 
+from mlpng.utils import get_data
+
 logger = logging.getLogger(__name__)
 
 
 class ALMDataset:
     @classmethod
     def fromCore(cls, core, **kwargs):
-        # These values can be overridden by providing them in kwargs
-        # or by using the core object
-        file_path = kwargs.pop("file_path", core.file)
+        # values can be overridden by providing them in kwargs
+        # otherwise will be taken from the core object
         shapes = kwargs.pop("shapes", core.shapes)
-        x_shape = kwargs.pop("x_shape", core.alm_shape[1:])
-        x_dtype = kwargs.pop("x_dtype", core.c_dtype)
-        y_shape = kwargs.pop("y_shape", (None, len(shapes)))
-        y_dtype = kwargs.pop("y_dtype", core.r_dtype)
-        fnl_min = kwargs.pop("fnl_min", core.fnl_min)
-        fnl_max = kwargs.pop("fnl_max", core.fnl_max)
-
         return cls(
-            file_path=file_path,
+            file_path=kwargs.pop("file_path", core.file),
             shapes=shapes,
-            fnl_min=fnl_min,
-            fnl_max=fnl_max,
-            x_shape=x_shape,
-            x_dtype=x_dtype,
-            y_shape=y_shape,
-            y_dtype=y_dtype,
+            fnl_min=kwargs.pop("fnl_min", core.fnl_min),
+            fnl_max=kwargs.pop("fnl_max", core.fnl_max),
+            x_shape=kwargs.pop("x_shape", core.alm_shape[1:]),
+            x_dtype=kwargs.pop("x_dtype", core.c_dtype),
+            y_shape=kwargs.pop("y_shape", (None, len(shapes))),
+            y_dtype=kwargs.pop("y_dtype", core.r_dtype),
             **kwargs,
         )
 
@@ -69,10 +63,23 @@ class ALMDataset:
 
         self.start_idx = start_idx
         if end_idx is None:
-            with h5py.File(self.file_path, mode="r", swmr=True, locking=False) as f:
-                self.end_idx = f["alm_l"]["unlensed"].shape[0]  # type: ignore
+            self.end_idx = get_data(file_path, f"alm_l/{self.l_str}").shape[0]
         else:
             self.end_idx = end_idx  # type: ignore
+
+        # lets print some debug info
+        if logger.isEnabledFor(logging.DEBUG):
+            fisher_mat = get_data(file_path, f"fisher_matrix/{self.l_str}", 0)
+            marg_likes = get_data(file_path, f"marginal_likelihoods/{self.l_str}", 0)
+
+            logger.debug("Error information from '%s'...", file_path)
+            logger.debug("Fisher Matrix: %s", fisher_mat)
+            logger.debug("Marginal Likelihoods: %s", marg_likes)
+
+            for s in shapes:
+                fisher = get_data(file_path, f"fisher/{self.l_str}/{s}", 0)
+                std_div = 1 / np.sqrt(fisher)
+                logger.debug("Fisher for shape %s: %s, std div: %s", s, fisher, std_div)
 
     def __len__(self):
         return self.end_idx - self.start_idx
@@ -281,11 +288,13 @@ class ALMDataset:
             size=(len(self.shapes), duplicates, len(indices), 1, 1),
         )
 
-        with h5py.File(self.file_path, mode="r", swmr=True, locking=False) as f:
-            alm_l = np.array([f["alm_l"][self.l_str][indices]])
-            alm_nl = np.array(
-                [f["alm_nl"][self.l_str][s][indices] for s in self.shapes]
-            )
+        alm_l = get_data(self.file_path, f"alm_l/{self.l_str}", indices)
+        alm_nl = np.array(
+            [
+                get_data(self.file_path, f"alm_nl/{self.l_str}/{s}", indices)
+                for s in self.shapes
+            ]
+        )
 
         alms = alm_l + np.einsum("i...,i...->...", fnls, alm_nl)
         return alms, fnls
@@ -365,11 +374,19 @@ class MapDataset(ALMDataset):
         if self.gaussian_mask:
             fnls = self._mask_fnls(fnls)
 
-        with h5py.File(self.file_path, mode="r", swmr=True, locking=False) as f:
-            alm_l = np.array([f["alm_l"][self.l_str][indices]])
-            alm_nl = np.array(
-                [f["alm_nl"][self.l_str][s][indices] for s in self.shapes]
-            )
+        alm_l = get_data(self.file_path, f"alm_l/{self.l_str}", indices)
+        alm_nl = np.array(
+            [
+                get_data(self.file_path, f"alm_nl/{self.l_str}/{s}", indices)
+                for s in self.shapes
+            ]
+        )
+
+        # with h5py.File(self.file_path, mode="r", swmr=True, locking=False) as f:
+        #     alm_l = np.array([f["alm_l"][self.l_str][indices]])
+        #     alm_nl = np.array(
+        #         [f["alm_nl"][self.l_str][s][indices] for s in self.shapes]
+        #     )
 
         alms = alm_l + np.einsum("i...,i...->...", fnls, alm_nl)
 
@@ -383,10 +400,32 @@ class MapDataset(ALMDataset):
                 for sim in batches
             )
 
-        maps = np.transpose(maps, (0, 2, 1))
+        maps = np.transpose(np.array(maps), (0, 2, 1))
         fnls = fnls.transpose(1, 2, 3, 4, 0)
         fnls = np.reshape(fnls, (duplicates * batch_size, len(self.shapes)))
         return maps, fnls
+
+    def split(
+        self,
+        rotate=[True, True, False],
+        gaussian_mask=[True, False, False],
+        **kwargs,
+    ):
+        """
+        Splits the dataset into training, validation, and test sets.
+        """
+        # call the parent class split method
+        train, val, test = super().split(**kwargs)
+
+        # set the rotate and gaussian_mask attributes for each split
+        train.rotate = rotate[0]
+        train.gaussian_mask = gaussian_mask[0]
+        val.rotate = rotate[1]
+        val.gaussian_mask = gaussian_mask[1]
+        test.rotate = rotate[2]
+        test.gaussian_mask = gaussian_mask[2]
+
+        return train, val, test
 
 
 class elsnerDataset(ALMDataset):
