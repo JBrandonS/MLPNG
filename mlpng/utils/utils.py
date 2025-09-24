@@ -1,9 +1,10 @@
 import logging
+import warnings
 import sys
+
 import h5py
 import numpy as np
 import healpy as hp
-import warnings
 
 logger = logging.getLogger(__name__)
 

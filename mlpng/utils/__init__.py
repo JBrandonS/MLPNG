@@ -1,7 +1,3 @@
-import os
-
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-
 from .utils import (
     setup_logging,
     save_data,
@@ -9,8 +5,6 @@ from .utils import (
     print_errors,
     trim_alms,
     try_init_wandb,
-    get_ksw_from_data,
-    get_ksw_save_data,
     get_data,
 )
 
@@ -56,8 +50,6 @@ __all__ = [
     "RMSEMetric",
     "rmse_metrics",
     "make_trainer_plots",
-    "get_ksw_from_data",
-    "get_ksw_save_data",
     "plot_cl_vs",
     "plot_map_alm",
     "get_data",
