@@ -2,6 +2,7 @@
 #SBATCH --job-name=jupyter
 #SBATCH --output=.jupyter.out
 #SBATCH --partition=standard-s
+#SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --mem=256G
 #SBATCH --cpus-per-task=64

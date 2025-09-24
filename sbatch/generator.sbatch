@@ -3,7 +3,7 @@
 #SBATCH --partition=standard-s
 #SBATCH --ntasks=1
 #SBATCH --mem=256G
-#SBATCH --cpus-per-task=64
+#SBATCH --cpus-per-task=16
 #SBATCH --output=data/logs/generator/%A/%j.log
 #SBATCH --array=1-1
 #SBATCH --time=1-00:00:00

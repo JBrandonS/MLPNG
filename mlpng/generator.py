@@ -22,7 +22,6 @@ from .utils import (
     make_alm_plots,
     remove_mono_dipole,
     print_errors,
-    get_ksw_save_data,
     plot_predictions,
     plot_histogram,
     plot_cl_vs,
@@ -185,26 +184,9 @@ class Generator(Core):
             self.pols,
             self.precision,
         )
-
-        if step:
-            nsteps = n_steps if n_steps is not None else self.mc_steps
-            if step_alms is None:
-                step_alms = self.generate_alm(nsteps, c_ells, lensed)
-            else:
-                nsteps = min(nsteps, step_alms.shape[0])
-
-            self.logger.debug(
-                "Initalizing KSW for %s with %s steps",
-                shape_str,
-                nsteps,
-            )
-            ksw.step_batch(
-                lambda i: self.icov_func(step_alms[i, self.pol_idxs()], icov, lensed),
-                range(nsteps),
-                theta_batch=self.theta_batch,
-            )
-
+        ksw.start_from_read_state(self.mc_file)
         return ksw
+
 
     def icov_func(self, alm, icov=None, lensed=False):
         """
@@ -589,8 +571,6 @@ class Generator(Core):
                 "alm_nl": {l_str: {shape: alm_nl.astype(self.c_dtype)}},
                 "fisher": {l_str: {shape: [fisher.astype(self.r_dtype)]}},
             }
-            if self.save_ksw:
-                sdata["ksw"] = {l_str: {shape: get_ksw_save_data(ksw)}}
             save_data(self.file, sdata, verbose=verbose)
 
             if self.should_plot():

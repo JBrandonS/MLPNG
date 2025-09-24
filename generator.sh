@@ -8,14 +8,14 @@
 # list of the settings file to be used, will be ran in order
 # these must be in settings/ and have the .json extension
 SETTINGS=(
-  "n32"
+  # "n32"
   "n64"
   # "n128"
-  # "n256"
-  
+  "n256"
+
   # these can only be run with nsims < 1000, due to time or memory
-  # "n512"
-  # "n1024"
+  "n512"
+  "n1024"
 
   # these need to use high memory nodes, change sbatch/generator.sbatch to sbatch/generator-hm.sbatch in the main loop below
   # "n2048"
@@ -29,10 +29,10 @@ SETTINGS=(
 ARGS=(
   "--nsims" "1000"
   "--pols" "T"
-  # "--shapes" "local"
+  "--shapes" "local"
   "--force_generation"
-  "--phi_scale" "10"
-  "--narray" "10"
+  "--phi_scale" "1"
+  "--narray" "100"
 )
 
 # override the slurm array settings for narray, only used in data generation
@@ -91,6 +91,8 @@ for x in "${SETTINGS[@]}"; do
 
   # comment out if you want to run all settings files as dependent on the previous
   job_id=""
+
+  job_id=$(submit_job "$job_id" "sbatch/initializor.sbatch" "$settings")
 
   # Submit the generator job
   job_id=$(submit_job "$job_id" "sbatch/generator.sbatch" "$settings" "true")
