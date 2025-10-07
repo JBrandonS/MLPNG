@@ -2,32 +2,32 @@
 
 import logging
 import os
-import healpy as hp
-import numpy as np
-from joblib import Parallel, delayed
-from scipy.interpolate import interp1d
-from tqdm.auto import trange
-import lenspyx
-from lenspyx import utils_hp
-import matplotlib.pyplot as plt
 
 import camb
-from ksw import Cosmology, Shape, KSW, ReducedBispectrum
+import healpy as hp
+import lenspyx
+import matplotlib.pyplot as plt
+import numpy as np
+from joblib import Parallel, delayed
+from ksw import KSW, Cosmology, ReducedBispectrum, Shape
 from ksw.radial_functional import radial_func
+from lenspyx import utils_hp
+from scipy.interpolate import interp1d
+from tqdm.auto import trange
 
 from . import Core
 from .utils import (
-    save_data,
-    setup_logging,
     make_alm_plots,
-    remove_mono_dipole,
-    print_errors,
-    plot_predictions,
-    plot_histogram,
-    plot_cl_vs,
     plot_cl,
     plot_cl_alm,
+    plot_cl_vs,
+    plot_histogram,
     plot_map_alm,
+    plot_predictions,
+    print_errors,
+    remove_mono_dipole,
+    save_data,
+    setup_logging,
 )
 
 
@@ -187,7 +187,6 @@ class Generator(Core):
         ksw.start_from_read_state(self.mc_file)
         return ksw
 
-
     def icov_func(self, alm, icov=None, lensed=False):
         """
         This function applies the inverse covariance to the alms for use with the KSW estimator.
@@ -335,8 +334,9 @@ class Generator(Core):
         lmax = self.lmax + self.lmax_buffer
         fl = np.sqrt(np.arange(lmax + 1) * np.arange(1, lmax + 2))
 
-        alm_phi = hp.synalm(self.cl_phi, new=True, verbose=verbose)
-        alm_phi *= self.phi_scale  # scale the lensing potential by phi_scale
+        cl_phi_scaled = self.cl_phi * self.phi_scale
+        alm_phi = hp.synalm(cl_phi_scaled, new=True, verbose=verbose)
+        # alm_phi *= self.phi_scale  # scale the lensing potential by phi_scale
 
         dlm = hp.almxfl(alm_phi, fl)
 

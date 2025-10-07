@@ -1,4 +1,5 @@
 import logging
+
 import healpy as hp
 import matplotlib.pyplot as plt
 import numpy as np
@@ -654,6 +655,9 @@ def make_alm_plots(core, shape, alm_l=None, alm_ng=None, alms=None, lensed=False
             plot_func=plt.semilogy,
         )
 
+    if alms is None and alm_l is not None and alm_ng is not None:
+        alms = alm_l[sim] + alm_ng[sim]
+
     if alms is not None:
         plot_cl_alm(
             core,
@@ -728,4 +732,5 @@ def make_trainer_plots(
             save_file=core.get_plot_file(f"{run_name}-preds-{s_str}", plot_dir),
             legend=False,
             **kwargs
+        )
         )

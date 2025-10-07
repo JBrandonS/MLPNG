@@ -1,15 +1,16 @@
-import sys
 import glob
+import logging
 import os
 import re
-import logging
+import sys
+
 import h5py
 from tqdm.auto import tqdm
 
 from . import Core
 from .utils import setup_logging
 
-logger = setup_logging("mlpng.combiner", logging.DEBUG)
+logger = setup_logging("mlpng.combiner", logging.INFO)
 
 
 def extract_number(filename):
@@ -147,5 +148,5 @@ def combine_data(directory, base_name, ext=".hdf5", remove_files=True, expected=
 
 if __name__ == "__main__":
     core = Core()
-    
+
     combine_data(core.dirs["data"], core.name, ".hdf5", expected=core.narray)
