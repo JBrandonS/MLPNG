@@ -25,6 +25,7 @@ def finalize_plot(
     tight_layout: bool = True,
     legend: bool = True,
     grid: bool = False,
+    save: bool = True,
     save_file: str | None = None,
     show: bool = False,
     close: bool = True,
@@ -43,7 +44,7 @@ def finalize_plot(
             plt.grid()
         if tight_layout:
             plt.tight_layout()
-        if save_file is not None:
+        if save and save_file is not None:
             logger.debug("Saving plot to '%s'", save_file)
             plt.savefig(save_file)
         if show:
@@ -683,13 +684,14 @@ def make_alm_plots(core, shape, alm_l=None, alm_ng=None, alms=None, lensed=False
 
 
 def make_trainer_plots(
-    core, plot_dir, run_name, history, metrics, truth, preds, likelihoods
+    core, plot_dir, run_name, history, metrics, truth, preds, likelihoods, **kwargs
 ):
     # and make our plots
     plot_metrics(
         history,
         metrics=["loss"] + [f"rmse_{s}" for s in core.shapes],
         save_file=core.get_plot_file(f"{run_name}-loss", plot_dir),
+        **kwargs
     )
 
     plot_predictions_combined(
@@ -699,6 +701,7 @@ def make_trainer_plots(
         shape_strs=core.shapes,
         title="Predictions",
         save_file=core.get_plot_file(f"{run_name}-predictions", plot_dir),
+        **kwargs
     )
 
     # plot a reduced range which should better approach the CR bound
@@ -709,6 +712,7 @@ def make_trainer_plots(
         shape_strs=core.shapes,
         x_limit=250.0,
         save_file=core.get_plot_file(f"{run_name}-redux", plot_dir),
+        **kwargs
     )
 
     # individual predictions for each shape
@@ -723,4 +727,5 @@ def make_trainer_plots(
             title=f"{s_str} RMSE: {metrics[1 + s]:.3f}",
             save_file=core.get_plot_file(f"{run_name}-preds-{s_str}", plot_dir),
             legend=False,
+            **kwargs
         )

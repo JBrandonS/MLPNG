@@ -515,7 +515,7 @@ class Generator(Core):
                 )
 
             # go ahead and save the data here
-            sdata = {"alm_l": {"lensed": alm_l[:, pol_idxs].astype(self.c_dtype)}}
+            sdata = {"alm_l": {"lensed": alm_lens[:, pol_idxs].astype(self.c_dtype)}}
             save_data(self.file, sdata, verbose=verbose)
 
             self._run(alm_lens, lensed=True, verbose=verbose)
