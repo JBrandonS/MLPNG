@@ -1,25 +1,24 @@
 """..."""
+
+import logging
 import os
 import sys
-import logging
 import warnings
+
+import camb
 import healpy as hp
 import numpy as np
-import camb
+from ksw import KSW, Cosmology, Shape
 from mpi4py import MPI
 
-from ksw import KSW, Cosmology, Shape
-
 from . import Core
-from .utils import (
-    setup_logging,
-    remove_mono_dipole
-)
+from .utils import remove_mono_dipole, setup_logging
 
 mpi_comm = MPI.COMM_WORLD
 mpi_rank = mpi_comm.Get_rank()
 mpi_size = mpi_comm.Get_size()
 mpi_root = mpi_rank == 0
+
 
 class Initializor(Core):
     """..."""
@@ -28,12 +27,13 @@ class Initializor(Core):
         if log_level is None:
             log_level = logging.DEBUG if mpi_root else logging.ERROR
 
-        warnings.filterwarnings(
-            "ignore", message=".*power_spectra_from_transfer.*"
-        )
+        warnings.filterwarnings("ignore", message=".*power_spectra_from_transfer.*")
 
         super().__init__(argv, log_level=log_level)
         self.logger = setup_logging("mlpng.initializor", level=log_level)
+
+        # quick check before doing any calculations
+        self.check_existing_data_file()
 
         self.logger.debug("MPI Rank: %s", mpi_rank)
         self.logger.debug("MPI Size: %s", mpi_size)
@@ -52,7 +52,7 @@ class Initializor(Core):
         self.cosmo.compute_transfer(camb_lmax, verbose=verbose)
 
         self.logger.debug("Computing C_ells")
-        self.cosmo.compute_c_ell()
+        self.cosmo.compute_c_ell(lmax=camb_lmax)
 
         c_ell = self.cosmo.c_ell["unlensed_scalar"]["c_ell"][: self.nell]
         self.c_ell = c_ell.T.astype(self.r_dtype)
@@ -75,7 +75,7 @@ class Initializor(Core):
             self.icov_lens[:, self.lmin :] = 1 / self.cov_lens[pols, self.lmin :]
 
             self.cl_phi = self.cosmo.c_ell["lenspotential"]["c_ell"]
-            self.cl_phi = self.cl_phi[: self.nell, 0].astype(self.r_dtype)
+            self.cl_phi = self.cl_phi[:, 0].astype(self.r_dtype)
 
     @staticmethod
     def generate_alm(lmax, c_ells) -> np.ndarray:
@@ -184,6 +184,8 @@ class Initializor(Core):
     def check_existing_data_file(self):
         """Check if the data file already exists and handle it based on the `force_gen` setting.
         If the file exists and `force_gen` is True, the file is removed."""
+        should_exit = False
+
         if os.path.exists(self.mc_file):
             if self.force_gen:
                 self.logger.info("Removing existing data file '%s'", self.mc_file)
@@ -191,6 +193,12 @@ class Initializor(Core):
             else:
                 self.logger.info("Data file '%s' exists, exiting", self.mc_file)
                 sys.exit(0)
+                should_exit = True
+
+        should_exit = mpi_comm.bcast(should_exit, root=0)
+        if should_exit:
+            mpi_comm.Abort()
+            sys.exit(0)
 
     def run(self):
         opts = [False, True] if self.lensing else [False]
@@ -210,11 +218,5 @@ class Initializor(Core):
 
 if __name__ == "__main__":
     init = Initializor()
-
-    if mpi_root:
-        init.check_existing_data_file()
-
-    # lets wait for the file to be deleted first
-    mpi_comm.Barrier()
 
     init.run()

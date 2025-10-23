@@ -5,7 +5,7 @@
 #SBATCH --mem=64G
 #SBATCH --cpus-per-task=1
 #SBATCH --output=data/logs/combiner/%j.log
-#SBATCH --time=1:00:00
+#SBATCH --time=1-00:00:00
 #SBATCH --account=jrmeyers_ml_cmb_0001
 
 # create the logging dir

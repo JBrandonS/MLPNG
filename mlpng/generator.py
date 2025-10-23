@@ -101,7 +101,7 @@ class Generator(Core):
         # we need at least lmax of 300 for this transfer code
         camb_lmax = max(self.lmax + self.lmax_buffer, 300)
         self.cosmo.compute_transfer(camb_lmax, verbose=verbose)
-        self.cosmo.compute_c_ell()
+        self.cosmo.compute_c_ell(lmax=camb_lmax)
 
         c_ell = self.cosmo.c_ell["unlensed_scalar"]["c_ell"][: self.nell]
         self.c_ell = c_ell.T.astype(self.r_dtype)
@@ -124,7 +124,7 @@ class Generator(Core):
             self.icov_lens[:, self.lmin :] = 1 / self.cov_lens[pols, self.lmin :]
 
             self.cl_phi = self.cosmo.c_ell["lenspotential"]["c_ell"]
-            self.cl_phi = self.cl_phi[: self.nell, 0].astype(self.r_dtype)
+            self.cl_phi = self.cl_phi[:, 0].astype(self.r_dtype)
 
     def get_ksw(
         self,
@@ -334,11 +334,11 @@ class Generator(Core):
         lmax = self.lmax + self.lmax_buffer
         fl = np.sqrt(np.arange(lmax + 1) * np.arange(1, lmax + 2))
 
-        cl_phi_scaled = self.cl_phi * self.phi_scale
-        alm_phi = hp.synalm(cl_phi_scaled, new=True, verbose=verbose)
-        # alm_phi *= self.phi_scale  # scale the lensing potential by phi_scale
-
-        dlm = hp.almxfl(alm_phi, fl)
+        cl_phi = self.cl_phi * self.phi_scale  # **2
+        alm_phi = [
+            hp.synalm(cl_phi, new=True, verbose=verbose) for _ in range(self.nsims)
+        ]
+        # alm_phi = np.array(alm_phi) * self.phi_scale
 
         geom_info = ("healpix", {"nside": self.nside})
         geom = lenspyx.get_geom(geom_info)
@@ -350,7 +350,10 @@ class Generator(Core):
 
         alm_lensed = np.zeros(lensed_shape, alm.dtype)
         for sim in range(self.nsims):
+            dlm = hp.almxfl(alm_phi[sim], fl)
+
             # we have to split the lensing into the T and EB components
+            # not really supported right now but maybe not needed
             if self.use_t:
                 lenmap = lenspyx.alm2lenmap(
                     alm[sim, 0],
@@ -385,7 +388,7 @@ class Generator(Core):
                     nthreads=self.slurm.n_cpus,
                 )
 
-        return alm_lensed
+        return alm_lensed, alm_phi
 
     def generate_alm_nl_shape(self, alms, shape, ksw=None, icov=None, lensed=False):
         """
@@ -477,45 +480,18 @@ class Generator(Core):
         sdata = {"alm_l": {"unlensed": alm_l[:, pol_idxs].astype(self.c_dtype)}}
         save_data(self.file, sdata, verbose=verbose)
 
-        if self.should_plot():
-            plot_cl_alm(
-                self,
-                alm_l[0],
-                title="unlensed alms",
-                save_file=self.get_plot_file("alm_l"),
-                plot_camb=True,
-            )
-            plot_map_alm(
-                self,
-                alm_l[0, 0],
-                title="unlensed alms",
-                save_file=self.get_plot_file("alm_l_map"),
-            )
-
         self._run(alm_l, False, verbose=verbose)
 
         if self.lensing:
             # now we lens the alms and save them
             self.logger.debug("Lensing alms...")
-            alm_lens = self.lens_alms(alm_l)
-
-            if self.should_plot():
-                plot_cl_alm(
-                    self,
-                    alm_lens[0],
-                    title="lensed alms",
-                    save_file=self.get_plot_file("alm_l_lens"),
-                    plot_camb=True,
-                )
-                plot_map_alm(
-                    self,
-                    alm_lens[0, 0],
-                    title="lensed alms",
-                    save_file=self.get_plot_file("alm_l_map_lens"),
-                )
+            alm_lens, alm_phi = self.lens_alms(alm_l)
 
             # go ahead and save the data here
-            sdata = {"alm_l": {"lensed": alm_lens[:, pol_idxs].astype(self.c_dtype)}}
+            sdata = {
+                "alm_l": {"lensed": alm_lens[:, pol_idxs].astype(self.c_dtype)},
+                "alm_phi": np.array(alm_phi).astype(self.c_dtype),
+            }
             save_data(self.file, sdata, verbose=verbose)
 
             self._run(alm_lens, lensed=True, verbose=verbose)
@@ -579,15 +555,15 @@ class Generator(Core):
                     self,
                     shape,
                     alm_l[:, pol_idxs],
-                    alm_nl,
+                    alm_nl[:, pol_idxs],
                     lensed=lensed,
                 )
 
             if self.slurm.is_main and self.estimate:
                 self.logger.debug("Computing estimates for %s %s", l_str, shape)
-                fnl = self.rng.uniform(self.fnl_min, self.fnl_max, (self.nsims, 1, 1))
 
                 # make our alms
+                fnl = self.rng.uniform(self.fnl_min, self.fnl_max, (self.nsims, 1, 1))
                 alm = alm_l + fnl * alm_nl
 
                 n_estimates = min(self.nsims, self.num_estimates)
@@ -596,6 +572,7 @@ class Generator(Core):
                     range(n_estimates),
                     fisher=fisher,
                 )
+                estimates = estimates.T
 
                 print_errors(fnl, estimates, fisher)
                 if self.should_plot():

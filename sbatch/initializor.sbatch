@@ -1,9 +1,9 @@
 #! /bin/bash
 #SBATCH --job-name=initializor
 #SBATCH --partition=standard-s
-#SBATCH --ntasks=32
+#SBATCH --ntasks=8
 #SBATCH --mem-per-cpu=20G
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=4
 #SBATCH --output=data/logs/initializor/%j.log
 #SBATCH --time=1-00:00:00
 #SBATCH --account=jrmeyers_ml_cmb_0001

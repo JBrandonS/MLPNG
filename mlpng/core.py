@@ -460,7 +460,7 @@ class Core:
         self.use_t = "T" in self.pols
         self.use_e = "E" in self.pols
         self.use_b = False  # "B" in self.pols
-        self.use_pols = self.pols == 3  # used for hp commands
+        self.use_pols = self.npols == 3  # used for hp commands
 
         self.use_wandb = self._get("wandb", False)
         self.use_tb = self._get("tensorboard", False)

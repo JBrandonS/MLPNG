@@ -272,7 +272,7 @@ def plot_predictions(
     truth_color="red",
     sigma: float | None = None,
     sigma_color="blue",
-    show_sigma_legend=False,
+    show_sigma_legend=True,
     show_n_sigma=4,
     **kwargs,
 ):
@@ -302,8 +302,8 @@ def plot_predictions(
         plt.plot(line, line + sigma, color=sigma_color, linestyle="--")
         plt.plot(line, line - sigma, color=sigma_color, linestyle="--")
 
-    if show_sigma_legend:
-        add_sigma_legend(truth_, preds_, sigma, data_label, show_n_sigma)
+        if show_sigma_legend:
+            add_sigma_legend(truth_, preds_, sigma, data_label, show_n_sigma)
 
     finalize_plot(title=title, **kwargs)
 
@@ -357,6 +357,8 @@ def add_sigma_legend(truth, preds, sigma, labels, n_sigma=4):
     sigma_ = np.atleast_1d(sigma)
     labels_ = np.atleast_1d(labels)
     row_labels = [f"{i} $\\sigma$" for i in range(1, n_sigma + 1)]
+
+    print("preds shape:", np.shape(preds_), "truth shape:", np.shape(truth_))
 
     data = []
     for i in range(1, n_sigma + 1):
@@ -626,6 +628,7 @@ def make_alm_plots(core, shape, alm_l=None, alm_ng=None, alms=None, lensed=False
     logger.debug("Generating alm plots")
     sim = core.rng.integers(core.nsims)  # get random sim idx
     l_str = f"_{shape}_lensed" if lensed else f"_{shape}_unlensed"
+    l_title = f"lensed {shape}" if lensed else f"unlensed {shape}"
 
     # plot a few comparison with different functions to get views
     idx = core.rng.integers(1, 1001)
@@ -656,16 +659,22 @@ def make_alm_plots(core, shape, alm_l=None, alm_ng=None, alms=None, lensed=False
         )
 
     if alms is None and alm_l is not None and alm_ng is not None:
-        alms = alm_l[sim] + alm_ng[sim]
+        alms = alm_l + alm_ng
 
     if alms is not None:
         plot_cl_alm(
             core,
             alms[sim],
             save_file=core.get_plot_file(f"{sim}_alm{l_str}"),
-            ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}$",
+            ylabel=r"$C^{tot}_{\ell}$",
             plot_camb=True,
             plot_full_camb=True,
+        )
+        plot_map_alm(
+            core,
+            alms[sim, 0],
+            title=f"{l_title} full alms",
+            save_file=core.get_plot_file(f"map{l_str}"),
         )
 
     if alm_l is not None:
@@ -673,9 +682,15 @@ def make_alm_plots(core, shape, alm_l=None, alm_ng=None, alms=None, lensed=False
             core,
             alm_l[sim],
             save_file=core.get_plot_file(f"{sim}_alm_l{l_str}"),
-            ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}^{L}$",
+            ylabel=r"$C_{\ell}^{L}$",
             plot_camb=True,
             plot_full_camb=True,
+        )
+        plot_map_alm(
+            core,
+            alm_l[sim, 0],
+            title=f"{l_title} full alms",
+            save_file=core.get_plot_file(f"map_l{l_str}"),
         )
 
     if alm_ng is not None:
@@ -683,7 +698,13 @@ def make_alm_plots(core, shape, alm_l=None, alm_ng=None, alms=None, lensed=False
             core,
             alm_ng[sim],
             save_file=core.get_plot_file(f"{sim}_alm_ng{l_str}"),
-            ylabel=r"$\ell(\ell+1)/2\pi\;C_{\ell}^{NG}$",
+            ylabel=r"$C_{\ell}^{NG}$",
+        )
+        plot_map_alm(
+            core,
+            alm_ng[sim, 0],
+            title=f"{l_title} ng alms",
+            save_file=core.get_plot_file(f"map_ng{l_str}"),
         )
 
 
@@ -732,5 +753,4 @@ def make_trainer_plots(
             save_file=core.get_plot_file(f"{run_name}-preds-{s_str}", plot_dir),
             legend=False,
             **kwargs
-        )
         )
