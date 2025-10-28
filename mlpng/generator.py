@@ -6,23 +6,17 @@ import os
 import camb
 import healpy as hp
 import lenspyx
-import matplotlib.pyplot as plt
 import numpy as np
 from joblib import Parallel, delayed
 from ksw import KSW, Cosmology, ReducedBispectrum, Shape
 from ksw.radial_functional import radial_func
-from lenspyx import utils_hp
 from scipy.interpolate import interp1d
 from tqdm.auto import trange
 
 from . import Core
 from .utils import (
     make_alm_plots,
-    plot_cl,
-    plot_cl_alm,
-    plot_cl_vs,
     plot_histogram,
-    plot_map_alm,
     plot_predictions,
     print_errors,
     remove_mono_dipole,
@@ -334,11 +328,10 @@ class Generator(Core):
         lmax = self.lmax + self.lmax_buffer
         fl = np.sqrt(np.arange(lmax + 1) * np.arange(1, lmax + 2))
 
-        cl_phi = self.cl_phi * self.phi_scale  # **2
+        cl_phi = self.cl_phi * self.phi_scale
         alm_phi = [
             hp.synalm(cl_phi, new=True, verbose=verbose) for _ in range(self.nsims)
         ]
-        # alm_phi = np.array(alm_phi) * self.phi_scale
 
         geom_info = ("healpix", {"nside": self.nside})
         geom = lenspyx.get_geom(geom_info)
@@ -494,7 +487,7 @@ class Generator(Core):
             }
             save_data(self.file, sdata, verbose=verbose)
 
-            self._run(alm_lens, lensed=True, verbose=verbose)
+            self._run(alm_l, lensed=True, verbose=verbose)
 
     def _run(self, alm_l, lensed, verbose=False):
         """
