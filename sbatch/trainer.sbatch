@@ -3,8 +3,8 @@
 #SBATCH --partition=batch
 #SBATCH --ntasks=1
 #SBATCH --mem=512G
-#SBATCH --cpus-per-task=64
-#SBATCH --gpus-per-task=4
+#SBATCH --cpus-per-task=16
+#SBATCH --gpus-per-task=1
 #SBATCH --output=data/logs/trainer/%j.log
 #SBATCH --time=1-00:00:00
 #SBATCH --time=1-00:00:00

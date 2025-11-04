@@ -6,7 +6,7 @@
 #SBATCH --mem=500G
 #SBATCH --cpus-per-task=32
 #SBATCH --gpus-per-task=1
-#SBATCH --time=8:00:00
+#SBATCH --time=12:00:00
 #SBATCH --account=jrmeyers_ml_cmb_0001
 
 conda_env="ds25"
