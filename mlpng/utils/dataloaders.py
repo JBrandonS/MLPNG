@@ -3,6 +3,7 @@ import math
 import copy
 import logging
 import h5py
+import itertools
 import numpy as np
 import healpy as hp
 import tensorflow as tf
@@ -512,28 +513,40 @@ class UnlensMapDataset(MapDataset):
         return map_lens, map_unlensed
 
 
-class UnlensPhiMapDataset(UnlensMapDataset):
-    @staticmethod
-    def _alm_to_map(alm_lens, alm_phi, rotate, nside):
-        if rotate:
-            # Apply a random rotation to the maps
-            rotator = hp.Rotator(
-                deg=True,
-                rot=[
-                    np.random.uniform(-180, 180),
-                    np.random.uniform(-90, 90),
-                    np.random.uniform(0, 360),
-                ],
-            )
-            alm_lens_rotated = rotator.rotate_alm(alm_lens)
-            alm_phi_rotated = rotator.rotate_alm(alm_phi)
-        else:
-            alm_lens_rotated = alm_lens
-            alm_phi_rotated = alm_phi
+class PhiMapDataset(UnlensMapDataset):
+    @classmethod
+    def fromCore(cls, core, **kwargs):
+        lmax = core.lmax + core.lmax_buffer
+        nside = (lmax - 1) // 3
+        npix = hp.nside2npix(nside)
+        npix = hp.nside2npix(128)  # HAX
+        print("npix", npix, "nside", nside, "lmax", lmax)
 
-        m_lens = hp.alm2map(alm_lens_rotated, nside, pol=False)
-        m_phi = hp.alm2map(alm_phi_rotated, nside, pol=False)
-        return hp.reorder(m_lens, r2n=True), hp.reorder(m_phi, r2n=True)
+        y_shape = kwargs.pop("y_shape", (None, npix, core.npols))
+        y_dtype = kwargs.pop("y_dtype", tf.float32)
+        return super().fromCore(core, y_shape=y_shape, y_dtype=y_dtype, **kwargs)
+
+    # @staticmethod
+    # def _alm_to_map(alm_lens, alm_phi, rotate, nside):
+    #     if rotate:
+    #         # Apply a random rotation to the maps
+    #         rotator = hp.Rotator(
+    #             deg=True,
+    #             rot=[
+    #                 np.random.uniform(-180, 180),
+    #                 np.random.uniform(-90, 90),
+    #                 np.random.uniform(0, 360),
+    #             ],
+    #         )
+    #         alm_lens_rotated = rotator.rotate_alm(alm_lens)
+    #         alm_phi_rotated = rotator.rotate_alm(alm_phi)
+    #     else:
+    #         alm_lens_rotated = alm_lens
+    #         alm_phi_rotated = alm_phi
+
+    #     m_lens = hp.alm2map(alm_lens_rotated, nside, pol=False)
+    #     m_phi = hp.alm2map(alm_phi_rotated, nside, pol=False)
+    #     return hp.reorder(m_lens, r2n=True), hp.reorder(m_phi, r2n=True)
 
     @staticmethod
     def _alm_to_map_batch(
@@ -541,13 +554,15 @@ class UnlensPhiMapDataset(UnlensMapDataset):
     ):
         # Replicate alm_phi to match the flattened alm_lens structure
         # alm_phi needs to be repeated for each (shape, duplicate) combination per batch item
-        alm_phi_expanded = np.repeat(alm_phi, len(shapes) * duplicates, axis=0)
+        alm_phi_expanded = np.repeat(alm_phi, duplicates * len(shapes), axis=0)
+        alm_phi_expanded = alm_phi_expanded.reshape(duplicates, len(shapes), -1)
 
-        if rotate:
-            # Apply a random rotation to the maps
-            alm_lens_rotated = np.empty_like(alm_lens)
-            alm_phi_rotated = np.empty_like(alm_phi_expanded)
-            for i in range(alm_lens.shape[0]):
+        lens_maps = []
+        phi_maps = []
+        for batch, dup, shape in itertools.product(
+            range(batch_size), range(duplicates), range(len(shapes))
+        ):
+            if rotate:
                 rotator = hp.Rotator(
                     deg=True,
                     rot=[
@@ -556,15 +571,29 @@ class UnlensPhiMapDataset(UnlensMapDataset):
                         np.random.uniform(0, 360),
                     ],
                 )
-                alm_lens_rotated[i] = rotator.rotate_alm(alm_lens[i])
-                alm_phi_rotated[i] = rotator.rotate_alm(alm_phi_expanded[i])
-        else:
-            alm_lens_rotated = alm_lens
-            alm_phi_rotated = alm_phi_expanded
+                alm_lens_rotated = rotator.rotate_alm(alm_lens[dup, batch, shape])
+                alm_phi_rotated = rotator.rotate_alm(alm_phi[batch, shape])
+            else:
+                alm_lens_rotated = alm_lens[dup, batch, shape]
+                alm_phi_rotated = alm_phi[batch]
 
-        m_lens = hp.alm2map(alm_lens_rotated, nside, pol=False)
-        m_phi = hp.alm2map(alm_phi_rotated, nside, pol=False)
-        return hp.reorder(m_lens, r2n=True), hp.reorder(m_phi, r2n=True)
+            # m_lmax = hp.Alm.getlmax(alm_lens_rotated.shape[-1])
+            # phi_lmax = hp.Alm.getlmax(alm_phi_rotated.shape[-1])
+            # nside_phi = (phi_lmax - 1) // 3
+
+            # 106 -> 128
+            nside_phi = 128
+            # tf.print(
+            #     f"Calculated nside: {nside_phi} from phi_lmax: {phi_lmax}, shape: {alm_phi_rotated.shape}"
+            # )
+
+            m_lens = hp.alm2map(alm_lens_rotated, nside, pol=False, inplace=True)
+            m_phi = hp.alm2map(alm_phi_rotated, nside_phi, pol=False, inplace=True)
+
+            lens_maps.append(hp.reorder(m_lens, r2n=True))
+            phi_maps.append(hp.reorder(m_phi, r2n=True))
+
+        return np.array(lens_maps)[..., None], np.array(phi_maps)[..., None]
 
     def _generate(self, indices, duplicates):
         batch_size = len(indices)
@@ -579,24 +608,24 @@ class UnlensPhiMapDataset(UnlensMapDataset):
             fnls = self._mask_fnls(fnls)
 
         alm_l_lens = get_data(self.file_path, f"alm_l/lensed", indices)
-        alm_phi = get_data(self.file_path, f"alm_phi", indices)
-        alm_phi = alm_phi.astype(np.complex128)  # needed for rotate alm
         alm_nl_lens = np.array(
             [
                 get_data(self.file_path, f"alm_nl/lensed/{s}", indices)
                 for s in self.shapes
             ]
         )
-
         alm_lens = alm_l_lens + np.einsum("i...,i...->...", fnls, alm_nl_lens)
+
+        alm_phi = get_data(self.file_path, f"alm_phi", indices)
+        alm_phi = alm_phi.astype(np.complex128)  # needed for rotate alm
 
         # Reshape to flatten duplicates, batch, and shapes into one dimension
         # Original shape: (duplicates, batch_size, shapes, alm_size)
         # Target shape: (duplicates * batch_size * shapes, alm_size)
         alm_lens_flat = alm_lens.reshape(-1, alm_lens.shape[-1])
 
-        lens_maps, phi_maps = self._alm_to_map_batch(
-            alm_lens_flat,
+        return self._alm_to_map_batch(
+            alm_lens,
             alm_phi,
             self.rotate,
             self.nside,
@@ -604,7 +633,6 @@ class UnlensPhiMapDataset(UnlensMapDataset):
             self.shapes,
             duplicates,
         )
-        return np.array(lens_maps)[..., None], np.array(phi_maps)[..., None]
 
 
 class elsnerDataset(ALMDataset):

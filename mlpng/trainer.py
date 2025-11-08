@@ -27,8 +27,8 @@ from deepsphere.healpy_layers import (
 
 from mlpng import Core
 from mlpng.utils import setup_logging, try_init_wandb, make_trainer_plots
-from mlpng.utils.dataloaders import MapDataset, UnlensMapDataset, UnlensPhiMapDataset
-from mlpng.utils.callbacks import RMSELoss, RMSELoss2, rmse_metrics
+from mlpng.utils.dataloaders import MapDataset, UnlensMapDataset, PhiMapDataset
+from mlpng.utils.callbacks import RMSELoss, RMSELoss2, rmse_metrics, PowerSpectrumLoss
 
 tf.get_logger().setLevel(logging.ERROR)
 logger = setup_logging("mlpng.trainer", level=logging.DEBUG)
@@ -135,7 +135,7 @@ def get_u_net_model(
             K=3,
             Fout=input_shape[-1],  # Same as input channels
             use_bn=False,
-            use_bias=True,
+            # use_bias=True,
             activation=None,  # Linear output for reconstruction
         )
     )
@@ -206,7 +206,7 @@ def train_u_net(
     shapes,
     plot_prefix,
 ):
-    ds = UnlensPhiMapDataset.fromCore(core, lensed=True)
+    ds = PhiMapDataset.fromCore(core, lensed=True)
     train, val, test = ds.split(
         train_size=splits[0],
         val_size=splits[1],
@@ -215,17 +215,17 @@ def train_u_net(
         batch_size=batch_size,
         duplicates=duplicates,
         cache_file=cache_file,
-        gen_batch_size=core.slurm.n_cpus,
+        gen_batch_size=4,
     )
     logger.debug("Creating U-Net model and training data")
 
     # calculate the number of steps per epoch and decay steps for use later
     epoch_steps = math.ceil(core.total_sims * splits[0] * duplicates[0] // batch_size)
-    decay_steps = epoch_steps
+    decay_steps = epoch_steps * 3
     logger.debug(f"Steps per epoch: {epoch_steps}")
 
     with strategy.scope():
-        learning_rate = ExponentialDecay(initial_LR, decay_steps, 0.9, staircase=True)
+        learning_rate = ExponentialDecay(initial_LR, decay_steps, 0.96, staircase=True)
 
         u_net = get_u_net_model((None, core.npix, core.npols), core.nside)
 
@@ -233,8 +233,8 @@ def train_u_net(
             optimizer=AdamW(
                 learning_rate, weight_decay=5e-6, amsgrad=True, use_ema=True
             ),
-            loss="mse",  # RMSELoss(),
-            metrics=rmse_metrics(shapes),
+            loss=PowerSpectrumLoss(core.lmax),
+            metrics=rmse_metrics(shapes) + ["mse", "mae"],
         )
 
     logger.debug("Creating test cache")
@@ -349,7 +349,7 @@ def train_fnl(
     logger.info("Saving Fnl model to %s", save_file)
     fnl_model.save(save_file)
 
-    truth = np.array([y for _, y in test])
+    truth = np.concatenate([y for _, y in test])
     preds = fnl_model.predict(test, verbose=0)
 
     vals = truth.ravel()
@@ -412,11 +412,11 @@ def run():
     core = Core()
 
     # start with some hard coded settings because
-    batch_size = 32  # TODO, figure out why chaning this breaks some of the data gen
+    batch_size = 64
     max_epochs = 500
     initial_LR = 1e-3
 
-    data_fraction = 0.1
+    data_fraction = 1.0
     unet_split = np.array([0.8, 0.1, 0.1]) * data_fraction
     unet_duplicates = [25, 10, 2]
 
@@ -424,14 +424,14 @@ def run():
     fnl_split = np.array([0.4, 0.1, 0.5]) * data_fraction
     fnl_duplicates = [25, 10, 2]
 
-    final_split = np.array([0.8, 0.1, 0.1]) * data_fraction
+    final_split = np.array([0.8, 0.1, 0.1])  # * data_fraction
     final_duplicates = [1, 1, 1]
 
     strategy = tf.distribute.MirroredStrategy()  # use mirrored strategy for multi-GPU
 
     date_time = tf.timestamp().numpy().astype(int)
     # freeze to one run to reuse the cache
-    # date_time = "1762263789" # nside 256, no rotations
+    # date_time = "1762263789"  # nside 256, no rotations
     run_name = f"notebook-{date_time}"
     logger.info(f"Run name: {run_name}")
 
@@ -443,14 +443,14 @@ def run():
     os.makedirs(os.path.dirname(plot_prefix), exist_ok=True)
 
     # setups where we will
-    unet_keras_file = f"{save_dir}/unet-{run_info}.keras"
-    fnl_keras_file = f"{save_dir}/fnl-{run_info}.keras"
-    final_keras_file = f"{save_dir}/final-{run_info}.keras"
-    full_keras_file = f"{save_dir}/full-{run_info}.keras"
+    unet_keras_file = f"{save_dir}/unet-{run_info}-2.keras"
+    fnl_keras_file = f"{save_dir}/fnl-{run_info}-2.keras"
+    final_keras_file = f"{save_dir}/final-{run_info}-2.keras"
+    full_keras_file = f"{save_dir}/full-{run_info}-2.keras"
 
-    unet_cache = f"{core.name}/unet-{run_info}"
-    fnl_cache = f"{core.name}/fnl-{run_info}"
-    final_cache = f"{core.name}/final-{run_info}"
+    unet_cache = f"{core.name}/unet-{core.name}"
+    fnl_cache = f"{core.name}/fnl-{core.name}"
+    final_cache = f"{core.name}/final-{core.name}"
 
     for file in [
         unet_keras_file,
@@ -559,12 +559,17 @@ def run():
     def _delens_py(lensed, phi, nside=core.nside):
         delensed_maps = np.zeros_like(lensed)
         # TODO test joblib parallel here
-        for i, (l_map, phi) in enumerate(zip(lensed, phi)):
-            lensed_enmap = reproject.healpix2map(np.asarray(l_map).T, shape, wcs)
-            phi_enmap = reproject.healpix2map(np.asarray(phi).T, shape, wcs)
+        for i, (l_map, phi_map) in enumerate(zip(lensed, phi)):
+            # TODO add pol support here
+            l_map = hp.reorder(l_map[:, 0], n2r=True).astype(np.float32)
+            phi_map = hp.reorder(phi_map[:, 0], n2r=True).astype(np.float32)
+
+            lensed_enmap = reproject.healpix2map(l_map, shape, wcs)
+            phi_enmap = reproject.healpix2map(phi_map, shape, wcs)
             delensed_enmap = lensing.delens_map(lensed_enmap, phi_enmap)
 
-            delensed_maps[i] = reproject.map2healpix(delensed_enmap, nside).T
+            dm = reproject.map2healpix(delensed_enmap, nside)
+            delensed_maps[i] = hp.reorder(dm, r2n=True)
 
         return delensed_maps
 
@@ -581,12 +586,13 @@ def run():
         return delensed, truth
 
     phi_preds = u_net.predict(test_3, verbose=0)
+    # phi_preds = np.array([hp.reorder(x, r2n=True), for x in phi_preds])
 
     phi_ds = tf.data.Dataset.from_tensor_slices(phi_preds).batch(batch_size)
     delensed_ds = (
         tf.data.Dataset.zip((test_3, phi_ds))
         .map(_map_fn, num_parallel_calls=tf.data.AUTOTUNE)
-        .cache()  # just cache here to ensure no mixing of the datasets on future reads
+        .cache()
         .prefetch(tf.data.AUTOTUNE)
     )
 
@@ -601,7 +607,7 @@ def run():
         plt.savefig(f"{plot_prefix}-delensed-map.png")
 
     fnl_preds = fnl_model.predict(delensed_ds, verbose=2)
-    fnl_truth = np.array([y for _, y in delensed_ds])
+    fnl_truth = np.concatenate([y for _, y in delensed_ds])
     fnl_truth = fnl_truth.ravel()
     fnl_preds = fnl_preds.ravel()
 

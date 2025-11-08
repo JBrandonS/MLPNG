@@ -32,7 +32,7 @@ from mlpng import Core
 from mlpng.unet_phi import get_model
 from mlpng.utils import setup_logging
 from mlpng.utils.callbacks import RMSELoss, rmse_metrics
-from mlpng.utils.dataloaders import UnlensPhiMapDataset
+from mlpng.utils.dataloaders import PhiMapDataset
 
 logger = setup_logging("mlpng.unet_optuna", level=logging.INFO)
 
@@ -130,7 +130,7 @@ class UNetOptunaTrainer:
         total_sims = self.core.total_sims
         part_size = total_sims // 3
 
-        ds_unet = UnlensPhiMapDataset.fromCore(self.core, lensed=True)
+        ds_unet = PhiMapDataset.fromCore(self.core, lensed=True)
         ds_unet.start_idx = 0
         ds_unet.end_idx = part_size
 
