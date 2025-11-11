@@ -192,6 +192,315 @@ def get_fnl_model(input_shape, max_batch_size=32, n_out=1):
     return model
 
 
+@tf.keras.saving.register_keras_serializable()
+class EncoderBlock(tf.keras.layers.Layer):
+    def __init__(
+        self,
+        nside,
+        npix,
+        fin,
+        fout,
+        activation,
+        max_batch_size,
+        K,
+        use_bn=True,
+        use_bias=True,
+        pool=True,
+        dropout_rate=0.1,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+
+        self.nside = nside
+        self.npix = npix
+        self.fin = fin
+        self.fout = fout
+        self.activation_fn = activation
+        self.max_batch_size = max_batch_size
+        self.K = K
+        self.use_bn = use_bn
+        self.use_bias = use_bias
+        self.dropout_rate = dropout_rate
+        self.pool = pool
+
+        indices = np.arange(npix)
+
+        enc_layers = []
+
+        enc_layers += [
+            HealpyChebyshev(
+                K=K, Fout=fout, activation=activation, use_bn=use_bn, use_bias=use_bias
+            ),
+            HealpyChebyshev(
+                K=K, Fout=fout, activation=activation, use_bn=use_bn, use_bias=use_bias
+            ),
+        ]
+        if dropout_rate > 0.0:
+            enc_layers.append(Dropout(dropout_rate))
+
+        if pool:
+            enc_layers.append(HealpyPool(1, "AVG"))
+
+        # FIXME: probably want to get the skip connections before the pooling layer
+        self.body = HealpyGCNN(
+            nside=nside,
+            indices=indices,
+            layers=enc_layers,
+            n_neighbors=8,
+            max_batch_size=max_batch_size,
+            initial_Fin=fin,
+        )
+
+        self.proj = None
+        if fin != fout:
+            self.proj = HealpyGCNN(
+                nside=nside,
+                indices=indices,
+                layers=[HealpyChebyshev(K=1, Fout=fout, activation=None)],
+                n_neighbors=8,
+                max_batch_size=max_batch_size,
+                initial_Fin=fin,
+            )
+
+    def get_config(self):
+        config = super().get_config()
+        config.update(
+            {
+                "nside": self.nside,
+                "npix": self.npix,
+                "fin": self.fin,
+                "fout": self.fout,
+                "activation": self.activation_fn,
+                "max_batch_size": self.max_batch_size,
+                "K": self.K,
+                "use_bn": self.use_bn,
+                "use_bias": self.use_bias,
+                "pool": self.pool,
+                "dropout_rate": self.dropout_rate,
+            }
+        )
+        return config
+
+    def call(self, inputs, training=False):
+        x = self.body(inputs, training=training)
+        skip = inputs if self.proj is None else self.proj(inputs, training=training)
+        return x, skip
+
+
+@tf.keras.saving.register_keras_serializable()
+class DecoderBlock(tf.keras.layers.Layer):
+    def __init__(
+        self,
+        nside,
+        npix,
+        fin,
+        fout,
+        activation,
+        K,
+        max_batch_size,
+        upsample=True,
+        use_bn=True,
+        use_bias=True,
+        dropout_rate=0.1,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+
+        self.nside = nside
+        self.npix = npix
+        self.fin = fin
+        self.fout = fout
+        self.activation_fn = activation
+        self.max_batch_size = max_batch_size
+        self.K = K
+        self.use_bn = use_bn
+        self.use_bias = use_bias
+        self.dropout_rate = dropout_rate
+        self.upsample = upsample
+
+        indices = np.arange(npix)
+
+        dec_layers = []
+        if upsample:
+            dec_layers.append(HealpyPseudoConv_Transpose(1, fout))
+
+        dec_layers.extend(
+            [
+                HealpyChebyshev(
+                    K=K,
+                    Fout=fout,
+                    activation=activation,
+                    use_bn=use_bn,
+                    use_bias=use_bias,
+                ),
+                HealpyChebyshev(
+                    K=K,
+                    Fout=fout,
+                    activation=activation,
+                    use_bn=use_bn,
+                    use_bias=use_bias,
+                ),
+            ]
+        )
+
+        if dropout_rate > 0.0:
+            dec_layers.append(Dropout(dropout_rate))
+
+        self.body = HealpyGCNN(
+            nside=nside,
+            indices=indices,
+            layers=dec_layers,
+            n_neighbors=8,
+            max_batch_size=max_batch_size,
+            initial_Fin=fin,
+        )
+
+        # FIXME: Only do this if needed to match shapes with skip!
+        # probably need to change how the skip is gotten so that we get it before downsampling
+        self.match = HealpyGCNN(
+            nside=nside,
+            indices=indices,
+            layers=[HealpyChebyshev(K=1, Fout=fout, activation=None)],
+            n_neighbors=8,
+            max_batch_size=max_batch_size,
+            initial_Fin=fout,
+        )
+
+    def get_config(self):
+        config = super().get_config()
+        config.update(
+            {
+                "nside": self.nside,
+                "npix": self.npix,
+                "fin": self.fin,
+                "fout": self.fout,
+                "activation": self.activation_fn,
+                "K": self.K,
+                "max_batch_size": self.max_batch_size,
+                "upsample": self.upsample,
+                "use_bn": self.use_bn,
+                "use_bias": self.use_bias,
+                "dropout_rate": self.dropout_rate,
+            }
+        )
+        return config
+
+    def call(self, inputs, skip, training=False):
+        x = self.body(inputs, training=training)
+        # if self.match is not None:
+        #     skip_proj = self.match(skip, training=training)
+        # else:
+        skip_proj = self.match(skip, training=training)
+        return x + skip_proj
+
+
+@tf.keras.saving.register_keras_serializable()
+class ResidualHealpyUNet:
+    def __init__(
+        self, input_shape, activation="relu", max_batch_size=32, dropout_rate=0.1
+    ):
+        self.input_shape = input_shape
+        self.activation = LeakyReLU(0.3)  # activation
+        self.max_batch_size = max_batch_size
+        self.npix = input_shape[1]
+        self.nside = hp.npix2nside(self.npix)
+        self.npol = input_shape[2]
+        self.dropout_rate = dropout_rate
+
+    def get_config(self):
+        return {
+            "input_shape": self.input_shape,
+            # "activation": self.activation,
+            "max_batch_size": self.max_batch_size,
+            "dropout_rate": self.dropout_rate,
+        }
+
+    def get_model(self):
+        depth = int(math.log2(self.nside)) - 1
+        base_channels = [self.npol] + [2 ** (i + 4) for i in range(depth)]
+        level_npixels = [self.npix // (4**i) for i in range(depth + 1)]
+        level_nsides = [hp.npix2nside(npix) for npix in level_npixels]
+        Ks = [3 + (2 ** (i // 2)) for i in range(depth + 1)]
+
+        inputs = tf.keras.Input(shape=self.input_shape[1:])
+        x = inputs
+
+        skips = []
+        for i in range(depth):
+            block = EncoderBlock(
+                level_nsides[i],
+                level_npixels[i],
+                fin=base_channels[i],
+                fout=base_channels[i + 1],
+                activation=self.activation,
+                max_batch_size=self.max_batch_size,
+                K=Ks[i],
+                dropout_rate=self.dropout_rate,
+                # pool=i > 0,
+            )
+            x, skip = block(x)
+            skips.append(skip)
+
+        bottleneck = HealpyGCNN(
+            nside=level_nsides[depth],
+            indices=np.arange(level_npixels[depth]),
+            layers=[
+                HealpyChebyshev(
+                    K=Ks[-1], Fout=base_channels[-1], activation=self.activation
+                ),
+                HealpyChebyshev(
+                    K=Ks[-1], Fout=base_channels[-1], activation=self.activation
+                ),
+            ],
+            n_neighbors=8,
+            max_batch_size=self.max_batch_size,
+            initial_Fin=base_channels[-1],
+            name="bottleneck",
+        )
+        x = bottleneck(x)
+
+        for i in reversed(range(1, depth + 1)):
+            block = DecoderBlock(
+                level_nsides[i],
+                level_npixels[i],
+                fin=base_channels[i],
+                fout=base_channels[i],
+                activation=self.activation,
+                max_batch_size=self.max_batch_size,
+                K=Ks[i],
+                dropout_rate=self.dropout_rate,
+            )
+            x = block(x, skips[i - 1])
+
+        output_head = HealpyGCNN(
+            nside=self.nside,
+            indices=np.arange(self.npix),
+            layers=[
+                HealpyPseudoConv_Transpose(1, base_channels[1]),
+                HealpyChebyshev(
+                    K=3,
+                    Fout=base_channels[1],
+                    activation=self.activation,
+                    use_bn=True,
+                    use_bias=True,
+                ),
+                HealpyChebyshev(
+                    K=1,
+                    Fout=base_channels[0],
+                    activation=None,
+                    use_bn=False,
+                    use_bias=False,
+                ),
+            ],
+            n_neighbors=8,
+            max_batch_size=self.max_batch_size,
+            initial_Fin=self.npol,
+            name="output",
+        )
+        outputs = output_head(x)
+        return tf.keras.Model(inputs, outputs)
+
+
 def train_u_net(
     core,
     splits,
@@ -227,13 +536,17 @@ def train_u_net(
     with strategy.scope():
         learning_rate = ExponentialDecay(initial_LR, decay_steps, 0.96, staircase=True)
 
-        u_net = get_u_net_model((None, core.npix, core.npols), core.nside)
+        u_net = ResidualHealpyUNet(
+            (None, core.npix, core.npols),
+            activation="gelu",
+            max_batch_size=batch_size,
+        ).get_model()
 
         u_net.compile(
             optimizer=AdamW(
                 learning_rate, weight_decay=5e-6, amsgrad=True, use_ema=True
             ),
-            loss=PowerSpectrumLoss(core.lmax),
+            loss=RMSELoss(),
             metrics=rmse_metrics(shapes) + ["mse", "mae"],
         )
 
@@ -257,27 +570,51 @@ def train_u_net(
 
     u_net.save(unet_keras_file)
 
-    y_test = y_test.reshape(-1, *y_test.shape[-2:])
-    pred = u_net.predict(test)
+    test_phi = np.concatenate([y for _, y in test])[0, :, 0]
+    pred_phi = u_net.predict(test, verbose=0)[0, :, 0]
 
-    for map, name in [(y_test[0, :, 0], "True"), (pred[0, :, 0], "Predicted")]:
-        r_map = hp.reorder(map, n2r=True)
-        plt.figure()
-        hp.mollview(r_map, title=f"{name} phi map", unit="phi", cmap="viridis")
+    test_phi_ring = hp.reorder(test_phi, n2r=True)
+    pred_phi_ring = hp.reorder(pred_phi, n2r=True)
+
+    for map, name in [(test_phi_ring, "True"), (pred_phi_ring, "Predicted")]:
+        hp.mollview(
+            hp.remove_dipole(map),
+            title=f"{name} phi map",
+            unit="phi",
+            cmap="viridis",
+            norm="hist",
+            remove_dip=True,
+        )
         plt.savefig(f"{plot_prefix}-{name}-phi-map.png")
 
-    ells = np.arange(core.lmax + 1)
-    ell_scale = ells * (ells + 1) / (2 * np.pi)
-    plt.figure()
-    for map, name in [(y_test[0, :, 0], "True"), (pred[0, :, 0], "Predicted")]:
-        r_map = hp.reorder(map, n2r=True)
-        cl = hp.anafast(r_map, lmax=core.lmax, pol=False, use_pixel_weights=True)
-        plt.loglog(cl * ell_scale, label=name)
+    hp.mollview(test_phi - pred_phi, title="Residual (Nest)", cmap="RdBu_r")
+    plt.savefig(f"{plot_prefix}-residual-nest-phi-map.png")
 
+    hp.mollview(test_phi_ring - pred_phi_ring, title="Residual (Ring)", cmap="RdBu_r")
+    plt.savefig(f"{plot_prefix}-residual-ring-phi-map.png")
+
+    plt.figure()
+    for map, name in [(test_phi_ring, "True"), (pred_phi_ring, "Predicted")]:
+        cl = hp.anafast(
+            hp.remove_dipole(map), lmax=core.lmax, pol=False, use_pixel_weights=True
+        )
+        plt.loglog(cl, label=name)
     plt.legend()
     plt.xlabel(r"$\ell$")
-    plt.ylabel(r"$(\ell * (\ell + 1) / (2 \pi) C_\ell^{\phi\phi})$")
-    plt.savefig(f"{plot_prefix}-phi-cl.png")
+    plt.ylabel(r"$C_\ell^{\phi\phi}$")
+    plt.savefig(f"{plot_prefix}-phi-cl-ring.png")
+
+    plt.figure()
+    for map, name in [(test_phi, "True (nest)"), (pred_phi, "Predicted (nest)")]:
+        cl = hp.anafast(
+            hp.remove_dipole(map), lmax=core.lmax, pol=False, use_pixel_weights=True
+        )
+        plt.loglog(cl, label=name)
+    plt.legend()
+    plt.xlabel(r"$\ell$")
+    plt.ylabel(r"$C_\ell^{\phi\phi}$")
+    plt.savefig(f"{plot_prefix}-phi-cl-nest.png")
+
     return u_net
 
 
@@ -432,7 +769,7 @@ def run():
     date_time = tf.timestamp().numpy().astype(int)
     # freeze to one run to reuse the cache
     # date_time = "1762263789"  # nside 256, no rotations
-    run_name = f"notebook-{date_time}"
+    run_name = f"trainer-{date_time}"
     logger.info(f"Run name: {run_name}")
 
     save_dir = f"{core.dirs['model']}/{core.name}"
@@ -569,12 +906,12 @@ def run():
             delensed_enmap = lensing.delens_map(lensed_enmap, phi_enmap)
 
             dm = reproject.map2healpix(delensed_enmap, nside)
-            delensed_maps[i] = hp.reorder(dm, r2n=True)
+            delensed_maps[i] = hp.remove_dipole(dm, copy=False)
 
         return delensed_maps
 
     def _map_fn(pair, phi):
-        lensed, truth = pair
+        lensed, fnl = pair
         delensed = tf.py_function(
             func=_delens_py,
             inp=[lensed, phi],
@@ -582,12 +919,10 @@ def run():
         )
 
         delensed.set_shape([None, core.npix, core.npols])
-        truth.set_shape([None, 1])
-        return delensed, truth
+        fnl.set_shape([None, len(shapes)])
+        return delensed, fnl
 
     phi_preds = u_net.predict(test_3, verbose=0)
-    # phi_preds = np.array([hp.reorder(x, r2n=True), for x in phi_preds])
-
     phi_ds = tf.data.Dataset.from_tensor_slices(phi_preds).batch(batch_size)
     delensed_ds = (
         tf.data.Dataset.zip((test_3, phi_ds))
@@ -597,17 +932,25 @@ def run():
     )
 
     for map, _ in delensed_ds.take(1):
-        plt.figure()
         hp.mollview(
-            hp.reorder(map[0, :, 0].numpy(), n2r=True),
+            map[0, :, 0].numpy(),
             title="Delensed map",
             unit="T",
             cmap="viridis",
         )
-        plt.savefig(f"{plot_prefix}-delensed-map.png")
+        plt.savefig(f"{plot_prefix}-final-delensed-map.png")
+
+        plt.figure()
+        cl = hp.anafast(m, lmax=core.lmax, pol=False, use_pixel_weights=True)
+        plt.loglog(cl, label="Delensed")
+        plt.legend()
+        plt.xlabel(r"$\ell$")
+        plt.ylabel(r"$C_\ell$")
+        plt.savefig(f"{plot_prefix}-final-delensed-cl.png")
 
     fnl_preds = fnl_model.predict(delensed_ds, verbose=2)
     fnl_truth = np.concatenate([y for _, y in delensed_ds])
+
     fnl_truth = fnl_truth.ravel()
     fnl_preds = fnl_preds.ravel()
 
@@ -648,7 +991,7 @@ def run():
 
     plt.tight_layout()
     plt.savefig(
-        f"{plot_prefix}-fnl-prediction-delensed-results.png",
+        f"{plot_prefix}-final-fnl-prediction-delensed-results.png",
     )
 
     plt.figure(figsize=(6, 4))
@@ -657,7 +1000,7 @@ def run():
     plt.ylabel("Count")
     plt.title(f"Distribution of truth values")
     plt.tight_layout()
-    plt.savefig(f"{plot_prefix}-fnl-truth-distribution.png")
+    plt.savefig(f"{plot_prefix}-final-fnl-truth-distribution.png")
 
 
 if __name__ == "__main__":

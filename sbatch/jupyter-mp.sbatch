@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=jupyter
 #SBATCH --output=.jupyter.out
-#SBATCH --partition=batch
+#SBATCH --partition=short
 #SBATCH --ntasks=1
-#SBATCH --mem=32G
-#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --cpus-per-task=16
 #SBATCH --gpus-per-task=1
 #SBATCH --time=04:00:00
 #SBATCH --account=jrmeyers_ml_cmb_0001

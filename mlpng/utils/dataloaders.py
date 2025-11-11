@@ -520,7 +520,6 @@ class PhiMapDataset(UnlensMapDataset):
         nside = (lmax - 1) // 3
         npix = hp.nside2npix(nside)
         npix = hp.nside2npix(128)  # HAX
-        print("npix", npix, "nside", nside, "lmax", lmax)
 
         y_shape = kwargs.pop("y_shape", (None, npix, core.npols))
         y_dtype = kwargs.pop("y_dtype", tf.float32)
