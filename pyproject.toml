@@ -54,6 +54,7 @@ gpu = [
     "tensorboard",
     "PyGSP @ git+https://github.com/jafluri/pygsp.git@sphere-graphs",
     "deepsphere @ git+https://github.com/JBrandonS/deepsphere-cosmo-tf2.git@master",
+    "optuna",
 ]
 
 [project.urls]
