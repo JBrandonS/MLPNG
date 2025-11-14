@@ -3,6 +3,43 @@ Optuna-based hyperparameter tuning script for U-Net model training.
 
 This script uses Optuna to optimize hyperparameters for the U-Net model
 that performs phi map reconstruction from lensed CMB maps.
+
+Usage:
+    Basic usage with default settings:
+        python -m mlpng.optuna_trainer
+    
+    Custom number of trials and epochs:
+        python -m mlpng.optuna_trainer --n-trials 100 --max-epochs 50
+    
+    With persistent storage (SQLite):
+        python -m mlpng.optuna_trainer --storage sqlite:///optuna_study.db --study-name my_study
+
+Hyperparameters optimized:
+    - batch_size: Training batch size [16, 32, 64, 128]
+    - learning_rate: Initial learning rate [1e-5, 1e-2] (log scale)
+    - dropout_rate: Dropout rate [0.0, 0.3]
+    - k: Chebyshev polynomial order [1, 3, 5, 7]
+    - activation: Activation function ['relu', 'gelu', 'elu']
+    - use_bn: Whether to use batch normalization [True, False]
+    - weight_decay: AdamW weight decay [1e-7, 1e-4] (log scale)
+    - base_channels_multiplier: Channel multiplier [0.5, 2.0]
+    - use_amsgrad: Whether to use AMSGrad variant [True, False]
+    - use_ema: Whether to use exponential moving average [True, False]
+
+Output:
+    - Study results CSV: {model_dir}/optuna_study_{study_name}.csv
+    - Visualization plots: {plot_dir}/optuna/*.html
+        - optimization_history: Shows objective value over trials
+        - param_importances: Shows which parameters matter most
+        - parallel_coordinate: Shows parameter relationships
+
+Example:
+    >>> from mlpng import Core
+    >>> from mlpng.optuna_trainer import run_optuna_study
+    >>> core = Core()
+    >>> study = run_optuna_study(core, n_trials=50, max_epochs=100)
+    >>> print(f"Best params: {study.best_params}")
+    >>> print(f"Best value: {study.best_value}")
 """
 
 import os
