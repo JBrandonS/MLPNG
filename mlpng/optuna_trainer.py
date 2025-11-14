@@ -1,8 +1,9 @@
 """
 Optuna-based hyperparameter tuning script for U-Net model training.
 
-This script uses Optuna to optimize hyperparameters for the U-Net model
-that performs phi map reconstruction from lensed CMB maps.
+This script uses Optuna with Bayesian optimization (TPE sampler) to optimize 
+hyperparameters for the U-Net model that performs phi map reconstruction from 
+lensed CMB maps. It focuses only on U-Net training without fnl or final models.
 
 Usage:
     Basic usage with default settings:
@@ -14,17 +15,23 @@ Usage:
     With persistent storage (SQLite):
         python -m mlpng.optuna_trainer --storage sqlite:///optuna_study.db --study-name my_study
 
-Hyperparameters optimized:
-    - batch_size: Training batch size [16, 32, 64, 128]
+Hyperparameters optimized (smaller parameter ranges preferred):
+    - batch_size: Training batch size [16, 32, 64]
     - learning_rate: Initial learning rate [1e-5, 1e-2] (log scale)
-    - dropout_rate: Dropout rate [0.0, 0.3]
-    - k: Chebyshev polynomial order [1, 3, 5, 7]
-    - activation: Activation function ['relu', 'gelu', 'elu']
+    - dropout_rate: Dropout rate [0.0, 0.2]
+    - k: Chebyshev polynomial order [1, 3, 5]
+    - activation: Activation function ['relu', 'gelu']
     - use_bn: Whether to use batch normalization [True, False]
     - weight_decay: AdamW weight decay [1e-7, 1e-4] (log scale)
-    - base_channels_multiplier: Channel multiplier [0.5, 2.0]
+    - base_channels_multiplier: Channel multiplier [0.5, 1.0]
     - use_amsgrad: Whether to use AMSGrad variant [True, False]
     - use_ema: Whether to use exponential moving average [True, False]
+
+Configuration:
+    - Data fraction: 0.01 (1% of data for faster optimization)
+    - Bayesian optimization: TPE (Tree-structured Parzen Estimator) sampler
+    - Dataset caching: Enabled for improved performance
+    - Pruning: MedianPruner for early stopping unpromising trials
 
 Output:
     - Study results CSV: {model_dir}/optuna_study_{study_name}.csv
@@ -241,15 +248,15 @@ def objective(trial, core, splits, duplicates, cache_file, max_epochs, strategy,
     Returns:
         float: Validation loss to minimize
     """
-    # Suggest hyperparameters
-    batch_size = trial.suggest_categorical("batch_size", [16, 32, 64, 128])
+    # Suggest hyperparameters - prefer smaller sizes
+    batch_size = trial.suggest_categorical("batch_size", [16, 32, 64])
     initial_lr = trial.suggest_float("learning_rate", 1e-5, 1e-2, log=True)
-    dropout_rate = trial.suggest_float("dropout_rate", 0.0, 0.3)
-    k = trial.suggest_int("k", 1, 7, step=2)  # Chebyshev polynomial order
-    activation = trial.suggest_categorical("activation", ["relu", "gelu", "elu"])
+    dropout_rate = trial.suggest_float("dropout_rate", 0.0, 0.2)
+    k = trial.suggest_int("k", 1, 5, step=2)  # Chebyshev polynomial order
+    activation = trial.suggest_categorical("activation", ["relu", "gelu"])
     use_bn = trial.suggest_categorical("use_bn", [True, False])
     weight_decay = trial.suggest_float("weight_decay", 1e-7, 1e-4, log=True)
-    base_channels_multiplier = trial.suggest_float("base_channels_multiplier", 0.5, 2.0)
+    base_channels_multiplier = trial.suggest_float("base_channels_multiplier", 0.5, 1.0)
     use_amsgrad = trial.suggest_categorical("use_amsgrad", [True, False])
     use_ema = trial.suggest_categorical("use_ema", [True, False])
 
@@ -365,8 +372,8 @@ def run_optuna_study(
     Returns:
         optuna.Study: Completed study object
     """
-    # Configuration
-    data_fraction = 0.1
+    # Configuration - use 0.01 data fraction as requested
+    data_fraction = 0.01
     splits = np.array([0.8, 0.1, 0.1]) * data_fraction
     duplicates = [25, 10, 2]
 
@@ -381,13 +388,15 @@ def run_optuna_study(
     logger.info(f"Starting Optuna study: {study_name}")
     logger.info(f"Number of trials: {n_trials}")
     logger.info(f"Max epochs per trial: {max_epochs}")
+    logger.info(f"Data fraction: {data_fraction}")
 
-    # Create or load study
+    # Create or load study with Bayesian optimization (TPE sampler)
     study = optuna.create_study(
         study_name=study_name,
         storage=storage,
         direction="minimize",
         load_if_exists=True,
+        sampler=optuna.samplers.TPESampler(n_startup_trials=10),
         pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=10),
     )
 
