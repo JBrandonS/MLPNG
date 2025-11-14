@@ -204,7 +204,7 @@ class EncoderBlock(tf.keras.layers.Layer):
         max_batch_size,
         K,
         use_bn=True,
-        use_bias=True,
+        use_bias=False,
         pool=True,
         dropout_rate=0.1,
         **kwargs,
@@ -222,26 +222,34 @@ class EncoderBlock(tf.keras.layers.Layer):
         self.use_bias = use_bias
         self.dropout_rate = dropout_rate
         self.pool = pool
-
         indices = np.arange(npix)
 
-        enc_layers = []
-
-        enc_layers += [
+        enc_layers = [
             HealpyChebyshev(
-                K=K, Fout=fout, activation=activation, use_bn=use_bn, use_bias=use_bias
+                K=K,
+                Fout=fout,
+                activation=activation,
+                use_bn=use_bn,
+                # use_bias=use_bias,
             ),
             HealpyChebyshev(
-                K=K, Fout=fout, activation=activation, use_bn=use_bn, use_bias=use_bias
+                K=1,
+                Fout=fout,
+                activation=activation,
+                # use_bn=use_bn,
+                # use_bias=use_bias,
             ),
+            # HealpyChebyshev(
+            #     K=1,
+            #     Fout=fout,
+            #     activation=activation,
+            #     # use_bn=use_bn,
+            #     # use_bias=use_bias,
+            # ),
         ]
         if dropout_rate > 0.0:
             enc_layers.append(Dropout(dropout_rate))
 
-        if pool:
-            enc_layers.append(HealpyPool(1, "AVG"))
-
-        # FIXME: probably want to get the skip connections before the pooling layer
         self.body = HealpyGCNN(
             nside=nside,
             indices=indices,
@@ -251,12 +259,12 @@ class EncoderBlock(tf.keras.layers.Layer):
             initial_Fin=fin,
         )
 
-        self.proj = None
-        if fin != fout:
-            self.proj = HealpyGCNN(
+        self.pooler = None
+        if pool:
+            self.pooler = HealpyGCNN(
                 nside=nside,
                 indices=indices,
-                layers=[HealpyChebyshev(K=1, Fout=fout, activation=None)],
+                layers=[HealpyPool(1, "MAX")],
                 n_neighbors=8,
                 max_batch_size=max_batch_size,
                 initial_Fin=fin,
@@ -282,8 +290,9 @@ class EncoderBlock(tf.keras.layers.Layer):
         return config
 
     def call(self, inputs, training=False):
-        x = self.body(inputs, training=training)
-        skip = inputs if self.proj is None else self.proj(inputs, training=training)
+        x = skip = self.body(inputs, training=training)
+        if self.pool:
+            x = self.pooler(x, training=training)
         return x, skip
 
 
@@ -300,7 +309,7 @@ class DecoderBlock(tf.keras.layers.Layer):
         max_batch_size,
         upsample=True,
         use_bn=True,
-        use_bias=True,
+        use_bias=False,
         dropout_rate=0.1,
         **kwargs,
     ):
@@ -323,7 +332,6 @@ class DecoderBlock(tf.keras.layers.Layer):
         dec_layers = []
         if upsample:
             dec_layers.append(HealpyPseudoConv_Transpose(1, fout))
-
         dec_layers.extend(
             [
                 HealpyChebyshev(
@@ -331,18 +339,24 @@ class DecoderBlock(tf.keras.layers.Layer):
                     Fout=fout,
                     activation=activation,
                     use_bn=use_bn,
-                    use_bias=use_bias,
+                    # use_bias=use_bias,
                 ),
                 HealpyChebyshev(
-                    K=K,
+                    K=1,
                     Fout=fout,
                     activation=activation,
-                    use_bn=use_bn,
-                    use_bias=use_bias,
+                    # use_bn=use_bn,
+                    # use_bias=use_bias,
                 ),
+                # HealpyChebyshev(
+                #     K=1,
+                #     Fout=fout,
+                #     activation=activation,
+                #     # use_bn=use_bn,
+                #     # use_bias=use_bias,
+                # ),
             ]
         )
-
         if dropout_rate > 0.0:
             dec_layers.append(Dropout(dropout_rate))
 
@@ -353,17 +367,6 @@ class DecoderBlock(tf.keras.layers.Layer):
             n_neighbors=8,
             max_batch_size=max_batch_size,
             initial_Fin=fin,
-        )
-
-        # FIXME: Only do this if needed to match shapes with skip!
-        # probably need to change how the skip is gotten so that we get it before downsampling
-        self.match = HealpyGCNN(
-            nside=nside,
-            indices=indices,
-            layers=[HealpyChebyshev(K=1, Fout=fout, activation=None)],
-            n_neighbors=8,
-            max_batch_size=max_batch_size,
-            initial_Fin=fout,
         )
 
     def get_config(self):
@@ -387,43 +390,55 @@ class DecoderBlock(tf.keras.layers.Layer):
 
     def call(self, inputs, skip, training=False):
         x = self.body(inputs, training=training)
-        # if self.match is not None:
-        #     skip_proj = self.match(skip, training=training)
-        # else:
-        skip_proj = self.match(skip, training=training)
-        return x + skip_proj
+        if skip is not None:
+            x = x + skip
+        return x
 
 
 @tf.keras.saving.register_keras_serializable()
 class ResidualHealpyUNet:
     def __init__(
-        self, input_shape, activation="relu", max_batch_size=32, dropout_rate=0.1
+        self,
+        input_shape,
+        activation="relu",
+        max_batch_size=32,
+        dropout_rate=0.1,
+        use_bn=True,
+        use_bias=True,
     ):
         self.input_shape = input_shape
-        self.activation = LeakyReLU(0.3)  # activation
+        self.activation = activation
         self.max_batch_size = max_batch_size
         self.npix = input_shape[1]
         self.nside = hp.npix2nside(self.npix)
         self.npol = input_shape[2]
         self.dropout_rate = dropout_rate
+        self.use_bn = use_bn
+        self.use_bias = use_bias
 
     def get_config(self):
         return {
             "input_shape": self.input_shape,
-            # "activation": self.activation,
+            "activation": self.activation,
             "max_batch_size": self.max_batch_size,
             "dropout_rate": self.dropout_rate,
+            "use_bn": self.use_bn,
+            "use_bias": self.use_bias,
         }
 
     def get_model(self):
-        depth = int(math.log2(self.nside)) - 1
+        depth = int(math.log2(self.nside))  # - 1
+
         base_channels = [self.npol] + [2 ** (i + 4) for i in range(depth)]
         level_npixels = [self.npix // (4**i) for i in range(depth + 1)]
         level_nsides = [hp.npix2nside(npix) for npix in level_npixels]
-        Ks = [3 + (2 ** (i // 2)) for i in range(depth + 1)]
+        Ks = [1 + (2 * (1 + i // 3)) for i in range(depth + 1)]
+        # Ks = [3 for _ in range(depth + 1)]
+        logger.debug(f"Using Ks: {Ks}")
 
         inputs = tf.keras.Input(shape=self.input_shape[1:])
         x = inputs
+        # x = layers.BatchNormalization()(x)
 
         skips = []
         for i in range(depth):
@@ -436,7 +451,8 @@ class ResidualHealpyUNet:
                 max_batch_size=self.max_batch_size,
                 K=Ks[i],
                 dropout_rate=self.dropout_rate,
-                # pool=i > 0,
+                use_bias=self.use_bias,
+                use_bn=self.use_bn,
             )
             x, skip = block(x)
             skips.append(skip)
@@ -446,10 +462,18 @@ class ResidualHealpyUNet:
             indices=np.arange(level_npixels[depth]),
             layers=[
                 HealpyChebyshev(
-                    K=Ks[-1], Fout=base_channels[-1], activation=self.activation
+                    K=Ks[-1],
+                    Fout=base_channels[-1],
+                    activation=self.activation,
+                    use_bias=self.use_bias,
+                    use_bn=self.use_bn,
                 ),
                 HealpyChebyshev(
-                    K=Ks[-1], Fout=base_channels[-1], activation=self.activation
+                    K=Ks[-1],
+                    Fout=base_channels[-1],
+                    activation=self.activation,
+                    use_bias=self.use_bias,
+                    use_bn=self.use_bn,
                 ),
             ],
             n_neighbors=8,
@@ -469,27 +493,37 @@ class ResidualHealpyUNet:
                 max_batch_size=self.max_batch_size,
                 K=Ks[i],
                 dropout_rate=self.dropout_rate,
+                use_bias=self.use_bias,
+                use_bn=self.use_bn,
             )
             x = block(x, skips[i - 1])
 
+        # final block to account for upscaling to phi
+        block = DecoderBlock(
+            level_nsides[0],
+            level_npixels[0],
+            fin=base_channels[0],
+            fout=base_channels[0],
+            activation=None,
+            max_batch_size=self.max_batch_size,
+            K=Ks[0],
+            dropout_rate=0.0,
+            use_bias=self.use_bias,
+            use_bn=self.use_bn,
+        )
+        x = block(x, None)
+
+        # output
         output_head = HealpyGCNN(
             nside=self.nside,
             indices=np.arange(self.npix),
             layers=[
-                HealpyPseudoConv_Transpose(1, base_channels[1]),
-                HealpyChebyshev(
-                    K=3,
-                    Fout=base_channels[1],
-                    activation=self.activation,
-                    use_bn=True,
-                    use_bias=True,
-                ),
                 HealpyChebyshev(
                     K=1,
                     Fout=base_channels[0],
                     activation=None,
                     use_bn=False,
-                    use_bias=False,
+                    use_bias=True,
                 ),
             ],
             n_neighbors=8,
@@ -585,7 +619,7 @@ def train_u_net(
             norm="hist",
             remove_dip=True,
         )
-        plt.savefig(f"{plot_prefix}-{name}-phi-map.png")
+        plt.savefig(f"{plot_prefix}-{name.lower()}-phi-map.png")
 
     hp.mollview(test_phi - pred_phi, title="Residual (Nest)", cmap="RdBu_r")
     plt.savefig(f"{plot_prefix}-residual-nest-phi-map.png")
@@ -753,7 +787,7 @@ def run():
     max_epochs = 500
     initial_LR = 1e-3
 
-    data_fraction = 1.0
+    data_fraction = 0.1
     unet_split = np.array([0.8, 0.1, 0.1]) * data_fraction
     unet_duplicates = [25, 10, 2]
 
@@ -780,21 +814,12 @@ def run():
     os.makedirs(os.path.dirname(plot_prefix), exist_ok=True)
 
     # setups where we will
-    unet_keras_file = f"{save_dir}/unet-{run_info}-2.keras"
-    fnl_keras_file = f"{save_dir}/fnl-{run_info}-2.keras"
-    final_keras_file = f"{save_dir}/final-{run_info}-2.keras"
-    full_keras_file = f"{save_dir}/full-{run_info}-2.keras"
+    unet_keras_file = f"{save_dir}/unet-{run_info}.keras"
+    fnl_keras_file = f"{save_dir}/fnl-{run_info}.keras"
 
     unet_cache = f"{core.name}/unet-{core.name}"
     fnl_cache = f"{core.name}/fnl-{core.name}"
-    final_cache = f"{core.name}/final-{core.name}"
-
-    for file in [
-        unet_keras_file,
-        fnl_keras_file,
-        final_keras_file,
-        full_keras_file,
-    ]:
+    for file in [unet_keras_file, fnl_keras_file]:
         logger.debug(f"file {file} exists: {os.path.exists(file)}")
 
     callbacks = [
@@ -865,14 +890,13 @@ def run():
         fnl_model = tf.keras.models.load_model(fnl_keras_file)
 
     ds_3 = MapDataset.fromCore(core, lensed=True)
-    train_3, val_3, test_3 = ds_3.split(
+    _, _, test_3 = ds_3.split(
         train_size=final_split[0],
         val_size=final_split[1],
         test_size=final_split[2],
         to_tf=True,
         batch_size=batch_size,
         duplicates=final_duplicates,
-        cache_file=final_cache,
         gen_batch_size=core.slurm.n_cpus,
     )
 
@@ -919,7 +943,7 @@ def run():
         )
 
         delensed.set_shape([None, core.npix, core.npols])
-        fnl.set_shape([None, len(shapes)])
+        fnl.set_shape([None, len(core.shapes)])
         return delensed, fnl
 
     phi_preds = u_net.predict(test_3, verbose=0)

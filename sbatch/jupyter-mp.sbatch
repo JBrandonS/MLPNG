@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=jupyter
 #SBATCH --output=.jupyter.out
-#SBATCH --partition=short
+#SBATCH --partition=batch
 #SBATCH --ntasks=1
 #SBATCH --mem=64G
 #SBATCH --cpus-per-task=16
 #SBATCH --gpus-per-task=1
-#SBATCH --time=04:00:00
+#SBATCH --time=12:00:00
 #SBATCH --account=jrmeyers_ml_cmb_0001
 
 conda_env="ds25"
