@@ -15,9 +15,9 @@ SBATCH_FILE="sbatch/trainer.sbatch"
 # The settings files to use for the sims. These should be found in settings/*.json
 SETTINGS=(
     # "n32"
-    "n64"
+    # "n64"
     # "n128"
-    # "n256"
+    "n256"
 )
 
 # CLI args to change the command ran, helps prevent needing to change the settings file for small / test changes
@@ -29,13 +29,14 @@ ARGS=(
     "--phi_scale" "1"
     "--shapes" "local"
     "--fnl_range" "-1000" "1000"
-    "--tensorboard"
+    # "--tensorboard"
     # "--wandb"
 )
 
 # The AI models to train on the data, see scripts/trainer.py and scripts/models/ for more info
 # these models should be registered with @register_model
 MODELS=(
+    # "optuna_trainer"
     "trainer"
 )
 

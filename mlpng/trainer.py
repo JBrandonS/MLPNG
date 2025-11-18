@@ -34,125 +34,6 @@ tf.get_logger().setLevel(logging.ERROR)
 logger = setup_logging("mlpng.trainer", level=logging.DEBUG)
 
 
-def get_u_net_model(
-    input_shape, max_batch_size=32, activation=LeakyReLU(0.3), use_double=False
-):
-    nside = hp.npix2nside(input_shape[1])
-    n_layers = math.floor(math.log(nside, 2))
-
-    layers = []
-
-    # Encoder path: progressively downsample and increase features
-    encoder_channels = [2 ** (i + 5) for i in range(n_layers - 2)]
-    n_encoder_layers = min(n_layers - 2, len(encoder_channels))
-
-    for i in range(n_encoder_layers):
-        fout = encoder_channels[i]
-
-        # Convolutional blocks
-        layers.append(
-            HealpyChebyshev(
-                K=3,
-                Fout=fout,
-                use_bn=True,
-                use_bias=True,
-                activation=activation,
-            )
-        )
-        if use_double:
-            layers.append(
-                HealpyChebyshev(
-                    K=3,
-                    Fout=fout,
-                    use_bn=True,
-                    use_bias=True,
-                    activation=activation,
-                )
-            )
-        layers.append(Dropout(0.1))
-
-        # Downsample
-        layers.append(HealpyPool(1, "AVG"))
-
-    # Bottleneck
-    bottleneck_channels = encoder_channels[-1]
-    layers.append(
-        HealpyChebyshev(
-            K=5,  # Larger receptive field at bottleneck
-            Fout=bottleneck_channels,
-            use_bn=True,
-            use_bias=True,
-            activation=activation,
-        )
-    )
-    if use_double:
-        layers.append(
-            HealpyChebyshev(
-                K=5,
-                Fout=bottleneck_channels,
-                use_bn=True,
-                use_bias=True,
-                activation=activation,
-            )
-        )
-    layers.append(Dropout(0.1))
-
-    # Decoder path: upsample and decrease features
-    decoder_channels = encoder_channels[::-1][1:]  # Reverse and skip first
-
-    for i, fout in enumerate(decoder_channels):
-        # Upsample
-        layers.append(HealpyPseudoConv_Transpose(1, fout))
-
-        # Convolutional blocks
-        layers.append(
-            HealpyChebyshev(
-                K=3,
-                Fout=fout,
-                use_bn=True,
-                use_bias=True,
-                activation=activation,
-            )
-        )
-        if use_double:
-            layers.append(
-                HealpyChebyshev(
-                    K=3,
-                    Fout=fout,
-                    use_bn=True,
-                    use_bias=True,
-                    activation=activation,
-                )
-            )
-        layers.append(Dropout(0.1))
-
-    # Final upsampling to original resolution
-    layers.append(HealpyPseudoConv_Transpose(1, input_shape[-1]))
-
-    # Final output layer - map to original number of channels
-    layers.append(
-        HealpyChebyshev(
-            K=3,
-            Fout=input_shape[-1],  # Same as input channels
-            use_bn=False,
-            # use_bias=True,
-            activation=None,  # Linear output for reconstruction
-        )
-    )
-
-    model = HealpyGCNN(
-        nside,
-        indices=np.arange(input_shape[1]),
-        layers=layers,
-        n_neighbors=8,
-        max_batch_size=max_batch_size,
-        initial_Fin=input_shape[-1],
-    )
-
-    model.build(input_shape)
-    return model
-
-
 def get_fnl_model(input_shape, max_batch_size=32, n_out=1):
     """This is the jorik model from the paper, add links to the paper and code if available."""
     nside = hp.npix2nside(input_shape[1])
@@ -230,22 +111,15 @@ class EncoderBlock(tf.keras.layers.Layer):
                 Fout=fout,
                 activation=activation,
                 use_bn=use_bn,
-                # use_bias=use_bias,
+                use_bias=use_bias,
             ),
             HealpyChebyshev(
-                K=1,
+                K=K,
                 Fout=fout,
                 activation=activation,
-                # use_bn=use_bn,
-                # use_bias=use_bias,
+                use_bn=use_bn,
+                use_bias=use_bias,
             ),
-            # HealpyChebyshev(
-            #     K=1,
-            #     Fout=fout,
-            #     activation=activation,
-            #     # use_bn=use_bn,
-            #     # use_bias=use_bias,
-            # ),
         ]
         if dropout_rate > 0.0:
             enc_layers.append(Dropout(dropout_rate))
@@ -264,7 +138,7 @@ class EncoderBlock(tf.keras.layers.Layer):
             self.pooler = HealpyGCNN(
                 nside=nside,
                 indices=indices,
-                layers=[HealpyPool(1, "MAX")],
+                layers=[HealpyPool(1, "AVG")],
                 n_neighbors=8,
                 max_batch_size=max_batch_size,
                 initial_Fin=fin,
@@ -339,22 +213,15 @@ class DecoderBlock(tf.keras.layers.Layer):
                     Fout=fout,
                     activation=activation,
                     use_bn=use_bn,
-                    # use_bias=use_bias,
+                    use_bias=use_bias,
                 ),
                 HealpyChebyshev(
-                    K=1,
+                    K=K,
                     Fout=fout,
                     activation=activation,
-                    # use_bn=use_bn,
-                    # use_bias=use_bias,
+                    use_bn=use_bn,
+                    use_bias=use_bias,
                 ),
-                # HealpyChebyshev(
-                #     K=1,
-                #     Fout=fout,
-                #     activation=activation,
-                #     # use_bn=use_bn,
-                #     # use_bias=use_bias,
-                # ),
             ]
         )
         if dropout_rate > 0.0:
@@ -400,7 +267,7 @@ class ResidualHealpyUNet:
     def __init__(
         self,
         input_shape,
-        activation="relu",
+        activation="sigmoid",
         max_batch_size=32,
         dropout_rate=0.1,
         use_bn=True,
@@ -429,10 +296,10 @@ class ResidualHealpyUNet:
     def get_model(self):
         depth = int(math.log2(self.nside))  # - 1
 
-        base_channels = [self.npol] + [2 ** (i + 4) for i in range(depth)]
+        base_channels = [self.npol] + [2 ** (i + 3) for i in range(depth)]
         level_npixels = [self.npix // (4**i) for i in range(depth + 1)]
         level_nsides = [hp.npix2nside(npix) for npix in level_npixels]
-        Ks = [1 + (2 * (1 + i // 3)) for i in range(depth + 1)]
+        Ks = [1 + (2 * (i // 2)) for i in range(depth + 1)]
         # Ks = [3 for _ in range(depth + 1)]
         logger.debug(f"Using Ks: {Ks}")
 
@@ -535,6 +402,18 @@ class ResidualHealpyUNet:
         return tf.keras.Model(inputs, outputs)
 
 
+normalizer = tf.keras.layers.Normalization(axis=-1)
+
+
+def normalize_y(x, y):
+    return x, normalizer(y)
+
+
+def undo_norm(y):
+    val = y * tf.sqrt(normalizer.variance) + normalizer.mean
+    return val.numpy()
+
+
 def train_u_net(
     core,
     splits,
@@ -548,6 +427,7 @@ def train_u_net(
     strategy,
     shapes,
     plot_prefix,
+    normalizer=None,
 ):
     ds = PhiMapDataset.fromCore(core, lensed=True)
     train, val, test = ds.split(
@@ -559,8 +439,17 @@ def train_u_net(
         duplicates=duplicates,
         cache_file=cache_file,
         gen_batch_size=4,
+        buffer_size=8,
     )
     logger.debug("Creating U-Net model and training data")
+
+    if normalizer is not None:
+        normalizer.adapt(train.map(lambda _, y: y))
+        logger.debug("adapted")
+        train = train.map(normalize_y)
+        logger.debug("train")
+        val = val.map(normalize_y)
+        logger.debug("val")
 
     # calculate the number of steps per epoch and decay steps for use later
     epoch_steps = math.ceil(core.total_sims * splits[0] * duplicates[0] // batch_size)
@@ -576,11 +465,10 @@ def train_u_net(
             max_batch_size=batch_size,
         ).get_model()
 
+        logger.debug("Compiling")
         u_net.compile(
-            optimizer=AdamW(
-                learning_rate, weight_decay=5e-6, amsgrad=True, use_ema=True
-            ),
-            loss=RMSELoss(),
+            optimizer=AdamW(learning_rate, weight_decay=4.5e-7, amsgrad=True),
+            loss="mse",
             metrics=rmse_metrics(shapes) + ["mse", "mae"],
         )
 
@@ -604,8 +492,13 @@ def train_u_net(
 
     u_net.save(unet_keras_file)
 
-    test_phi = np.concatenate([y for _, y in test])[0, :, 0]
-    pred_phi = u_net.predict(test, verbose=0)[0, :, 0]
+    test_phi = np.concatenate([y for _, y in test])
+    pred_phi = u_net.predict(test, verbose=0)
+    pred_phi = undo_norm(pred_phi) if normalizer is not None else pred_phi
+
+    # pick the first item, and remove the shapes dim
+    test_phi = test_phi[0, :, 0]
+    pred_phi = pred_phi[0, :, 0]
 
     test_phi_ring = hp.reorder(test_phi, n2r=True)
     pred_phi_ring = hp.reorder(pred_phi, n2r=True)
@@ -721,7 +614,7 @@ def train_fnl(
     fnl_model.save(save_file)
 
     truth = np.concatenate([y for _, y in test])
-    preds = fnl_model.predict(test, verbose=0)
+    preds = np.concatenate([fnl_model.predict(b, verbose=0) for b, _ in test])
 
     vals = truth.ravel()
     plt.figure(figsize=(6, 4))
@@ -783,13 +676,13 @@ def run():
     core = Core()
 
     # start with some hard coded settings because
-    batch_size = 64
-    max_epochs = 500
+    batch_size = 16
+    max_epochs = 100
     initial_LR = 1e-3
 
-    data_fraction = 0.1
+    data_fraction = 1.0
     unet_split = np.array([0.8, 0.1, 0.1]) * data_fraction
-    unet_duplicates = [25, 10, 2]
+    unet_duplicates = [10, 10, 2]
 
     # fnl values come from the
     fnl_split = np.array([0.4, 0.1, 0.5]) * data_fraction
@@ -817,8 +710,10 @@ def run():
     unet_keras_file = f"{save_dir}/unet-{run_info}.keras"
     fnl_keras_file = f"{save_dir}/fnl-{run_info}.keras"
 
-    unet_cache = f"{core.name}/unet-{core.name}"
-    fnl_cache = f"{core.name}/fnl-{core.name}"
+    unet_cache = f"/lustre/smuexa01/client/users/stevensonb/tf_cache/{core.name}/unet-{core.name}"
+    fnl_cache = (
+        f"/lustre/smuexa01/client/users/stevensonb/tf_cache/{core.name}/fnl-{core.name}"
+    )
     for file in [unet_keras_file, fnl_keras_file]:
         logger.debug(f"file {file} exists: {os.path.exists(file)}")
 
@@ -865,10 +760,24 @@ def run():
             strategy,
             core.shapes,
             plot_prefix,
+            normalizer=normalizer,
         )
     else:
         logger.info("Loading U-Net from file: '%s'", unet_keras_file)
         u_net = tf.keras.models.load_model(unet_keras_file)
+
+        ds = PhiMapDataset.fromCore(core, lensed=True)
+        train, _, _ = ds.split(
+            train_size=unet_split[0],
+            val_size=unet_split[1],
+            test_size=unet_split[2],
+            to_tf=True,
+            batch_size=batch_size,
+            duplicates=unet_duplicates,
+            cache_file=unet_cache,
+            gen_batch_size=4,
+        )
+        normalizer.adapt(train.map(lambda x, y: y))
 
     if not os.path.exists(fnl_keras_file):
         fnl_model = train_fnl(
@@ -921,7 +830,9 @@ def run():
         delensed_maps = np.zeros_like(lensed)
         # TODO test joblib parallel here
         for i, (l_map, phi_map) in enumerate(zip(lensed, phi)):
-            # TODO add pol support here
+            l_map = np.asarray(l_map)
+            phi_map = np.asarray(phi_map)
+
             l_map = hp.reorder(l_map[:, 0], n2r=True).astype(np.float32)
             phi_map = hp.reorder(phi_map[:, 0], n2r=True).astype(np.float32)
 
@@ -930,7 +841,8 @@ def run():
             delensed_enmap = lensing.delens_map(lensed_enmap, phi_enmap)
 
             dm = reproject.map2healpix(delensed_enmap, nside)
-            delensed_maps[i] = hp.remove_dipole(dm, copy=False)
+            # TODO return to nest
+            delensed_maps[i] = hp.remove_dipole(dm, copy=False)[:, None]
 
         return delensed_maps
 
@@ -947,6 +859,8 @@ def run():
         return delensed, fnl
 
     phi_preds = u_net.predict(test_3, verbose=0)
+    phi_preds = undo_norm(phi_preds)
+
     phi_ds = tf.data.Dataset.from_tensor_slices(phi_preds).batch(batch_size)
     delensed_ds = (
         tf.data.Dataset.zip((test_3, phi_ds))
@@ -956,8 +870,9 @@ def run():
     )
 
     for map, _ in delensed_ds.take(1):
+        m = map[0, :, 0].numpy()
         hp.mollview(
-            map[0, :, 0].numpy(),
+            m,
             title="Delensed map",
             unit="T",
             cmap="viridis",

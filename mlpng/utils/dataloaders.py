@@ -41,6 +41,7 @@ class ALMDataset:
         lensed=False,
         fnl_min=-1000.0,
         fnl_max=1000.0,
+        fnl_seed=42,
         x_shape=None,
         x_dtype=tf.complex64,
         y_shape=None,
@@ -61,6 +62,7 @@ class ALMDataset:
         self.file_path = file_path
         self.fnl_min = fnl_min
         self.fnl_max = fnl_max
+        self.fnl_seed = fnl_seed
 
         self.x_shape = x_shape
         self.x_dtype = x_dtype
@@ -392,6 +394,7 @@ class MapDataset(ALMDataset):
     def _generate(self, indices, duplicates):
         batch_size = len(indices)
 
+        np.random.seed(self.fnl_seed + indices[0])
         fnls = np.random.uniform(
             low=self.fnl_min,
             high=self.fnl_max,
@@ -464,6 +467,7 @@ class UnlensMapDataset(MapDataset):
     def _generate(self, indices, duplicates):
         batch_size = len(indices)
 
+        np.random.seed(self.fnl_seed + indices[0])
         fnls = np.random.uniform(
             low=self.fnl_min,
             high=self.fnl_max,
@@ -527,11 +531,6 @@ class PhiMapDataset(UnlensMapDataset):
     def _alm_to_map_batch(
         alm_lens, alm_phi, rotate, nside, batch_size, shapes, duplicates
     ):
-        # Replicate alm_phi to match the flattened alm_lens structure
-        # alm_phi needs to be repeated for each (shape, duplicate) combination per batch item
-        alm_phi_expanded = np.repeat(alm_phi, duplicates * len(shapes), axis=0)
-        alm_phi_expanded = alm_phi_expanded.reshape(duplicates, len(shapes), -1)
-
         lens_maps = []
         phi_maps = []
         for batch, dup, shape in itertools.product(
@@ -553,6 +552,8 @@ class PhiMapDataset(UnlensMapDataset):
                 alm_phi_rotated = alm_phi[batch]
 
             m_lens = hp.alm2map(alm_lens_rotated, nside, pol=False, inplace=True)
+
+            # could this be a problem?
             m_phi = hp.alm2map(alm_phi_rotated, nside * 2, pol=False, inplace=True)
 
             lens_maps.append(hp.reorder(m_lens, r2n=True))
@@ -563,6 +564,7 @@ class PhiMapDataset(UnlensMapDataset):
     def _generate(self, indices, duplicates):
         batch_size = len(indices)
 
+        np.random.seed(self.fnl_seed + indices[0])
         fnls = np.random.uniform(
             low=self.fnl_min,
             high=self.fnl_max,
@@ -630,6 +632,7 @@ class elsnerDataset(ALMDataset):
             alm = alm_l + np.einsum("i...,i...->...", fnl, alm_nl)
             return np.array(alm)
 
+        np.random.seed(self.fnl_seed + indices[0])
         fnls = np.random.uniform(
             low=self.fnl_min,
             high=self.fnl_max,
@@ -687,6 +690,7 @@ class elsnerMapDataset(elsnerDataset):
 
         batch_size = len(indices)
 
+        np.random.seed(self.fnl_seed + indices[0])
         fnls = np.random.uniform(
             low=self.fnl_min,
             high=self.fnl_max,
