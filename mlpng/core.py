@@ -606,7 +606,7 @@ class Core:
         base = self._get("base_name", base_name)
         if base.startswith("+"):
             base = f"{base_name}{base[1:]}"
-        self.name = f"{base}_{pol_str}_{total_sims}_p{self.phi_scale}"  # _f{fstr}"
+        self.name = f"{base}_{pol_str}_{total_sims}_p{self.phi_scale:.1f}"  # _f{fstr}"
 
         self.dirs = {}
         self.dirs["base"] = self._get("base_dir", "data")

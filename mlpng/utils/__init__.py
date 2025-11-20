@@ -26,7 +26,7 @@ from .plots import (
 
 from .slurm import Slurm
 
-from .callbacks import RMSELoss, RMSEMetric, rmse_metrics
+from .callbacks import RMSELoss, RMSELoss2, RMSEMetric, rmse_metrics, PowerSpectrumLoss, PowerSpectrumLoss2
 
 __all__ = [
     "setup_logging",
@@ -47,10 +47,13 @@ __all__ = [
     "make_alm_plots",
     "Slurm",
     "RMSELoss",
+    "RMSELoss2",
     "RMSEMetric",
     "rmse_metrics",
     "make_trainer_plots",
     "plot_cl_vs",
     "plot_map_alm",
     "get_data",
+    "PowerSpectrumLoss",
+    "PowerSpectrumLoss2",
 ]

@@ -3,6 +3,7 @@ import math
 import copy
 import logging
 import h5py
+import itertools
 import numpy as np
 import healpy as hp
 import tensorflow as tf
@@ -40,11 +41,17 @@ class ALMDataset:
         lensed=False,
         fnl_min=-1000.0,
         fnl_max=1000.0,
+        fnl_seed=42,
         x_shape=None,
         x_dtype=tf.complex64,
         y_shape=None,
         y_dtype=tf.float32,
     ):
+        # this is shit, since only needed for maps, think about this more
+        # set during split when called from mapping
+        self.rotate = False
+        self.gaussian_mask = False
+
         # setup shapes
         if isinstance(shapes, str):
             shapes = [shapes]
@@ -55,6 +62,7 @@ class ALMDataset:
         self.file_path = file_path
         self.fnl_min = fnl_min
         self.fnl_max = fnl_max
+        self.fnl_seed = fnl_seed
 
         self.x_shape = x_shape
         self.x_dtype = x_dtype
@@ -91,6 +99,8 @@ class ALMDataset:
         test_size=0.1,
         to_tf=True,
         cache_dir=None,
+        rotate=[False, False, False],
+        gaussian_mask=[False, False, False],
         **to_tf_kwargs,
     ):
         """
@@ -136,14 +146,20 @@ class ALMDataset:
         train = copy.copy(self)
         train.start_idx = self.start_idx
         train.end_idx = train_end
+        train.rotate = rotate[0]
+        train.gaussian_mask = gaussian_mask[0]
 
         val = copy.copy(self)
         val.start_idx = train_end
         val.end_idx = val_end
+        val.rotate = rotate[1]
+        val.gaussian_mask = gaussian_mask[1]
 
         test = copy.copy(self)
         test.start_idx = val_end
         test.end_idx = test_end
+        test.rotate = rotate[2]
+        test.gaussian_mask = gaussian_mask[2]
 
         logger.debug(
             "Splitting '%s' into train: %d:%d (%d), val: %d:%d (%d), test: %d:%d (%d)",
@@ -191,6 +207,7 @@ class ALMDataset:
             # Finally convert the datasets to tf
             train = train.to_tf(cache_file=cache[0], duplicates=dups[0], **to_tf_kwargs)
             val = val.to_tf(cache_file=cache[1], duplicates=dups[1], **to_tf_kwargs)
+
             # test always should have shuffle off since we want to plot the same data
             to_tf_kwargs.pop("shuffle", None)
             test = test.to_tf(
@@ -200,15 +217,15 @@ class ALMDataset:
 
     def to_tf(
         self,
-        gen_batch_size=32,
+        gen_batch_size=8,
         duplicates=1,
         unbatch=True,
         cache=True,
         cache_file="",
         shuffle=True,
-        buffer_size=1024,
+        buffer_size=128,
         reshuffle=True,
-        batch_size=1,
+        batch_size=64,
         batch_n_calls=tf.data.AUTOTUNE,
         batch_deterministic=False,
         batch_drop_remainder=False,
@@ -240,6 +257,7 @@ class ALMDataset:
 
         if cache and cache_file:
             logger.debug("Using cache file: '%s'", cache_file)
+            os.makedirs(os.path.dirname(cache_file), exist_ok=True)
 
         ds = tf.data.Dataset.from_generator(
             self._generator,
@@ -250,14 +268,13 @@ class ALMDataset:
             ),
         )
 
-        # inform TF about the expected size of the dataset
-        ds_len = math.ceil(len(self) / gen_batch_size)
-        ds = ds.apply(tf.data.experimental.assert_cardinality(ds_len))
-
         if unbatch:
             # this takes us from 1 * (batch, ...) samples to batch * (....)
             # i.e. a single (batch * duplicates, pols, data) tensor -> (batch * duplicates) tensors of shape (pols, data)
             ds = ds.unbatch()
+
+        ds_len = len(self) * duplicates
+        ds = ds.apply(tf.data.experimental.assert_cardinality(ds_len))
 
         if cache:
             # cache the data after preprocessing, if you cache to a file this can let you skip the preprocessing on future runs
@@ -299,7 +316,13 @@ class ALMDataset:
         alms = alm_l + np.einsum("i...,i...->...", fnls, alm_nl)
         return alms, fnls
 
-    def _generator(self, batch_size, duplicates, n_jobs=8, pre_dispatch="n_jobs"):
+    def _generator(
+        self,
+        batch_size,
+        duplicates,
+        n_jobs=len(os.sched_getaffinity(0)),
+        pre_dispatch="n_jobs",
+    ):
         """
         Returns a parallel generator to read data from the file. This is used to load the data in parallel.
         You probably dont need to change anything here but instead in _generate
@@ -315,11 +338,14 @@ class ALMDataset:
         ]
 
         # we use parallel to generate the data in parallel, this is done by splitting the indices into batches and then calling _generate on each batch
+        temp_folder = os.environ.get("SCRATCH", None)
         return Parallel(
-            n_jobs,
+            min(n_jobs, len(batched_indices)),
             return_as="generator",
             pre_dispatch=pre_dispatch,
-        )(delayed(self._generate)(idxs, duplicates) for idxs in batched_indices)
+            prefer="threads",
+            temp_folder=temp_folder,
+        )(delayed(self._generate)(i, duplicates) for i in batched_indices)
 
 
 class MapDataset(ALMDataset):
@@ -351,12 +377,15 @@ class MapDataset(ALMDataset):
                 ],
             )
             alm_rotated = rotator.rotate_alm(alm)
+        else:
+            alm_rotated = alm
 
         m = hp.alm2map(alm_rotated, nside, pol=False)
         return hp.reorder(m, r2n=True)
 
     @staticmethod
-    def _mask_fnls(fnls, mask_prob=0.035859):
+    def _mask_fnls(fnls, mask_prob=0.1):  # 0.035859):
+        # note mask prob should be a comb factor for all shapes
         # generate a mask along the shapes, dup, sim dimensions
         mask = np.random.rand(*fnls.shape[0:3]) < mask_prob
         fnls[mask] = 0
@@ -365,6 +394,7 @@ class MapDataset(ALMDataset):
     def _generate(self, indices, duplicates):
         batch_size = len(indices)
 
+        np.random.seed(self.fnl_seed + indices[0])
         fnls = np.random.uniform(
             low=self.fnl_min,
             high=self.fnl_max,
@@ -382,16 +412,10 @@ class MapDataset(ALMDataset):
             ]
         )
 
-        # with h5py.File(self.file_path, mode="r", swmr=True, locking=False) as f:
-        #     alm_l = np.array([f["alm_l"][self.l_str][indices]])
-        #     alm_nl = np.array(
-        #         [f["alm_nl"][self.l_str][s][indices] for s in self.shapes]
-        #     )
-
         alms = alm_l + np.einsum("i...,i...->...", fnls, alm_nl)
 
         # number of CPUs, accounting for slurm, use 1 less to avoid overloading
-        n_cpus = len(os.sched_getaffinity(0)) // 4 - 1
+        n_cpus = len(os.sched_getaffinity(0))
         n_jobs = min(n_cpus, duplicates * batch_size)
         with Parallel(n_jobs, pre_dispatch="n_jobs", prefer="threads") as p:
             maps = p(
@@ -406,26 +430,176 @@ class MapDataset(ALMDataset):
         return maps, fnls
 
     def split(
-        self,
-        rotate=[True, True, False],
-        gaussian_mask=[True, False, False],
-        **kwargs,
+        self, rotate=[False, False, False], gaussian_mask=[True, False, False], **kwargs
     ):
-        """
-        Splits the dataset into training, validation, and test sets.
-        """
-        # call the parent class split method
-        train, val, test = super().split(**kwargs)
+        return super().split(rotate=rotate, gaussian_mask=gaussian_mask, **kwargs)
 
-        # set the rotate and gaussian_mask attributes for each split
-        train.rotate = rotate[0]
-        train.gaussian_mask = gaussian_mask[0]
-        val.rotate = rotate[1]
-        val.gaussian_mask = gaussian_mask[1]
-        test.rotate = rotate[2]
-        test.gaussian_mask = gaussian_mask[2]
 
-        return train, val, test
+class UnlensMapDataset(MapDataset):
+    @classmethod
+    def fromCore(cls, core, **kwargs):
+        y_shape = kwargs.pop("y_shape", (None, core.npix, core.npols))
+        y_dtype = kwargs.pop("y_dtype", tf.float32)
+        return super().fromCore(core, y_shape=y_shape, y_dtype=y_dtype, **kwargs)
+
+    @staticmethod
+    def _alm_to_map(alm_lens, alm_unlens, rotate, nside):
+        if rotate:
+            # Apply a random rotation to the maps
+            rotator = hp.Rotator(
+                deg=True,
+                rot=[
+                    np.random.uniform(-180, 180),
+                    np.random.uniform(-90, 90),
+                    np.random.uniform(0, 360),
+                ],
+            )
+            alm_lens_rotated = rotator.rotate_alm(alm_lens)
+            alm_unlensed_rotated = rotator.rotate_alm(alm_unlens)
+        else:
+            alm_lens_rotated = alm_lens
+            alm_unlensed_rotated = alm_unlens
+
+        m_lens = hp.alm2map(alm_lens_rotated, nside, pol=False)
+        m_unlensed = hp.alm2map(alm_unlensed_rotated, nside, pol=False)
+        return hp.reorder(m_lens, r2n=True), hp.reorder(m_unlensed, r2n=True)
+
+    def _generate(self, indices, duplicates):
+        batch_size = len(indices)
+
+        np.random.seed(self.fnl_seed + indices[0])
+        fnls = np.random.uniform(
+            low=self.fnl_min,
+            high=self.fnl_max,
+            size=(len(self.shapes), duplicates, batch_size, 1, 1),
+        )
+
+        if self.gaussian_mask:
+            fnls = self._mask_fnls(fnls)
+
+        alm_l_lens = get_data(self.file_path, f"alm_l/lensed", indices)
+        alm_l_unlensed = get_data(self.file_path, f"alm_l/unlensed", indices)
+
+        alm_nl_lens = np.array(
+            [
+                get_data(self.file_path, f"alm_nl/lensed/{s}", indices)
+                for s in self.shapes
+            ]
+        )
+        alm_nl_unlensed = np.array(
+            [
+                get_data(self.file_path, f"alm_nl/unlensed/{s}", indices)
+                for s in self.shapes
+            ]
+        )
+
+        alm_lens = alm_l_lens + np.einsum("i...,i...->...", fnls, alm_nl_lens)
+        alm_unlensed = alm_l_unlensed + np.einsum(
+            "i...,i...->...", fnls, alm_nl_unlensed
+        )
+
+        # number of CPUs, accounting for slurm
+        n_cpus = len(os.sched_getaffinity(0))
+        n_jobs = min(n_cpus, duplicates * batch_size)
+        with Parallel(n_jobs, pre_dispatch="n_jobs", prefer="threads") as p:
+            maps = p(
+                delayed(self._alm_to_map)(
+                    sim_lens, sim_unlensed, self.rotate, self.nside
+                )
+                for lens_batches, unlensed_batches in zip(alm_lens, alm_unlensed)
+                for sim_lens, sim_unlensed in zip(lens_batches, unlensed_batches)
+            )
+
+        map_lens, map_unlensed = zip(*maps)
+        map_lens = np.transpose(np.array(map_lens), (0, 2, 1))
+        map_unlensed = np.transpose(np.array(map_unlensed), (0, 2, 1))
+
+        return map_lens, map_unlensed
+
+
+class PhiMapDataset(UnlensMapDataset):
+    @classmethod
+    def fromCore(cls, core, **kwargs):
+        lmax = core.lmax + core.lmax_buffer
+        npix = hp.nside2npix(core.nside * 2)
+
+        y_shape = kwargs.pop("y_shape", (None, npix, core.npols))
+        y_dtype = kwargs.pop("y_dtype", tf.float32)
+        return super().fromCore(core, y_shape=y_shape, y_dtype=y_dtype, **kwargs)
+
+    @staticmethod
+    def _alm_to_map_batch(
+        alm_lens, alm_phi, rotate, nside, batch_size, shapes, duplicates
+    ):
+        lens_maps = []
+        phi_maps = []
+        for batch, dup, shape in itertools.product(
+            range(batch_size), range(duplicates), range(len(shapes))
+        ):
+            if rotate:  # VERY slow
+                rotator = hp.Rotator(
+                    deg=True,
+                    rot=[
+                        np.random.uniform(-180, 180),
+                        np.random.uniform(-90, 90),
+                        np.random.uniform(0, 360),
+                    ],
+                )
+                alm_lens_rotated = rotator.rotate_alm(alm_lens[dup, batch, shape])
+                alm_phi_rotated = rotator.rotate_alm(alm_phi[batch, shape])
+            else:
+                alm_lens_rotated = alm_lens[dup, batch, shape]
+                alm_phi_rotated = alm_phi[batch]
+
+            m_lens = hp.alm2map(alm_lens_rotated, nside, pol=False, inplace=True)
+
+            # could this be a problem?
+            m_phi = hp.alm2map(alm_phi_rotated, nside * 2, pol=False, inplace=True)
+
+            lens_maps.append(hp.reorder(m_lens, r2n=True))
+            phi_maps.append(hp.reorder(m_phi, r2n=True))
+
+        return np.array(lens_maps)[..., None], np.array(phi_maps)[..., None]
+
+    def _generate(self, indices, duplicates):
+        batch_size = len(indices)
+
+        np.random.seed(self.fnl_seed + indices[0])
+        fnls = np.random.uniform(
+            low=self.fnl_min,
+            high=self.fnl_max,
+            size=(len(self.shapes), duplicates, batch_size, 1, 1),
+        )
+
+        if self.gaussian_mask:
+            fnls = self._mask_fnls(fnls)
+
+        alm_l_lens = get_data(self.file_path, f"alm_l/lensed", indices)
+        alm_nl_lens = np.array(
+            [
+                get_data(self.file_path, f"alm_nl/lensed/{s}", indices)
+                for s in self.shapes
+            ]
+        )
+        alm_lens = alm_l_lens + np.einsum("i...,i...->...", fnls, alm_nl_lens)
+
+        alm_phi = get_data(self.file_path, f"alm_phi", indices)
+        alm_phi = alm_phi.astype(np.complex128)  # needed for rotate alm
+
+        # Reshape to flatten duplicates, batch, and shapes into one dimension
+        # Original shape: (duplicates, batch_size, shapes, alm_size)
+        # Target shape: (duplicates * batch_size * shapes, alm_size)
+        # alm_lens_flat = alm_lens.reshape(-1, alm_lens.shape[-1])
+
+        return self._alm_to_map_batch(
+            alm_lens,
+            alm_phi,
+            self.rotate,
+            self.nside,
+            batch_size,
+            self.shapes,
+            duplicates,
+        )
 
 
 class elsnerDataset(ALMDataset):
@@ -458,6 +632,7 @@ class elsnerDataset(ALMDataset):
             alm = alm_l + np.einsum("i...,i...->...", fnl, alm_nl)
             return np.array(alm)
 
+        np.random.seed(self.fnl_seed + indices[0])
         fnls = np.random.uniform(
             low=self.fnl_min,
             high=self.fnl_max,
@@ -515,6 +690,7 @@ class elsnerMapDataset(elsnerDataset):
 
         batch_size = len(indices)
 
+        np.random.seed(self.fnl_seed + indices[0])
         fnls = np.random.uniform(
             low=self.fnl_min,
             high=self.fnl_max,
@@ -530,9 +706,7 @@ class elsnerMapDataset(elsnerDataset):
         )
 
         maps = Parallel(map_jobs)(
-            delayed(process)(sim)
-            for batches in alms
-            for sim in batches  # type: ignore
+            delayed(process)(sim) for batches in alms for sim in batches  # type: ignore
         )
 
         maps = np.transpose(maps, (0, 2, 1))  # type: ignore
