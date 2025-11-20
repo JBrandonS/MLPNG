@@ -429,7 +429,7 @@ class Core:
         self.phi_scale = self._get("phi_scale", 1)
 
         self.force_gen = self._get("force_generation", False)
-        self.mc_steps = self._get("mc_steps", 100)
+        self.mc_steps = self._get("mc_steps", 300)
         self.estimate = self._get("estimate", True)
         self.num_estimates = self._get(
             "num_estimates",

@@ -2,11 +2,11 @@
 #SBATCH --job-name=generator
 #SBATCH --partition=standard-s
 #SBATCH --ntasks=1
-#SBATCH --mem=256G
+#SBATCH --mem=128G
 #SBATCH --cpus-per-task=16
 #SBATCH --output=data/logs/generator/%A/%j.log
 #SBATCH --array=1-1
-#SBATCH --time=1-00:00:00
+#SBATCH --time=0-12:00:00
 #SBATCH --account=jrmeyers_ml_cmb_0001
 
 # create our logging dir, if needed

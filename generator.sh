@@ -9,13 +9,13 @@
 # these must be in settings/ and have the .json extension
 SETTINGS=(
   # "n32"
-  "n64"
-  # "n128"
-  "n256"
+  # "n64"
+  "n128"
+  # "n256"
 
   # these can only be run with nsims < 1000, due to time or memory
-  "n512"
-  "n1024"
+  # "n512"
+  # "n1024"
 
   # these need to use high memory nodes, change sbatch/generator.sbatch to sbatch/generator-hm.sbatch in the main loop below
   # "n2048"
@@ -27,12 +27,12 @@ SETTINGS=(
 
 # override sim settings. These settings will take priority, see core.py for the meaning of these settings, and others
 ARGS=(
-  "--nsims" "1000"
+  "--nsims" "100"
   "--pols" "T"
   "--shapes" "local"
-  "--force_generation"
+  # "--force_generation"
   "--phi_scale" "1"
-  "--narray" "100"
+  "--narray" "10"
 )
 
 # override the slurm array settings for narray, only used in data generation
