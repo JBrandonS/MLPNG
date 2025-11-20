@@ -37,7 +37,7 @@ from deepsphere.healpy_layers import (
 from mlpng import Core
 import mlpng.core
 from mlpng.utils import setup_logging
-from mlpng.utils.dataloaders import PhiMapDataset
+from mlpng.utils.dataloaders import KappaDataset
 from mlpng.utils.callbacks import RMSELoss
 
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
@@ -428,12 +428,15 @@ def prepare_datasets(
     batch_size: int,
     duplicates: list[int],
     cache_tag: str,
+    kappa_scale: float = 1.0,
 ) -> tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset]:
-    cache_key = f"{cache_tag}-bs{batch_size}"
+    cache_key = f"{cache_tag}-bs{batch_size}-ks{kappa_scale}"
     if cache_key in _DATASET_CACHE:
         return _DATASET_CACHE[cache_key]
 
-    ds = PhiMapDataset.fromCore(core, lensed=True)
+    ds = KappaDataset.fromCore(
+        core, x_output="lensed", y_output="kappa", kappa_scale=kappa_scale
+    )
     fractions = BASE_SPLIT * DATA_FRACTION
     cache_dir = os.path.join(core.dirs["base"], "tf-cache")
     os.makedirs(cache_dir, exist_ok=True)
@@ -520,12 +523,14 @@ class UnetObjective:
         decay_rate = trial.suggest_float("lr_decay", 0.92, 0.99, step=0.01)
         use_ema = trial.suggest_categorical("use_ema", [False, True])
         use_amsgrad = trial.suggest_categorical("use_amsgrad", [False, True])
+        kappa_scale = trial.suggest_categorical("kappa_scale", [1.0, np.sqrt(1e7)])
 
         train_ds, val_ds, _ = prepare_datasets(
             self.ctx.core,
             batch_size=batch_size,
             duplicates=DEFAULT_DUPLICATES,
             cache_tag=self.cache_tag,
+            kappa_scale=kappa_scale,
         )
 
         steps, decay_steps = estimate_steps(self.ctx.core, batch_size)

@@ -1,13 +1,14 @@
 import os
-import math
+import io
 import copy
 import logging
-import h5py
 import itertools
 import numpy as np
 import healpy as hp
+import lenspyx
 import tensorflow as tf
 from joblib import Parallel, delayed
+from contextlib import redirect_stdout
 
 from mlpng.utils import get_data
 
@@ -46,11 +47,13 @@ class ALMDataset:
         x_dtype=tf.complex64,
         y_shape=None,
         y_dtype=tf.float32,
+        parallel_prefer="processes",
     ):
         # this is shit, since only needed for maps, think about this more
         # set during split when called from mapping
         self.rotate = False
         self.gaussian_mask = False
+        self.parallel_prefer = parallel_prefer
 
         # setup shapes
         if isinstance(shapes, str):
@@ -343,7 +346,7 @@ class ALMDataset:
             min(n_jobs, len(batched_indices)),
             return_as="generator",
             pre_dispatch=pre_dispatch,
-            prefer="threads",
+            prefer=self.parallel_prefer,
             temp_folder=temp_folder,
         )(delayed(self._generate)(i, duplicates) for i in batched_indices)
 
@@ -417,7 +420,7 @@ class MapDataset(ALMDataset):
         # number of CPUs, accounting for slurm, use 1 less to avoid overloading
         n_cpus = len(os.sched_getaffinity(0))
         n_jobs = min(n_cpus, duplicates * batch_size)
-        with Parallel(n_jobs, pre_dispatch="n_jobs", prefer="threads") as p:
+        with Parallel(n_jobs, pre_dispatch="n_jobs", prefer=self.parallel_prefer) as p:
             maps = p(
                 delayed(self._alm_to_map)(sim, self.rotate, self.nside)
                 for batches in alms
@@ -501,7 +504,7 @@ class UnlensMapDataset(MapDataset):
         # number of CPUs, accounting for slurm
         n_cpus = len(os.sched_getaffinity(0))
         n_jobs = min(n_cpus, duplicates * batch_size)
-        with Parallel(n_jobs, pre_dispatch="n_jobs", prefer="threads") as p:
+        with Parallel(n_jobs, pre_dispatch="n_jobs", prefer=self.parallel_prefer) as p:
             maps = p(
                 delayed(self._alm_to_map)(
                     sim_lens, sim_unlensed, self.rotate, self.nside
@@ -602,6 +605,548 @@ class PhiMapDataset(UnlensMapDataset):
         )
 
 
+class KappaDataset(MapDataset):
+    """
+    Dataset for generating lensed CMB maps with flexible x/y outputs.
+
+    Generates lensed maps by applying lensing potential phi_scale*alm_phi to unlensed ALMs.
+    Supports flexible x (input) and y (output) configurations: any combination of maps (lensed, unlensed, phi, kappa) and parameters (fnl, phi_scale, kappa_scale).
+
+    Example: x_output="lensed", y_output=("unlensed", "phi", "phi_scale") for a de-lensing model that takes lensed map and outputs unlensed map, phi map, and phi_scale.
+    """
+
+    @classmethod
+    def fromCore(
+        cls,
+        core: "Core",
+        phi_scale: float | tuple[float, float] | list[float] = 1.0,
+        kappa_scale: float = 1.0,
+        x_output: str | tuple[str, ...] = "lensed",
+        y_output: str | tuple[str, ...] = ("fnl",),
+        gaussian_mask_prob: float = 0.1,
+        lmax_buffer: int | None = None,
+        parallel_prefer: str = "processes",
+        **kwargs,
+    ) -> "KappaDataset":
+        """
+        Create dataset from Core object.
+
+        Args:
+            core: Core configuration object
+            phi_scale: Phi-scale configuration (default: 1.0)
+                     - Single float: fixed value
+                     - Array-like: uniformly sample from array values
+                     - Tuple of 2 values: range (min, max) to uniformly sample
+            kappa_scale: Scale factor to multiply kappa maps (default: 1.0)
+            x_output: Single map/param type for input x (default: "lensed")
+                     Options: "lensed", "unlensed", "phi", "kappa", "fnl", "phi_scale"
+            y_output: Tuple of map/param types for output y (default: ("fnl",))
+                     Options: "lensed", "unlensed", "phi", "kappa", "fnl", "phi_scale"
+            gaussian_mask_prob: Probability to zero fnl and phi independently (default: 0.1)
+            lmax_buffer: Buffer for lmax in lenspyx operations (default: core.lmax_buffer)
+            parallel_prefer: Preference for joblib parallelization (default: "processes").
+                           Options: "processes" (default, more stable), "threads" (faster but breaks Jupyter notebooks under some conditions).
+        """
+        # Ensure y_output is a tuple
+        if isinstance(y_output, str):
+            y_output = (y_output,)
+
+        shapes = kwargs.pop("shapes", core.shapes)
+        nside = kwargs.pop("nside", core.nside)
+
+        # Determine output shapes based on output types
+        x_shape = cls._compute_output_shape(
+            x_output, core.npix, core.npols, len(core.shapes)
+        )
+        y_shape = cls._compute_output_shape(
+            y_output, core.npix, core.npols, len(core.shapes)
+        )
+
+        x_dtype = kwargs.pop("x_dtype", tf.float32)
+        y_dtype = kwargs.pop("y_dtype", tf.float32)
+
+        if lmax_buffer is None:
+            lmax_buffer = getattr(core, "lmax_buffer", 128)
+
+        return cls(
+            file_path=kwargs.pop("file_path", core.file),
+            nside=nside,
+            shapes=shapes,
+            fnl_min=kwargs.pop("fnl_min", core.fnl_min),
+            fnl_max=kwargs.pop("fnl_max", core.fnl_max),
+            phi_scale=phi_scale,
+            kappa_scale=kappa_scale,
+            x_output=x_output,
+            y_output=y_output,
+            gaussian_mask_prob=gaussian_mask_prob,
+            fnl_seed=kwargs.pop("fnl_seed", 42),
+            lmax_buffer=lmax_buffer,
+            x_shape=x_shape,
+            x_dtype=x_dtype,
+            y_shape=y_shape,
+            y_dtype=y_dtype,
+            parallel_prefer=parallel_prefer,
+            **kwargs,
+        )
+
+    @staticmethod
+    def _compute_output_shape(
+        output_types: str | tuple[str, ...],
+        npix: int,
+        npols: int,
+        nshapes: int,
+    ) -> tuple[int | None, ...]:
+        """Compute output shape based on output types.
+
+        Note: phi and kappa maps are generated at nside*2 resolution (4x npix),
+        while lensed and unlensed maps use the standard nside resolution (npix).
+        """
+        if isinstance(output_types, str):
+            output_types = (output_types,)
+
+        n_maps = 0
+        n_params = 0
+        has_hires = False  # phi/kappa use 4x resolution
+        has_lowres = False  # lensed/unlensed use standard resolution
+
+        for out_type in output_types:
+            if out_type in ["phi", "kappa"]:
+                n_maps += 1
+                has_hires = True
+            elif out_type in ["lensed", "unlensed"]:
+                n_maps += 1
+                has_lowres = True
+            elif out_type == "fnl":
+                n_params += nshapes
+            elif out_type == "phi_scale":
+                n_params += 1
+
+        # If single map and no params, keep 3D shape
+        if n_maps == 1 and n_params == 0:
+            if has_hires:
+                # phi/kappa at nside*2: 4x npix
+                return (None, 4 * npix, npols)
+            else:
+                # lensed/unlensed at standard nside: npix
+                return (None, npix, npols)
+        # If single param and no params, keep 1D shape (1,)
+        elif n_params == 1 and n_maps == 0:
+            return (None, 1)
+        # Multiple items: flatten to 1D
+        else:
+            # Cannot mix high-res and low-res maps - user must separate them
+            if has_hires and has_lowres:
+                raise ValueError(
+                    "Cannot mix phi/kappa (high-res) with lensed/unlensed (low-res) maps. "
+                    "Phi and kappa are generated at nside*2 resolution (4x pixels). "
+                    "Use separate output specifications for different resolutions."
+                )
+            total_size = n_maps * (4 * npix if has_hires else npix) * npols + n_params
+            return (None, total_size)
+
+    @staticmethod
+    def _process_phi_scale(
+        phi_scale: float | tuple[float, float] | list[float],
+    ) -> dict[str, float | np.ndarray]:
+        """
+        Process phi_scale parameter.
+
+        Args:
+            phi_scale: Single value, array, or tuple range
+                - float: fixed value
+                - array-like: uniformly sample from these values
+                - tuple of 2 values: (min, max) range to uniformly sample
+
+        Returns:
+            dict with 'type' and configuration for sampling
+        """
+        if isinstance(phi_scale, (tuple, list)) and len(phi_scale) == 2:
+            # Range: (min, max)
+            return {"type": "range", "min": phi_scale[0], "max": phi_scale[1]}
+        elif isinstance(phi_scale, (list, np.ndarray)):
+            # Array of values
+            return {"type": "array", "values": np.asarray(phi_scale)}
+        else:
+            # Single value
+            return {"type": "fixed", "value": float(phi_scale)}
+
+    def __init__(
+        self,
+        file_path: str,
+        nside: int,
+        shapes: list[str] | str | None = None,
+        fnl_min: float = -1000.0,
+        fnl_max: float = 1000.0,
+        phi_scale: float | tuple[float, float] | list[float] = 1.0,
+        kappa_scale: float = 1.0,
+        x_output: str | tuple[str, ...] = "lensed",
+        y_output: str | tuple[str, ...] = ("fnl",),
+        gaussian_mask_prob: float = 0.1,
+        fnl_seed: int = 42,
+        lmax_buffer: int = 128,
+        x_shape: tuple[int | None, ...] | None = None,
+        x_dtype=tf.float32,
+        y_shape: tuple[int | None, ...] | None = None,
+        y_dtype=tf.float32,
+        parallel_prefer: str = "processes",
+        **kwargs,
+    ) -> None:
+        # Ensure outputs are tuples
+        if isinstance(x_output, str):
+            x_output = (x_output,)
+        if isinstance(y_output, str):
+            y_output = (y_output,)
+
+        # Process phi_scale: can be single value, array, or tuple range
+        self.phi_scale_config = self._process_phi_scale(phi_scale)
+        self.kappa_scale = kappa_scale
+        self.x_output = x_output
+        self.y_output = y_output
+        self.gaussian_mask_prob = gaussian_mask_prob
+        self.lmax_buffer = lmax_buffer
+        self.core = kwargs.pop("core", None)
+        self.gaussian_mask = False  # Handled separately with gaussian_mask_prob
+
+        if shapes is None:
+            shapes = ["local"]
+        elif isinstance(shapes, str):
+            shapes = [shapes]
+
+        if y_shape is None:
+            n_params = sum(
+                1 if o == "phi_scale" else (len(shapes) if o == "fnl" else 0)
+                for o in y_output
+                if o in ["fnl", "phi_scale"]
+            )
+            y_shape = (None, max(1, n_params))
+
+        super().__init__(
+            file_path=file_path,
+            nside=nside,
+            shapes=shapes,
+            fnl_min=fnl_min,
+            fnl_max=fnl_max,
+            fnl_seed=fnl_seed,
+            x_shape=x_shape,
+            x_dtype=x_dtype,
+            y_shape=y_shape,
+            y_dtype=y_dtype,
+            parallel_prefer=parallel_prefer,
+            **kwargs,
+        )
+
+        self._setup_lensing_geometry()
+
+    def _setup_lensing_geometry(self) -> None:
+        """Pre-compute lenspyx geometry for lensing operations."""
+        self.geom_info = ("healpix", {"nside": self.nside})
+        self.geom = lenspyx.get_geom(self.geom_info)
+        self.lmax = 3 * self.nside - 1
+        self.lmax_len = self.lmax + self.lmax_buffer
+        fl = np.sqrt(np.arange(self.lmax_len + 1) * np.arange(1, self.lmax_len + 2))
+        self.fl = fl
+        # kappa coefficients: kappa_lm = -1/2 * ell(ell+1) * phi_lm
+        kappa_coeff = (
+            -0.5 * np.arange(self.lmax_len + 1) * np.arange(1, self.lmax_len + 2)
+        )
+        self.kappa_coeff = kappa_coeff
+
+    def _generate_parameters(
+        self, indices: np.ndarray, duplicates: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Generate random fnl and phi parameters with independent seeding and masking."""
+        batch_size = len(indices)
+        nshapes = len(self.shapes)
+
+        np.random.seed(self.fnl_seed + indices[0])
+        fnls = np.random.uniform(
+            low=self.fnl_min,
+            high=self.fnl_max,
+            size=(batch_size, duplicates, nshapes),
+        )
+
+        # Generate phi values based on configuration
+        phis = np.zeros((batch_size, 1), dtype=np.float32)
+
+        if self.phi_scale_config["type"] == "fixed":
+            # Fixed value
+            phis[:] = self.phi_scale_config["value"]
+        elif self.phi_scale_config["type"] == "range":
+            # Uniformly sample from range
+            phis = np.random.uniform(
+                self.phi_scale_config["min"],
+                self.phi_scale_config["max"],
+                size=(batch_size, 1),
+            )
+        elif self.phi_scale_config["type"] == "array":
+            # Uniformly sample from array
+            phis = np.random.choice(
+                self.phi_scale_config["values"], size=(batch_size, 1)
+            )
+
+        # Apply Gaussian masking vectorized: independently zero fnl and phi with gaussian_mask_prob
+        if self.gaussian_mask_prob > 0:
+            fnl_mask = (
+                np.random.rand(batch_size, duplicates, 1) < self.gaussian_mask_prob
+            )
+            phi_mask = np.random.rand(batch_size, 1) < self.gaussian_mask_prob
+            fnls[fnl_mask] = 0
+            phis[phi_mask] = 0
+
+        return fnls, phis
+
+    def _lens_alms(
+        self,
+        indices: np.ndarray,
+        duplicates: int,
+        fnls: np.ndarray,
+        phis: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Load unlensed ALMs and apply lensing with phi_scale-dependent potential."""
+        batch_size = len(indices)
+
+        alm_l = get_data(self.file_path, f"alm_l/unlensed", indices)
+        alm_nl = np.array(
+            [
+                get_data(self.file_path, f"alm_nl/unlensed/{s}", indices)
+                for s in self.shapes
+            ]
+        )
+
+        # Load alm_phi from data file
+        alm_phi_all = get_data(self.file_path, "alm_phi", indices)
+
+        alms_lensed = np.zeros(
+            (batch_size, duplicates, alm_l.shape[1], alm_l.shape[2]),
+            dtype=np.complex128,
+        )
+
+        with redirect_stdout(io.StringIO()):
+            for sim_idx in range(batch_size):
+                for dup_idx in range(duplicates):
+                    fnl_vals = fnls[sim_idx, dup_idx]
+                    alm = np.asarray(alm_l[sim_idx], dtype=np.complex128) + np.einsum(
+                        "i...,i...->...", fnl_vals, alm_nl[:, sim_idx]
+                    )
+                    alm = np.asarray(alm, dtype=np.complex128)
+
+                    phi_scale = phis[sim_idx]
+                    alm_phi = alm_phi_all[sim_idx] * phi_scale
+
+                    dlm = hp.almxfl(alm_phi, self.fl)
+
+                    alm_t = np.asarray(alm[0], dtype=np.complex128)
+
+                    lenmap = lenspyx.alm2lenmap(
+                        alm_t,
+                        dlm,
+                        geometry=self.geom_info,
+                        nthreads=1,
+                    )
+                    lenmap = np.ascontiguousarray(lenmap)
+
+                    alm_lensed_t = self.geom.map2alm(
+                        lenmap,
+                        self.lmax,
+                        self.lmax,
+                        nthreads=1,
+                    )
+
+                    alm_lensed_t = np.asarray(alm_lensed_t, dtype=np.complex128)
+
+                    if alm.shape[0] == 1:
+                        alms_lensed[sim_idx, dup_idx, 0] = alm_lensed_t
+                    else:
+                        alms_lensed[sim_idx, dup_idx, 0, : len(alm_lensed_t)] = (
+                            alm_lensed_t
+                        )
+                        alms_lensed[sim_idx, dup_idx, 1:, :] = alm[1:, :]
+
+        return alms_lensed, alm_phi_all
+
+    def _generate(
+        self, indices: np.ndarray, duplicates: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Generate a batch of CMB maps with flexible x/y outputs. Only generates maps when requested."""
+        batch_size = len(indices)
+
+        fnls, phis = self._generate_parameters(indices, duplicates)
+
+        # Determine which maps are needed
+        all_outputs = set(self.x_output) | set(self.y_output)
+        need_lensed = "lensed" in all_outputs
+        need_unlensed = "unlensed" in all_outputs
+        need_phi = "phi" in all_outputs
+        need_kappa = "kappa" in all_outputs
+
+        n_cpus = len(os.sched_getaffinity(0))
+        n_jobs = min(n_cpus, batch_size * duplicates)
+
+        maps_dict = {}
+
+        # Only generate lensed maps if needed
+        if need_lensed:
+            alms_lensed, alm_phi_all = self._lens_alms(indices, duplicates, fnls, phis)
+            with Parallel(
+                n_jobs, pre_dispatch="n_jobs", prefer=self.parallel_prefer
+            ) as p:
+                maps_lensed = p(
+                    delayed(self._alm_to_map)(alm, self.rotate, self.nside)
+                    for batch in alms_lensed
+                    for alm in batch
+                )
+            maps_lensed = np.array(maps_lensed)
+            maps_lensed = np.transpose(maps_lensed, (0, 2, 1))
+            maps_dict["lensed"] = maps_lensed
+        else:
+            # Still need alm_phi_all if generating phi or kappa
+            if need_phi or need_kappa:
+                alm_phi_all = get_data(self.file_path, "alm_phi", indices)
+
+        # Only generate unlensed maps if needed
+        if need_unlensed:
+            alm_l = get_data(self.file_path, f"alm_l/{self.l_str}", indices)
+            alm_nl = np.array(
+                [
+                    get_data(self.file_path, f"alm_nl/{self.l_str}/{s}", indices)
+                    for s in self.shapes
+                ]
+            )
+            alms_unlensed = np.zeros(
+                (batch_size, duplicates, alm_l.shape[1], alm_l.shape[2]),
+                dtype=np.complex128,
+            )
+            for sim_idx in range(batch_size):
+                for dup_idx in range(duplicates):
+                    fnl_vals = fnls[sim_idx, dup_idx]
+                    alm = np.asarray(alm_l[sim_idx], dtype=np.complex128) + np.einsum(
+                        "i,i...->...", fnl_vals, alm_nl[:, sim_idx]
+                    )
+                    alm = np.asarray(alm, dtype=np.complex128)
+                    alms_unlensed[sim_idx, dup_idx] = alm
+                    if alm.shape[0] > 1:
+                        alms_unlensed[sim_idx, dup_idx, 1:] = alm[1:]
+
+            with Parallel(
+                n_jobs, pre_dispatch="n_jobs", prefer=self.parallel_prefer
+            ) as p:
+                maps_unlensed = p(
+                    delayed(self._alm_to_map)(alm, self.rotate, self.nside)
+                    for batch in alms_unlensed
+                    for alm in batch
+                )
+            maps_unlensed = np.array(maps_unlensed)
+            maps_unlensed = np.transpose(maps_unlensed, (0, 2, 1))
+            maps_dict["unlensed"] = maps_unlensed
+
+        # Only generate phi maps if needed
+        if need_phi:
+            if "alm_phi_all" not in locals():
+                alm_phi_all = get_data(self.file_path, "alm_phi", indices)
+            alm_phi_scaled = np.asarray(alm_phi_all * phis, dtype=np.complex128)
+            with Parallel(
+                n_jobs, pre_dispatch="n_jobs", prefer=self.parallel_prefer
+            ) as p:
+                maps_phi = p(
+                    delayed(self._alm_to_map)(alm, self.rotate, self.nside * 2)
+                    for alm in alm_phi_scaled
+                )
+            maps_phi = np.array(maps_phi)
+            maps_phi = np.expand_dims(maps_phi, axis=-1)
+            maps_dict["phi"] = maps_phi
+
+        # Only generate kappa (convergence) maps if needed
+        if need_kappa:
+            if "alm_phi_all" not in locals():
+                alm_phi_all = get_data(self.file_path, "alm_phi", indices)
+            alm_phi_scaled = np.asarray(alm_phi_all * phis, dtype=np.complex128)
+            alm_kappa = np.array(
+                [
+                    hp.almxfl(
+                        np.asarray(alm, dtype=np.complex128),
+                        self.kappa_coeff,
+                    )
+                    for alm in alm_phi_scaled
+                ],
+                dtype=np.complex128,
+            )
+            with Parallel(
+                n_jobs, pre_dispatch="n_jobs", prefer=self.parallel_prefer
+            ) as p:
+                maps_kappa = p(
+                    delayed(self._alm_to_map)(alm, self.rotate, self.nside * 2)
+                    for alm in alm_kappa
+                )
+            maps_kappa = np.array(maps_kappa)
+            maps_kappa = np.repeat(maps_kappa, duplicates, axis=0)
+            maps_kappa = np.expand_dims(maps_kappa, axis=-1)
+            # Apply kappa_scale multiplier
+            maps_kappa = maps_kappa * self.kappa_scale
+            maps_dict["kappa"] = maps_kappa
+
+        # Build x output
+        x_items = []
+        for out_type in self.x_output:
+            if out_type in maps_dict:
+                x_items.append(maps_dict[out_type])
+            elif out_type == "fnl":
+                x_items.append(fnls.reshape(batch_size * duplicates, 1))
+            elif out_type == "phi_scale":
+                x_items.append(phis)
+
+        # Stack x: single map stays (npix, npols), multiple items flatten
+        if len(x_items) == 1:
+            item = x_items[0]
+            if item.ndim == 3 and item.shape[-1] <= 2:  # Maps stay 3D
+                x = item
+            else:
+                # Reshape to (batch_size, duplicates, -1) then flatten to (batch_size*duplicates, -1)
+                x = item.reshape(batch_size, duplicates, -1)
+                x = x.reshape(batch_size * duplicates, -1)
+        else:
+            # Flatten all items and stack
+            x_flat = []
+            for item in x_items:
+                if item.ndim >= 2:
+                    x_reshaped = item.reshape(batch_size, duplicates, -1)
+                    x_flat.append(x_reshaped.reshape(batch_size * duplicates, -1))
+                else:
+                    x_flat.append(item)
+            x = np.hstack(x_flat)
+
+        # Build y output
+        y_items = []
+        for out_type in self.y_output:
+            if out_type in maps_dict:
+                y_items.append(maps_dict[out_type])
+            elif out_type == "fnl":
+                y_items.append(fnls.reshape(batch_size * duplicates, 1))
+            elif out_type == "phi_scale":
+                y_items.append(phis)
+
+        # Stack y: single map stays 3D, multiple items flatten
+        if len(y_items) == 1:
+            item = y_items[0]
+            if item.ndim == 3 and item.shape[-1] <= 2:  # Maps stay 3D
+                y = item
+            else:
+                # Reshape to (batch_size, duplicates, -1) then flatten to (batch_size*duplicates, -1)
+                y = item.reshape(batch_size, duplicates, -1)
+                y = y.reshape(batch_size * duplicates, -1)
+        else:
+            # Flatten all items and stack
+            y_flat = []
+            for item in y_items:
+                if item.ndim >= 2:
+                    y_reshaped = item.reshape(batch_size, duplicates, -1)
+                    y_flat.append(y_reshaped.reshape(batch_size * duplicates, -1))
+                else:
+                    y_flat.append(item)
+            y = np.hstack(y_flat)
+
+        return x, y
+
+
 class elsnerDataset(ALMDataset):
     def __init__(self, file_path, start_idx=1, end_idx=1001, rotate=True, **kwargs):
         self.rotate = rotate
@@ -639,7 +1184,7 @@ class elsnerDataset(ALMDataset):
             size=(len(indices), len(self.shapes), duplicates, 1, 1),  # todo add pols
         )
 
-        alms = Parallel(4)(
+        alms = Parallel(4, prefer=self.parallel_prefer)(
             delayed(process_alm)(idx, fnls[i]) for i, idx in enumerate(indices)
         )
         return np.array(alms), fnls
@@ -701,11 +1246,11 @@ class elsnerMapDataset(elsnerDataset):
         alm_jobs = min(n_cpus, batch_size)
         map_jobs = min(n_cpus, duplicates * batch_size)
 
-        alms = Parallel(alm_jobs)(
+        alms = Parallel(alm_jobs, prefer=self.parallel_prefer)(
             delayed(get_alm)(idx, fnls[i]) for i, idx in enumerate(indices)
         )
 
-        maps = Parallel(map_jobs)(
+        maps = Parallel(map_jobs, prefer=self.parallel_prefer)(
             delayed(process)(sim) for batches in alms for sim in batches  # type: ignore
         )
 

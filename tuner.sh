@@ -10,7 +10,7 @@
 
 
 #this is the sbatch file to use for the jobs
-SBATCH_FILE="sbatch/unet_optuna.sbatch"
+SBATCH_FILE="sbatch/trainer.sbatch"
 
 # The settings files to use for the sims. These should be found in settings/*.json
 SETTINGS=(
@@ -26,11 +26,17 @@ SETTINGS=(
 # some additional args are allowed for the trainer see scripts/models/modelcore.py
 ARGS=(
     "--nsims" "10000"
-    "--phi_scale" "4"
+    "--phi_scale" "1"
     "--shapes" "local"
-    "--fnl_range" "-100" "100"
+    "--fnl_range" "-1000" "1000"
     # "--tensorboard"
     # "--wandb"
+)
+
+# The AI models to train on the data, see scripts/trainer.py and scripts/models/ for more info
+# these models should be registered with @register_model
+MODELS=(
+    "optuna_trainer"
 )
 
 # loops through all the SETTINGS files and for each submits a slurm job for each MODEL
@@ -43,6 +49,8 @@ for x in "${SETTINGS[@]}"; do
 
     echo "Settings $x:"
 
-    JOB_ID=$(sbatch "$SBATCH_FILE" "$file" "${ARGS[@]}" | awk '{print $4}')
-    printf "\tSubmitted ID %s\n" "$JOB_ID"
+    for model in "${MODELS[@]}"; do
+        JOB_ID=$(sbatch "$SBATCH_FILE" "$model" "$file" "${ARGS[@]}" | awk '{print $4}')
+        printf "\tSubmitted %s, with ID %s\n" "$model" "$JOB_ID"
+    done
 done
