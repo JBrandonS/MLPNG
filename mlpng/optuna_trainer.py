@@ -36,9 +36,7 @@ from mlpng.utils.dataloaders import KappaDataset
 
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
-LOGGER = setup_logging("mlpng.optuna_trainer", level=logging.INFO)
-logging.getLogger("mlpng.core").setLevel(logging.INFO)
-logging.getLogger("mlpng.utils.dataloaders").setLevel(logging.INFO)
+LOGGER = logging.getLogger(__name__)
 
 DATA_FRACTION = 0.1
 BASE_SPLIT = np.array([0.8, 0.1, 0.1], dtype=np.float32)
@@ -492,4 +490,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    setup_logging(__name__, level=logging.INFO)
+    # Set related loggers to INFO to reduce noise
+    logging.getLogger("mlpng.core").setLevel(logging.INFO)
+    logging.getLogger("mlpng.utils.dataloaders").setLevel(logging.INFO)
+
     sys.exit(main())

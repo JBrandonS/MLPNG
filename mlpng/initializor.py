@@ -30,7 +30,8 @@ class Initializor(Core):
         warnings.filterwarnings("ignore", message=".*power_spectra_from_transfer.*")
 
         super().__init__(argv, log_level=log_level)
-        self.logger = setup_logging("mlpng.initializor", level=log_level)
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(log_level)
 
         # quick check before doing any calculations
         self.check_existing_data_file()
@@ -217,6 +218,8 @@ class Initializor(Core):
 
 
 if __name__ == "__main__":
+    setup_logging(__name__, level=logging.DEBUG if mpi_root else logging.ERROR)
+
     init = Initializor()
 
     init.run()

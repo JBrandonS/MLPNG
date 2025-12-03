@@ -14,17 +14,20 @@ def setup_logging(
     level=logging.INFO,
     scripts_level=None,
     base_level=logging.WARNING,
-    handlers=[logging.StreamHandler(sys.stdout)],
+    handlers=None,
 ):
     """
     Set up logging configuration for the application. scripts_level and base_level will default to level if None.
 
+    This function should be called once at the entry point of your application (e.g., in `if __name__ == "__main__"`
+    blocks or in notebook first cells). Library modules should use `logging.getLogger(__name__)` instead.
+
     Args:
         name (str, optional): The name of the logger. Defaults to __name__.
-        level (int, optional): The logging level for the logger. Defaults to logging.DEBUG.
-        scripts_level (int, optional): The logging level for any 'scripts' loggers. Defaults to None.
+        level (int, optional): The logging level for the logger. Defaults to logging.INFO.
+        scripts_level (int, optional): The logging level for any 'mlpng' loggers. Defaults to None (uses level).
         base_level (int, optional): The logging level for most loggers, includes 3rd party loggers.
-        handlers (list, optional): The list of logging handlers. Defaults to [logging.StreamHandler(sys.stdout)].
+        handlers (list, optional): The list of logging handlers. Defaults to None (creates StreamHandler to stdout).
 
     Returns:
         logger (logging.Logger): The configured logger object.
@@ -38,12 +41,18 @@ def setup_logging(
     if base_level is None:
         base_level = level
 
-    logging.basicConfig(
-        level=base_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%d-%b-%y %H:%M:%S",
-        handlers=handlers,
-    )
+    # Only configure root logger if no handlers exist (prevents duplicate handlers)
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        if handlers is None:
+            handlers = [logging.StreamHandler(sys.stdout)]
+
+        logging.basicConfig(
+            level=base_level,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            datefmt="%d-%b-%y %H:%M:%S",
+            handlers=handlers,
+        )
 
     logging.getLogger("mlpng").setLevel(scripts_level)
     log = logging.getLogger(name)

@@ -39,7 +39,7 @@ from mlpng.utils.dataloaders import MapDataset
 from mlpng.utils.callbacks import RMSELoss, rmse_metrics
 
 
-logger = setup_logging(__name__, level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 def get_model(input_shape, max_batch_size=32, n_out=1):
@@ -197,6 +197,8 @@ def main():
 
 
 if __name__ == "__main__":
+    setup_logging(__name__, level=logging.DEBUG)
+
     logger.info("Conda environment: %s", os.environ["CONDA_DEFAULT_ENV"])
     logger.info("Python executable: %s", sys.executable)
     logger.info("TensorFlow version: %s", tf.__version__)

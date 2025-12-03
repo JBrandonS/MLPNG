@@ -26,12 +26,12 @@ from deepsphere.healpy_layers import (
 )
 
 from mlpng import Core
-from mlpng.utils import setup_logging, try_init_wandb, make_trainer_plots
+from mlpng.utils import try_init_wandb, make_trainer_plots, setup_logging
 from mlpng.utils.dataloaders import KappaDataset
 from mlpng.utils.callbacks import RMSELoss, rmse_metrics
 
 tf.get_logger().setLevel(logging.ERROR)
-logger = setup_logging("mlpng.trainer", level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 def get_fnl_model(input_shape, max_batch_size=32, n_out=1):
@@ -951,10 +951,12 @@ def run():
 
 
 if __name__ == "__main__":
-    print("Conda environment:", os.environ["CONDA_DEFAULT_ENV"])
-    print("Python executable:", sys.executable)
-    print(f"TensorFlow version: {tf.__version__}")
-    print(f"CUDA version: {tf.sysconfig.get_build_info()['cuda_version']}")
-    print(f"cuDNN version: {tf.sysconfig.get_build_info()['cudnn_version']}")
+    setup_logging(__name__, level=logging.DEBUG)
+
+    logger.info("Conda environment: %s", os.environ["CONDA_DEFAULT_ENV"])
+    logger.info("Python executable: %s", sys.executable)
+    logger.info("TensorFlow version: %s", tf.__version__)
+    logger.info("CUDA version: %s", tf.sysconfig.get_build_info()["cuda_version"])
+    logger.info("cuDNN version: %s", tf.sysconfig.get_build_info()["cudnn_version"])
 
     sys.exit(run())

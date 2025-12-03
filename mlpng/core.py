@@ -7,7 +7,7 @@ import h5py
 import healpy as hp
 import numpy as np
 
-from .utils import Slurm, setup_logging
+from .utils import Slurm
 
 
 class Core:
@@ -77,7 +77,7 @@ class Core:
 
     _cosmo_defaults = {"As": 2.13e-09, "ns": 0.9624, "pivot_scalar": 0.05}
 
-    def __init__(self, argv=None, log_level=logging.DEBUG):
+    def __init__(self, argv=None):
         """
         Initializes a new instance of the `Core` class.
 
@@ -85,7 +85,7 @@ class Core:
             argv (list): List of the CLI Args
             If None, sys.argv will be used.
         """
-        self.logger = setup_logging("mlpng.core", level=log_level)
+        self.logger = logging.getLogger(__name__)
 
         # init our core object, split for readability
         self._process_settings(argv)

@@ -84,7 +84,8 @@ class Generator(Core):
 
     def __init__(self, argv=None, log_level=logging.DEBUG, verbose=False):
         super().__init__(argv, log_level=log_level)
-        self.logger = setup_logging("mlpng.generator", level=log_level)
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(log_level)
 
         self.theta_batch = int(np.floor(1.5 * self.lmax + 1)) // self.slurm.n_cpus
 
@@ -587,6 +588,8 @@ class Generator(Core):
 
 
 if __name__ == "__main__":
+    setup_logging(__name__, level=logging.DEBUG)
+
     generator = Generator()
 
     # check if we actually need to run / clean files
