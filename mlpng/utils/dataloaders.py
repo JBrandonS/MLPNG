@@ -104,6 +104,8 @@ class ALMDataset:
         cache_dir=None,
         rotate=[False, False, False],
         gaussian_mask=[False, False, False],
+        gaussian_mask_prob=[0.1, 0.0, 0.0],
+        clear_cache=False,
         **to_tf_kwargs,
     ):
         """
@@ -151,18 +153,24 @@ class ALMDataset:
         train.end_idx = train_end
         train.rotate = rotate[0]
         train.gaussian_mask = gaussian_mask[0]
+        if hasattr(self, "gaussian_mask_prob"):
+            train.gaussian_mask_prob = gaussian_mask_prob[0]
 
         val = copy.copy(self)
         val.start_idx = train_end
         val.end_idx = val_end
         val.rotate = rotate[1]
         val.gaussian_mask = gaussian_mask[1]
+        if hasattr(self, "gaussian_mask_prob"):
+            val.gaussian_mask_prob = gaussian_mask_prob[1]
 
         test = copy.copy(self)
         test.start_idx = val_end
         test.end_idx = test_end
         test.rotate = rotate[2]
         test.gaussian_mask = gaussian_mask[2]
+        if hasattr(self, "gaussian_mask_prob"):
+            test.gaussian_mask_prob = gaussian_mask_prob[2]
 
         logger.debug(
             "Splitting '%s' into train: %d:%d (%d), val: %d:%d (%d), test: %d:%d (%d)",
@@ -203,6 +211,15 @@ class ALMDataset:
                     os.path.join(cache_dir, f"{cache_file}-{name}.cache")
                     for name in ["train", "val", "test"]
                 ]
+
+                # clear existing cache files if requested
+                if clear_cache:
+                    for cache_path in cache:
+                        for ext in [".index", ".data-00000-of-00001", ""]:
+                            path = cache_path + ext
+                            if os.path.exists(path):
+                                logger.debug("Removing cache file: %s", path)
+                                os.remove(path)
             else:
                 # will be in memory cache
                 cache = [""] * 3
@@ -261,6 +278,8 @@ class ALMDataset:
         if cache and cache_file:
             logger.debug("Using cache file: '%s'", cache_file)
             os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+            if os.path.exists(cache_file):
+                logger.debug("Cache file exists, reusing cached dataset.")
 
         ds = tf.data.Dataset.from_generator(
             self._generator,
@@ -344,11 +363,31 @@ class ALMDataset:
         temp_folder = os.environ.get("SCRATCH", None)
         return Parallel(
             min(n_jobs, len(batched_indices)),
-            return_as="generator",
+            # return_as="generator",
             pre_dispatch=pre_dispatch,
             prefer=self.parallel_prefer,
             temp_folder=temp_folder,
         )(delayed(self._generate)(i, duplicates) for i in batched_indices)
+
+    def _generator_with_unpacking(
+        self,
+        batch_size,
+        duplicates,
+        single_x_output,
+        single_y_output,
+        n_jobs=len(os.sched_getaffinity(0)),
+        pre_dispatch="n_jobs",
+    ):
+        """
+        Generator wrapper that unpacks dict outputs to tensors when single outputs are requested.
+        Used by to_tf() to automatically convert single-value dicts to tensors.
+        """
+        for x_dict, y_dict in self._generator(
+            batch_size, duplicates, n_jobs, pre_dispatch
+        ):
+            x_out = x_dict[list(x_dict.keys())[0]] if single_x_output else x_dict
+            y_out = y_dict[list(y_dict.keys())[0]] if single_y_output else y_dict
+            yield x_out, y_out
 
 
 class MapDataset(ALMDataset):
@@ -361,24 +400,37 @@ class MapDataset(ALMDataset):
             core, x_shape=x_shape, x_dtype=x_dtype, nside=nside, **kwargs
         )
 
-    def __init__(self, file_path, nside, rotate=True, gaussian_mask=True, **kwargs):
+    def __init__(self, file_path, nside, rotate=False, gaussian_mask=True, **kwargs):
         self.nside = nside
         self.rotate = rotate
         self.gaussian_mask = gaussian_mask
         super().__init__(file_path=file_path, **kwargs)
 
     @staticmethod
-    def _alm_to_map(alm, rotate, nside):
+    def _alm_to_map(alm, rotate, nside, seed=None, rot_angles=None):
+        """Convert alm to map with optional rotation.
+
+        Args:
+            alm: Spherical harmonic coefficients
+            rotate: Whether to apply rotation
+            nside: HEALPix nside parameter
+            seed: Optional seed for deterministic RNG (used if rot_angles not provided)
+            rot_angles: Optional pre-computed rotation angles (lon, lat, psi) in degrees.
+                       If provided, seed is ignored.
+
+        Returns:
+            Map in NESTED ordering
+        """
         if rotate:
-            # Apply a random rotation to the maps
-            rotator = hp.Rotator(
-                deg=True,
-                rot=[
-                    np.random.uniform(-180, 180),
-                    np.random.uniform(-90, 90),
-                    np.random.uniform(0, 360),
-                ],
-            )
+            if rot_angles is None:
+                # Use seeded RNG for reproducibility in parallel workers
+                rng = np.random.default_rng(seed)
+                rot_angles = [
+                    rng.uniform(-180, 180),
+                    rng.uniform(-90, 90),
+                    rng.uniform(0, 360),
+                ]
+            rotator = hp.Rotator(deg=True, rot=rot_angles)
             alm_rotated = rotator.rotate_alm(alm)
         else:
             alm_rotated = alm
@@ -420,11 +472,20 @@ class MapDataset(ALMDataset):
         # number of CPUs, accounting for slurm, use 1 less to avoid overloading
         n_cpus = len(os.sched_getaffinity(0))
         n_jobs = min(n_cpus, duplicates * batch_size)
+
+        # Generate deterministic seeds for each (batch, dup, sim) combination
+        # This ensures reproducibility even with parallel workers
+        base_seed = self.fnl_seed + indices[0]
         with Parallel(n_jobs, pre_dispatch="n_jobs", prefer=self.parallel_prefer) as p:
             maps = p(
-                delayed(self._alm_to_map)(sim, self.rotate, self.nside)
-                for batches in alms
-                for sim in batches
+                delayed(self._alm_to_map)(
+                    sim,
+                    self.rotate,
+                    self.nside,
+                    seed=base_seed + batch_idx * 1000 + sim_idx,
+                )
+                for batch_idx, batches in enumerate(alms)
+                for sim_idx, sim in enumerate(batches)
             )
 
         maps = np.transpose(np.array(maps), (0, 2, 1))
@@ -446,17 +507,31 @@ class UnlensMapDataset(MapDataset):
         return super().fromCore(core, y_shape=y_shape, y_dtype=y_dtype, **kwargs)
 
     @staticmethod
-    def _alm_to_map(alm_lens, alm_unlens, rotate, nside):
+    def _alm_to_map(alm_lens, alm_unlens, rotate, nside, seed=None, rot_angles=None):
+        """Convert lensed and unlensed alms to maps with consistent rotation.
+
+        Args:
+            alm_lens: Lensed spherical harmonic coefficients
+            alm_unlens: Unlensed spherical harmonic coefficients
+            rotate: Whether to apply rotation
+            nside: HEALPix nside parameter
+            seed: Optional seed for deterministic RNG (used if rot_angles not provided)
+            rot_angles: Optional pre-computed rotation angles (lon, lat, psi) in degrees.
+                       If provided, seed is ignored.
+
+        Returns:
+            Tuple of (lensed_map, unlensed_map) in NESTED ordering
+        """
         if rotate:
-            # Apply a random rotation to the maps
-            rotator = hp.Rotator(
-                deg=True,
-                rot=[
-                    np.random.uniform(-180, 180),
-                    np.random.uniform(-90, 90),
-                    np.random.uniform(0, 360),
-                ],
-            )
+            if rot_angles is None:
+                # Use seeded RNG for reproducibility in parallel workers
+                rng = np.random.default_rng(seed)
+                rot_angles = [
+                    rng.uniform(-180, 180),
+                    rng.uniform(-90, 90),
+                    rng.uniform(0, 360),
+                ]
+            rotator = hp.Rotator(deg=True, rot=rot_angles)
             alm_lens_rotated = rotator.rotate_alm(alm_lens)
             alm_unlensed_rotated = rotator.rotate_alm(alm_unlens)
         else:
@@ -504,13 +579,24 @@ class UnlensMapDataset(MapDataset):
         # number of CPUs, accounting for slurm
         n_cpus = len(os.sched_getaffinity(0))
         n_jobs = min(n_cpus, duplicates * batch_size)
+
+        # Generate deterministic seeds for each (batch, sim) combination
+        base_seed = self.fnl_seed + indices[0]
         with Parallel(n_jobs, pre_dispatch="n_jobs", prefer=self.parallel_prefer) as p:
             maps = p(
                 delayed(self._alm_to_map)(
-                    sim_lens, sim_unlensed, self.rotate, self.nside
+                    sim_lens,
+                    sim_unlensed,
+                    self.rotate,
+                    self.nside,
+                    seed=base_seed + batch_idx * 1000 + sim_idx,
                 )
-                for lens_batches, unlensed_batches in zip(alm_lens, alm_unlensed)
-                for sim_lens, sim_unlensed in zip(lens_batches, unlensed_batches)
+                for batch_idx, (lens_batches, unlensed_batches) in enumerate(
+                    zip(alm_lens, alm_unlensed)
+                )
+                for sim_idx, (sim_lens, sim_unlensed) in enumerate(
+                    zip(lens_batches, unlensed_batches)
+                )
             )
 
         map_lens, map_unlensed = zip(*maps)
@@ -532,22 +618,45 @@ class PhiMapDataset(UnlensMapDataset):
 
     @staticmethod
     def _alm_to_map_batch(
-        alm_lens, alm_phi, rotate, nside, batch_size, shapes, duplicates
+        alm_lens, alm_phi, rotate, nside, batch_size, shapes, duplicates, base_seed=None
     ):
+        """Convert alm batches to maps with optional rotation.
+
+        Args:
+            alm_lens: Lensed alm array
+            alm_phi: Phi alm array
+            rotate: Whether to apply rotation
+            nside: HEALPix nside parameter
+            batch_size: Number of batches
+            shapes: List of shape names
+            duplicates: Number of duplicates
+            base_seed: Optional base seed for deterministic RNG
+
+        Returns:
+            Tuple of (lens_maps, phi_maps) arrays
+        """
         lens_maps = []
         phi_maps = []
+        idx = 0
         for batch, dup, shape in itertools.product(
             range(batch_size), range(duplicates), range(len(shapes))
         ):
             if rotate:  # VERY slow
-                rotator = hp.Rotator(
-                    deg=True,
-                    rot=[
+                # Use seeded RNG for reproducibility
+                if base_seed is not None:
+                    rng = np.random.default_rng(base_seed + idx)
+                    rot_angles = [
+                        rng.uniform(-180, 180),
+                        rng.uniform(-90, 90),
+                        rng.uniform(0, 360),
+                    ]
+                else:
+                    rot_angles = [
                         np.random.uniform(-180, 180),
                         np.random.uniform(-90, 90),
                         np.random.uniform(0, 360),
-                    ],
-                )
+                    ]
+                rotator = hp.Rotator(deg=True, rot=rot_angles)
                 alm_lens_rotated = rotator.rotate_alm(alm_lens[dup, batch, shape])
                 alm_phi_rotated = rotator.rotate_alm(alm_phi[batch, shape])
             else:
@@ -561,6 +670,7 @@ class PhiMapDataset(UnlensMapDataset):
 
             lens_maps.append(hp.reorder(m_lens, r2n=True))
             phi_maps.append(hp.reorder(m_phi, r2n=True))
+            idx += 1
 
         return np.array(lens_maps)[..., None], np.array(phi_maps)[..., None]
 
@@ -602,18 +712,12 @@ class PhiMapDataset(UnlensMapDataset):
             batch_size,
             self.shapes,
             duplicates,
+            base_seed=self.fnl_seed + indices[0],  # Pass deterministic seed
         )
 
 
 class KappaDataset(MapDataset):
-    """
-    Dataset for generating lensed CMB maps with flexible x/y outputs.
-
-    Generates lensed maps by applying lensing potential phi_scale*alm_phi to unlensed ALMs.
-    Supports flexible x (input) and y (output) configurations: any combination of maps (lensed, unlensed, phi, kappa) and parameters (fnl, phi_scale, kappa_scale).
-
-    Example: x_output="lensed", y_output=("unlensed", "phi", "phi_scale") for a de-lensing model that takes lensed map and outputs unlensed map, phi map, and phi_scale.
-    """
+    """ """
 
     @classmethod
     def fromCore(
@@ -696,11 +800,7 @@ class KappaDataset(MapDataset):
         npols: int,
         nshapes: int,
     ) -> tuple[int | None, ...]:
-        """Compute output shape based on output types.
-
-        Note: phi and kappa maps are generated at nside*2 resolution (4x npix),
-        while lensed and unlensed maps use the standard nside resolution (npix).
-        """
+        """Compute output shape based on output types."""
         if isinstance(output_types, str):
             output_types = (output_types,)
 
@@ -718,7 +818,7 @@ class KappaDataset(MapDataset):
                 has_lowres = True
             elif out_type == "fnl":
                 n_params += nshapes
-            elif out_type == "phi_scale":
+            elif out_type == "phi":
                 n_params += 1
 
         # If single map and no params, keep 3D shape
@@ -732,15 +832,10 @@ class KappaDataset(MapDataset):
         # If single param and no params, keep 1D shape (1,)
         elif n_params == 1 and n_maps == 0:
             return (None, 1)
-        # Multiple items: flatten to 1D
+        # Multiple items: dict output handles mixed resolutions naturally
         else:
-            # Cannot mix high-res and low-res maps - user must separate them
-            if has_hires and has_lowres:
-                raise ValueError(
-                    "Cannot mix phi/kappa (high-res) with lensed/unlensed (low-res) maps. "
-                    "Phi and kappa are generated at nside*2 resolution (4x pixels). "
-                    "Use separate output specifications for different resolutions."
-                )
+            # Dict-based output allows mixing different resolutions
+            # Each key maintains its own resolution
             total_size = n_maps * (4 * npix if has_hires else npix) * npols + n_params
             return (None, total_size)
 
@@ -814,9 +909,9 @@ class KappaDataset(MapDataset):
 
         if y_shape is None:
             n_params = sum(
-                1 if o == "phi_scale" else (len(shapes) if o == "fnl" else 0)
+                1 if o == "phi" else (len(shapes) if o == "fnl" else 0)
                 for o in y_output
-                if o in ["fnl", "phi_scale"]
+                if o in ["fnl", "phi"]
             )
             y_shape = (None, max(1, n_params))
 
@@ -843,13 +938,131 @@ class KappaDataset(MapDataset):
         self.geom = lenspyx.get_geom(self.geom_info)
         self.lmax = 3 * self.nside - 1
         self.lmax_len = self.lmax + self.lmax_buffer
-        fl = np.sqrt(np.arange(self.lmax_len + 1) * np.arange(1, self.lmax_len + 2))
-        self.fl = fl
-        # kappa coefficients: kappa_lm = -1/2 * ell(ell+1) * phi_lm
-        kappa_coeff = (
-            -0.5 * np.arange(self.lmax_len + 1) * np.arange(1, self.lmax_len + 2)
+        fl = np.arange(self.lmax_len + 1) * np.arange(1, self.lmax_len + 2)
+        self.fl = np.sqrt(fl)
+        self.kappa_coeff = -0.5 * fl
+        self.inv_kappa_coeff = np.zeros_like(self.kappa_coeff)
+        nonzero = self.kappa_coeff != 0
+        self.inv_kappa_coeff[nonzero] = 1.0 / self.kappa_coeff[nonzero]
+
+    def to_tf(
+        self,
+        gen_batch_size=8,
+        duplicates=1,
+        unbatch=True,
+        cache=True,
+        cache_file="",
+        shuffle=True,
+        buffer_size=8,
+        reshuffle=True,
+        batch_size=8,
+        batch_n_calls=tf.data.AUTOTUNE,
+        batch_deterministic=False,
+        batch_drop_remainder=False,
+        prefetch_n_calls=tf.data.AUTOTUNE,
+    ):
+        """
+        Build TensorFlow dataset pipeline for outputs.
+
+        When x_output or y_output contains a single value, returns tensors directly.
+        When multiple values are requested, returns dicts mapping output names to arrays.
+        Dynamically infers TensorSpecs from output structure to ensure proper TensorFlow compatibility.
+
+        Args:
+            gen_batch_size: Batch size for data generator (default: 8)
+            duplicates: Number of samples per seed batch (default: 1)
+            unbatch: If True, unbatch the dataset. For dict outputs, this is skipped to avoid
+                    TensorFlow graph tracing issues. Call ds.unbatch() manually if needed. (default: True)
+            cache: Whether to cache the dataset (default: True)
+            cache_file: Path for caching (default: "")
+            shuffle: Whether to shuffle (default: True)
+            buffer_size: Shuffle buffer size (default: 128)
+            reshuffle: Whether to reshuffle each iteration (default: True)
+            batch_size: Final batch size (default: 64)
+            batch_n_calls: Parallel calls for batching (default: AUTOTUNE)
+            batch_deterministic: Whether batching is deterministic (default: False)
+            batch_drop_remainder: Drop incomplete final batch (default: False)
+            prefetch_n_calls: Parallel calls for prefetching (default: AUTOTUNE)
+
+        Returns:
+            tf.data.Dataset: Dataset yielding tuples with structure:
+                - Single output: (tensor_x, tensor_y)
+                - Multiple outputs: (dict_x, dict_y) or mixed (tensor_x, dict_y), etc.
+                - Each single-value output is returned as a tensor, not a dict
+        """
+        if cache and cache_file:
+            logger.debug("Using cache file: '%s'", cache_file)
+            os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+            if os.path.exists(cache_file):
+                logger.debug("Cache file exists, reusing cached dataset.")
+
+        # Generate a sample batch to infer shapes and dtypes
+        sample_x_dict, sample_y_dict = self._generate(
+            np.arange(
+                self.start_idx, min(self.start_idx + gen_batch_size, self.end_idx)
+            ),
+            duplicates,
         )
-        self.kappa_coeff = kappa_coeff
+
+        # Check if outputs should be single tensors or dicts
+        single_x_output = len(self.x_output) == 1
+        single_y_output = len(self.y_output) == 1
+
+        # Build TensorSpecs based on output structure
+        if single_x_output:
+            # Extract single key
+            key = list(sample_x_dict.keys())[0]
+            val = sample_x_dict[key]
+            shape = (None,) + val.shape[1:]
+            x_spec = tf.TensorSpec(shape=shape, dtype=tf.as_dtype(val.dtype))
+        else:
+            # Keep as dict
+            x_spec = {}
+            for key, val in sample_x_dict.items():
+                shape = (None,) + val.shape[1:]
+                x_spec[key] = tf.TensorSpec(shape=shape, dtype=tf.as_dtype(val.dtype))
+
+        if single_y_output:
+            # Extract single key
+            key = list(sample_y_dict.keys())[0]
+            val = sample_y_dict[key]
+            shape = (None,) + val.shape[1:]
+            y_spec = tf.TensorSpec(shape=shape, dtype=tf.as_dtype(val.dtype))
+        else:
+            # Keep as dict
+            y_spec = {}
+            for key, val in sample_y_dict.items():
+                shape = (None,) + val.shape[1:]
+                y_spec[key] = tf.TensorSpec(shape=shape, dtype=tf.as_dtype(val.dtype))
+
+        ds = tf.data.Dataset.from_generator(
+            self._generator_with_unpacking,
+            args=[gen_batch_size, duplicates, single_x_output, single_y_output],
+            output_signature=(x_spec, y_spec),
+        )
+
+        if unbatch:
+            ds = ds.unbatch()
+
+        ds_len = len(self) * duplicates
+        ds = ds.apply(tf.data.experimental.assert_cardinality(ds_len))
+
+        if cache:
+            ds = ds.cache(cache_file)
+
+        if shuffle:
+            ds = ds.shuffle(
+                buffer_size=buffer_size,
+                reshuffle_each_iteration=reshuffle,
+            )
+
+        ds = ds.batch(
+            batch_size,
+            num_parallel_calls=batch_n_calls,
+            deterministic=batch_deterministic,
+            drop_remainder=batch_drop_remainder,
+        )
+        return ds.prefetch(prefetch_n_calls)
 
     def _generate_parameters(
         self, indices: np.ndarray, duplicates: int
@@ -895,13 +1108,9 @@ class KappaDataset(MapDataset):
 
         return fnls, phis
 
-    def _lens_alms(
-        self,
-        indices: np.ndarray,
-        duplicates: int,
-        fnls: np.ndarray,
-        phis: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def _lens_alms_maps(
+        self, indices: np.ndarray, duplicates: int, fnls: np.ndarray, phis: np.ndarray
+    ):
         """Load unlensed ALMs and apply lensing with phi_scale-dependent potential."""
         batch_size = len(indices)
 
@@ -912,14 +1121,8 @@ class KappaDataset(MapDataset):
                 for s in self.shapes
             ]
         )
-
-        # Load alm_phi from data file
         alm_phi_all = get_data(self.file_path, "alm_phi", indices)
-
-        alms_lensed = np.zeros(
-            (batch_size, duplicates, alm_l.shape[1], alm_l.shape[2]),
-            dtype=np.complex128,
-        )
+        maps = []
 
         with redirect_stdout(io.StringIO()):
             for sim_idx in range(batch_size):
@@ -935,39 +1138,65 @@ class KappaDataset(MapDataset):
 
                     dlm = hp.almxfl(alm_phi, self.fl)
 
-                    alm_t = np.asarray(alm[0], dtype=np.complex128)
+                    alm = np.asarray(alm[0], dtype=np.complex128)
 
                     lenmap = lenspyx.alm2lenmap(
-                        alm_t,
+                        alm,
                         dlm,
                         geometry=self.geom_info,
+                        # epsilon=1e-12,
                         nthreads=1,
+                        # pol=False,
                     )
-                    lenmap = np.ascontiguousarray(lenmap)
+                    maps.append(hp.reorder(lenmap, r2n=True))
 
-                    alm_lensed_t = self.geom.map2alm(
-                        lenmap,
-                        self.lmax,
-                        self.lmax,
-                        nthreads=1,
-                    )
+        maps = np.reshape(maps, (batch_size * duplicates, -1, 1))
+        return alm_phi_all, maps
 
-                    alm_lensed_t = np.asarray(alm_lensed_t, dtype=np.complex128)
+    def kappa_to_phi(self, kappa_map, return_map=True, return_nest=True):
+        """Undoes the kappa to phi conversion.
 
-                    if alm.shape[0] == 1:
-                        alms_lensed[sim_idx, dup_idx, 0] = alm_lensed_t
-                    else:
-                        alms_lensed[sim_idx, dup_idx, 0, : len(alm_lensed_t)] = (
-                            alm_lensed_t
-                        )
-                        alms_lensed[sim_idx, dup_idx, 1:, :] = alm[1:, :]
+        Output shape matches input shape:
+        - 3D (batch_size, pix, pol) → 3D output, loops over batch
+        - 2D (pix, pol) → 1D output (pix,), takes pol index 0
+        - 1D (pix,) → 1D output (pix,)
+        """
 
-        return alms_lensed, alm_phi_all
+        def convert_single_map(map_1d):
+            """Convert a single 1D map from kappa to phi."""
+            map_1d = map_1d / self.kappa_scale
+            map_1d = hp.reorder(map_1d, n2r=True)
+            phi_lm = hp.map2alm(map_1d, pol=False, use_pixel_weights=True)
+            phi_lm = hp.almxfl(phi_lm, self.inv_kappa_coeff)
+
+            if not return_map:
+                return phi_lm
+
+            phi_map = hp.alm2map(phi_lm, self.nside * 2, pol=False)
+            if return_nest:
+                phi_map = hp.reorder(phi_map, r2n=True)
+            return phi_map
+
+        input_shape = kappa_map.shape
+        is_3d = kappa_map.ndim == 3
+
+        if is_3d:
+            # Process all batch elements, output shape: (batch_size, pix)
+            batch_size = input_shape[0]
+            phi_maps = []
+            for i in range(batch_size):
+                map_1d = kappa_map[i, :, 0]  # Take pol index 0
+                phi_maps.append(convert_single_map(map_1d))
+            return np.array(phi_maps)
+        else:
+            # Handle 2D and 1D inputs, output shape: (pix,)
+            map_1d = kappa_map[..., 0] if kappa_map.ndim == 2 else kappa_map
+            return convert_single_map(map_1d)
 
     def _generate(
         self, indices: np.ndarray, duplicates: int
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Generate a batch of CMB maps with flexible x/y outputs. Only generates maps when requested."""
+    ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+        """Generate a batch of CMB maps with flexible x/y outputs as dicts. Only generates maps when requested."""
         batch_size = len(indices)
 
         fnls, phis = self._generate_parameters(indices, duplicates)
@@ -979,24 +1208,13 @@ class KappaDataset(MapDataset):
         need_phi = "phi" in all_outputs
         need_kappa = "kappa" in all_outputs
 
-        n_cpus = len(os.sched_getaffinity(0))
-        n_jobs = min(n_cpus, batch_size * duplicates)
-
         maps_dict = {}
 
         # Only generate lensed maps if needed
         if need_lensed:
-            alms_lensed, alm_phi_all = self._lens_alms(indices, duplicates, fnls, phis)
-            with Parallel(
-                n_jobs, pre_dispatch="n_jobs", prefer=self.parallel_prefer
-            ) as p:
-                maps_lensed = p(
-                    delayed(self._alm_to_map)(alm, self.rotate, self.nside)
-                    for batch in alms_lensed
-                    for alm in batch
-                )
-            maps_lensed = np.array(maps_lensed)
-            maps_lensed = np.transpose(maps_lensed, (0, 2, 1))
+            alm_phi_all, maps_lensed = self._lens_alms_maps(
+                indices, duplicates, fnls, phis
+            )
             maps_dict["lensed"] = maps_lensed
         else:
             # Still need alm_phi_all if generating phi or kappa
@@ -1005,36 +1223,28 @@ class KappaDataset(MapDataset):
 
         # Only generate unlensed maps if needed
         if need_unlensed:
-            alm_l = get_data(self.file_path, f"alm_l/{self.l_str}", indices)
+            alm_l = get_data(self.file_path, f"alm_l/unlensed", indices)
             alm_nl = np.array(
                 [
-                    get_data(self.file_path, f"alm_nl/{self.l_str}/{s}", indices)
+                    get_data(self.file_path, f"alm_nl/unlensed/{s}", indices)
                     for s in self.shapes
                 ]
             )
-            alms_unlensed = np.zeros(
-                (batch_size, duplicates, alm_l.shape[1], alm_l.shape[2]),
-                dtype=np.complex128,
-            )
+            maps_unlensed = []
             for sim_idx in range(batch_size):
                 for dup_idx in range(duplicates):
                     fnl_vals = fnls[sim_idx, dup_idx]
-                    alm = np.asarray(alm_l[sim_idx], dtype=np.complex128) + np.einsum(
+                    alm = alm_l[sim_idx] + np.einsum(
                         "i,i...->...", fnl_vals, alm_nl[:, sim_idx]
                     )
                     alm = np.asarray(alm, dtype=np.complex128)
-                    alms_unlensed[sim_idx, dup_idx] = alm
-                    if alm.shape[0] > 1:
-                        alms_unlensed[sim_idx, dup_idx, 1:] = alm[1:]
+                    # Use deterministic seeding per (sim, dup) pair for reproducibility
+                    seed = self.fnl_seed + indices[0] + sim_idx * 1000 + dup_idx
+                    map_unlensed = self._alm_to_map(
+                        alm, self.rotate, self.nside, seed=seed
+                    )
+                    maps_unlensed.append(map_unlensed)
 
-            with Parallel(
-                n_jobs, pre_dispatch="n_jobs", prefer=self.parallel_prefer
-            ) as p:
-                maps_unlensed = p(
-                    delayed(self._alm_to_map)(alm, self.rotate, self.nside)
-                    for batch in alms_unlensed
-                    for alm in batch
-                )
             maps_unlensed = np.array(maps_unlensed)
             maps_unlensed = np.transpose(maps_unlensed, (0, 2, 1))
             maps_dict["unlensed"] = maps_unlensed
@@ -1044,14 +1254,23 @@ class KappaDataset(MapDataset):
             if "alm_phi_all" not in locals():
                 alm_phi_all = get_data(self.file_path, "alm_phi", indices)
             alm_phi_scaled = np.asarray(alm_phi_all * phis, dtype=np.complex128)
-            with Parallel(
-                n_jobs, pre_dispatch="n_jobs", prefer=self.parallel_prefer
-            ) as p:
-                maps_phi = p(
-                    delayed(self._alm_to_map)(alm, self.rotate, self.nside * 2)
-                    for alm in alm_phi_scaled
+            # Use deterministic seeding per simulation for reproducibility
+            maps_phi = [
+                self._alm_to_map(
+                    alm,
+                    self.rotate,
+                    self.nside * 2,
+                    seed=self.fnl_seed
+                    + indices[0]
+                    + sim_idx * 1000
+                    + 2000000,  # Unique seed per sim, offset from kappa
                 )
+                for sim_idx, alm in enumerate(alm_phi_scaled)
+            ]
             maps_phi = np.array(maps_phi)
+            maps_phi = np.repeat(
+                maps_phi, duplicates, axis=0
+            )  # Fixed: repeat phi maps like kappa
             maps_phi = np.expand_dims(maps_phi, axis=-1)
             maps_dict["phi"] = maps_phi
 
@@ -1070,102 +1289,67 @@ class KappaDataset(MapDataset):
                 ],
                 dtype=np.complex128,
             )
-            with Parallel(
-                n_jobs, pre_dispatch="n_jobs", prefer=self.parallel_prefer
-            ) as p:
-                maps_kappa = p(
-                    delayed(self._alm_to_map)(alm, self.rotate, self.nside * 2)
-                    for alm in alm_kappa
+            # Use deterministic seeding per simulation for reproducibility
+            maps_kappa = [
+                self._alm_to_map(
+                    alm,
+                    self.rotate,
+                    self.nside * 2,
+                    seed=self.fnl_seed
+                    + indices[0]
+                    + sim_idx * 1000
+                    + 1000000,  # Unique seed per sim
                 )
+                for sim_idx, alm in enumerate(alm_kappa)
+            ]
             maps_kappa = np.array(maps_kappa)
             maps_kappa = np.repeat(maps_kappa, duplicates, axis=0)
             maps_kappa = np.expand_dims(maps_kappa, axis=-1)
-            # Apply kappa_scale multiplier
-            maps_kappa = maps_kappa * self.kappa_scale
-            maps_dict["kappa"] = maps_kappa
 
-        # Build x output
-        x_items = []
+            maps_dict["kappa"] = maps_kappa * self.kappa_scale
+
+        # Return dictionaries mapping output names to arrays
+        x_dict = {}
         for out_type in self.x_output:
             if out_type in maps_dict:
-                x_items.append(maps_dict[out_type])
+                x_dict[out_type] = maps_dict[out_type]
             elif out_type == "fnl":
-                x_items.append(fnls.reshape(batch_size * duplicates, 1))
+                x_dict[out_type] = fnls.reshape(batch_size * duplicates, 1)
             elif out_type == "phi_scale":
-                x_items.append(phis)
+                x_dict[out_type] = np.repeat(phis, duplicates, axis=0)
 
-        # Stack x: single map stays (npix, npols), multiple items flatten
-        if len(x_items) == 1:
-            item = x_items[0]
-            if item.ndim == 3 and item.shape[-1] <= 2:  # Maps stay 3D
-                x = item
-            else:
-                # Reshape to (batch_size, duplicates, -1) then flatten to (batch_size*duplicates, -1)
-                x = item.reshape(batch_size, duplicates, -1)
-                x = x.reshape(batch_size * duplicates, -1)
-        else:
-            # Flatten all items and stack
-            x_flat = []
-            for item in x_items:
-                if item.ndim >= 2:
-                    x_reshaped = item.reshape(batch_size, duplicates, -1)
-                    x_flat.append(x_reshaped.reshape(batch_size * duplicates, -1))
-                else:
-                    x_flat.append(item)
-            x = np.hstack(x_flat)
-
-        # Build y output
-        y_items = []
+        y_dict = {}
         for out_type in self.y_output:
             if out_type in maps_dict:
-                y_items.append(maps_dict[out_type])
+                y_dict[out_type] = maps_dict[out_type]
             elif out_type == "fnl":
-                y_items.append(fnls.reshape(batch_size * duplicates, 1))
+                y_dict[out_type] = fnls.reshape(batch_size * duplicates, 1)
             elif out_type == "phi_scale":
-                y_items.append(phis)
+                y_dict[out_type] = np.repeat(phis, duplicates, axis=0)
 
-        # Stack y: single map stays 3D, multiple items flatten
-        if len(y_items) == 1:
-            item = y_items[0]
-            if item.ndim == 3 and item.shape[-1] <= 2:  # Maps stay 3D
-                y = item
-            else:
-                # Reshape to (batch_size, duplicates, -1) then flatten to (batch_size*duplicates, -1)
-                y = item.reshape(batch_size, duplicates, -1)
-                y = y.reshape(batch_size * duplicates, -1)
-        else:
-            # Flatten all items and stack
-            y_flat = []
-            for item in y_items:
-                if item.ndim >= 2:
-                    y_reshaped = item.reshape(batch_size, duplicates, -1)
-                    y_flat.append(y_reshaped.reshape(batch_size * duplicates, -1))
-                else:
-                    y_flat.append(item)
-            y = np.hstack(y_flat)
-
-        return x, y
+        return x_dict, y_dict
 
 
 class elsnerDataset(ALMDataset):
-    def __init__(self, file_path, start_idx=1, end_idx=1001, rotate=True, **kwargs):
+    def __init__(self, file_path, start_idx=1, end_idx=1001, rotate=False, **kwargs):
         self.rotate = rotate
         super().__init__(file_path, start_idx=start_idx, end_idx=end_idx, **kwargs)
 
     def _generate(self, indices, duplicates):
-        def process_alm(i, fnl):
-            i = str(i).zfill(4)
-            alm_l = hp.read_alm(f"data/elsner/alm_l_{i}_v3.fits", hdu=(1))
-            alm_nl = hp.read_alm(f"data/elsner/alm_nl_{i}_v3.fits", hdu=(1))
+        def process_alm(i, fnl, seed):
+            i_str = str(i).zfill(4)
+            alm_l = hp.read_alm(f"data/elsner/alm_l_{i_str}_v3.fits", hdu=(1))
+            alm_nl = hp.read_alm(f"data/elsner/alm_nl_{i_str}_v3.fits", hdu=(1))
 
             if self.rotate:
-                # Apply a random rotation to the maps
+                # Use seeded RNG for reproducibility in parallel workers
+                rng = np.random.default_rng(seed)
                 rotator = hp.Rotator(
                     deg=True,
                     rot=[
-                        np.random.uniform(-180, 180),
-                        np.random.uniform(-90, 90),
-                        np.random.uniform(0, 360),
+                        rng.uniform(-180, 180),
+                        rng.uniform(-90, 90),
+                        rng.uniform(0, 360),
                     ],
                 )
                 alm_l = rotator.rotate_alm(alm_l)
@@ -1184,8 +1368,11 @@ class elsnerDataset(ALMDataset):
             size=(len(indices), len(self.shapes), duplicates, 1, 1),  # todo add pols
         )
 
+        # Generate deterministic seeds for each index
+        base_seed = self.fnl_seed + indices[0]
         alms = Parallel(4, prefer=self.parallel_prefer)(
-            delayed(process_alm)(idx, fnls[i]) for i, idx in enumerate(indices)
+            delayed(process_alm)(idx, fnls[i], base_seed + i * 1000)
+            for i, idx in enumerate(indices)
         )
         return np.array(alms), fnls
 

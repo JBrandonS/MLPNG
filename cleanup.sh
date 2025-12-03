@@ -5,6 +5,7 @@ remove_plots=false
 remove_tf=false
 remove_models=false
 remove_ksw=false
+remove_cache=false
 
 print_help() {
     echo "Usage: $0 [options]"
@@ -17,6 +18,7 @@ print_help() {
     echo "  -k, --ksw       Remove the ksw mc files"
     echo "  -p, --plots     Remove all plots"
     echo "  -t, --tf        Remove all misc tensorflow logs, such as tuning, tensorboard, and wandb logs"
+    echo "  -c, --cache     Remove cached dataset files"
     echo "  --all           Remove everything"
     echo "  -h, --help      Print this help message"
     echo ""
@@ -25,8 +27,8 @@ print_help() {
 # Parse the CLI arguments
 if ! valid_args=$(
     getopt \
-        -o mdptkh \
-        --long models,data,plots,ksw,tf,all,help \
+        -o mdptkch \
+        --long models,data,plots,ksw,tf,all,cache,help \
         -- "$@"
 ); then
     # invalid arguments found, print usage and exit
@@ -62,6 +64,10 @@ while [ $# -gt 0 ]; do
         ;;
     -t | --tf)
         remove_tf=true
+        shift
+        ;;
+    -c | --cache)
+        remove_cache=true
         shift
         ;;
     --all)
@@ -111,4 +117,8 @@ if [[ "$remove_tf" == true ]]; then
     rm -rvf data/tensorboard
     rm -rvf data/wandb
     rm -rvf data/tuning
+fi
+
+if [[ "$remove_cache" == true ]]; then
+    rm -rvf "$SCRATCH"/tf_cache/*
 fi

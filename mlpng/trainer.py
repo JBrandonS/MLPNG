@@ -12,10 +12,10 @@ sys.path.append("/users/stevensonb/Research/tools/deepsphere-cosmo-tf2")
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import tensorflow as tf
-from tensorflow.keras.layers import Dense, Dropout, Flatten, LeakyReLU, Add
+from tensorflow.keras.layers import Dense, Dropout, Flatten, LeakyReLU
 from tensorflow.keras.callbacks import EarlyStopping, TerminateOnNaN, TensorBoard
 from tensorflow.keras.optimizers import AdamW
-from tensorflow.keras.optimizers.schedules import CosineDecayRestarts, ExponentialDecay
+from tensorflow.keras.optimizers.schedules import ExponentialDecay
 
 from deepsphere import HealpyGCNN
 from deepsphere.healpy_layers import (
@@ -27,8 +27,8 @@ from deepsphere.healpy_layers import (
 
 from mlpng import Core
 from mlpng.utils import setup_logging, try_init_wandb, make_trainer_plots
-from mlpng.utils.dataloaders import MapDataset, UnlensMapDataset, PhiMapDataset
-from mlpng.utils.callbacks import RMSELoss, RMSELoss2, rmse_metrics, PowerSpectrumLoss
+from mlpng.utils.dataloaders import KappaDataset
+from mlpng.utils.callbacks import RMSELoss, rmse_metrics
 
 tf.get_logger().setLevel(logging.ERROR)
 logger = setup_logging("mlpng.trainer", level=logging.DEBUG)
@@ -299,7 +299,7 @@ class ResidualHealpyUNet:
         base_channels = [self.npol] + [2 ** (i + 3) for i in range(depth)]
         level_npixels = [self.npix // (4**i) for i in range(depth + 1)]
         level_nsides = [hp.npix2nside(npix) for npix in level_npixels]
-        Ks = [1 + (2 * (i // 2)) for i in range(depth + 1)]
+        Ks = [1 + (2 * (i // 3)) for i in range(depth + 1)]
         # Ks = [3 for _ in range(depth + 1)]
         logger.debug(f"Using Ks: {Ks}")
 
@@ -402,18 +402,6 @@ class ResidualHealpyUNet:
         return tf.keras.Model(inputs, outputs)
 
 
-normalizer = tf.keras.layers.Normalization(axis=-1)
-
-
-def normalize_y(x, y):
-    return x, normalizer(y)
-
-
-def undo_norm(y):
-    val = y * tf.sqrt(normalizer.variance) + normalizer.mean
-    return val.numpy()
-
-
 def train_u_net(
     core,
     splits,
@@ -427,9 +415,30 @@ def train_u_net(
     strategy,
     shapes,
     plot_prefix,
-    normalizer=None,
+    tf_cache,
+    tf_mem_cache,
 ):
-    ds = PhiMapDataset.fromCore(core, lensed=True)
+    # Determine cache strategy based on tf_cache and tf_mem_cache flags
+    if tf_cache:
+        # Use disk-based file cache
+        cache_file_arg = cache_file
+        logger.debug(f"Using disk-based cache: {cache_file_arg}")
+    elif tf_mem_cache:
+        # Use in-memory cache (empty string)
+        cache_file_arg = ""
+        logger.debug("Using in-memory cache")
+    else:
+        # Disable caching by passing None
+        cache_file_arg = None
+        logger.debug("Cache disabled")
+
+    ds = KappaDataset.fromCore(
+        core,
+        x_output="lensed",
+        y_output="kappa",
+        kappa_scale=np.sqrt(1e7),
+        phi_scale=1.0,
+    )
     train, val, test = ds.split(
         train_size=splits[0],
         val_size=splits[1],
@@ -437,19 +446,11 @@ def train_u_net(
         to_tf=True,
         batch_size=batch_size,
         duplicates=duplicates,
-        cache_file=cache_file,
+        cache_file=cache_file_arg,
         gen_batch_size=4,
         buffer_size=8,
     )
     logger.debug("Creating U-Net model and training data")
-
-    if normalizer is not None:
-        normalizer.adapt(train.map(lambda _, y: y))
-        logger.debug("adapted")
-        train = train.map(normalize_y)
-        logger.debug("train")
-        val = val.map(normalize_y)
-        logger.debug("val")
 
     # calculate the number of steps per epoch and decay steps for use later
     epoch_steps = math.ceil(core.total_sims * splits[0] * duplicates[0] // batch_size)
@@ -472,17 +473,19 @@ def train_u_net(
             metrics=rmse_metrics(shapes) + ["mse", "mae"],
         )
 
-    logger.debug("Creating test cache")
-    y_test = np.concatenate([y for _, y in test])
-    logger.debug("Creating val cache")
-    for _ in val:
-        pass
-    logger.debug("Creating train cache")
-    for _ in train:
-        pass
-    logger.debug("Caches created")
+    if tf_cache:
+        logger.debug("Creating test cache")
+        for _, y in test:
+            pass
+        logger.debug("Creating val cache")
+        for _ in val:
+            pass
+        logger.debug("Creating train cache")
+        for _ in train:
+            pass
+        logger.debug("Caches created")
 
-    u_net_history = u_net.fit(
+    u_net.fit(
         train,
         epochs=max_epochs,
         validation_data=val,
@@ -492,26 +495,23 @@ def train_u_net(
 
     u_net.save(unet_keras_file)
 
-    test_phi = np.concatenate([y for _, y in test])
-    pred_phi = u_net.predict(test, verbose=0)
-    pred_phi = undo_norm(pred_phi) if normalizer is not None else pred_phi
+    test_kappa = np.concatenate([y for _, y in test])
+    pred_kappa = u_net.predict(test, verbose=0)
 
-    # pick the first item, and remove the shapes dim
-    test_phi = test_phi[0, :, 0]
-    pred_phi = pred_phi[0, :, 0]
+    # Convert kappa to phi
+    pred_phi = ds.kappa_to_phi(pred_kappa)
+    test_phi = ds.kappa_to_phi(test_kappa)
+
+    # pick the first item, and remove batch dim if present
+    print(f"test_phi shape: {test_phi.shape}, pred_phi shape: {pred_phi.shape}")
+    test_phi = test_phi[0]
+    pred_phi = pred_phi[0]
 
     test_phi_ring = hp.reorder(test_phi, n2r=True)
     pred_phi_ring = hp.reorder(pred_phi, n2r=True)
 
     for map, name in [(test_phi_ring, "True"), (pred_phi_ring, "Predicted")]:
-        hp.mollview(
-            hp.remove_dipole(map),
-            title=f"{name} phi map",
-            unit="phi",
-            cmap="viridis",
-            norm="hist",
-            remove_dip=True,
-        )
+        hp.mollview(map, title=f"{name} phi map", unit="phi")
         plt.savefig(f"{plot_prefix}-{name.lower()}-phi-map.png")
 
     hp.mollview(test_phi - pred_phi, title="Residual (Nest)", cmap="RdBu_r")
@@ -558,8 +558,29 @@ def train_fnl(
     strategy,
     shapes,
     plot_prefix,
+    tf_cache,
+    tf_mem_cache,
 ):
-    ds = MapDataset.fromCore(core, lensed=False)
+    # Determine cache strategy based on tf_cache and tf_mem_cache flags
+    if tf_cache:
+        # Use disk-based file cache
+        cache_file_arg = cache_file
+        logger.debug(f"Using disk-based cache: {cache_file_arg}")
+    elif tf_mem_cache:
+        # Use in-memory cache (empty string)
+        cache_file_arg = ""
+        logger.debug("Using in-memory cache")
+    else:
+        # Disable caching by passing None
+        cache_file_arg = None
+        logger.debug("Cache disabled")
+
+    ds = KappaDataset.fromCore(
+        core,
+        x_output="unlensed",
+        y_output="fnl",
+        lensed=False,
+    )
     train, val, test = ds.split(
         train_size=split[0],
         val_size=split[1],
@@ -567,20 +588,20 @@ def train_fnl(
         to_tf=True,
         batch_size=batch_size,
         duplicates=duplicates,
-        cache_file=cache_file,
-        gen_batch_size=core.slurm.n_cpus * 4,
+        cache_file=cache_file_arg,
+        gen_batch_size=core.slurm.n_cpus,
     )
-
-    logger.debug("Creating fnl caches")
-    for _ in train:
-        pass
-    logger.debug("Fnl train cache created")
-    for _ in val:
-        pass
-    logger.debug("Fnl val cache created")
-    for _ in test:
-        pass
-    logger.debug("Fnl caches created")
+    if tf_cache:
+        logger.debug("Creating fnl caches")
+        for _ in train:
+            pass
+        logger.debug("Fnl train cache created")
+        for _ in val:
+            pass
+        logger.debug("Fnl val cache created")
+        for _ in test:
+            pass
+        logger.debug("Fnl caches created")
 
     # calculate the number of steps per epoch and decay steps for use later
     epoch_steps = math.ceil(core.total_sims * split[0] * duplicates[0] // batch_size)
@@ -602,7 +623,7 @@ def train_fnl(
     fnl_model.summary()
 
     # and finally we fit the model
-    fnl_history = fnl_model.fit(
+    fnl_model.fit(
         train,
         epochs=max_epochs,
         validation_data=val,
@@ -676,13 +697,13 @@ def run():
     core = Core()
 
     # start with some hard coded settings because
-    batch_size = 16
-    max_epochs = 100
+    batch_size = 8
+    max_epochs = 300
     initial_LR = 1e-3
 
-    data_fraction = 1.0
+    data_fraction = 0.01
     unet_split = np.array([0.8, 0.1, 0.1]) * data_fraction
-    unet_duplicates = [10, 10, 2]
+    unet_duplicates = [25, 10, 2]
 
     # fnl values come from the
     fnl_split = np.array([0.4, 0.1, 0.5]) * data_fraction
@@ -710,16 +731,18 @@ def run():
     unet_keras_file = f"{save_dir}/unet-{run_info}.keras"
     fnl_keras_file = f"{save_dir}/fnl-{run_info}.keras"
 
-    unet_cache = f"/lustre/smuexa01/client/users/stevensonb/tf_cache/{core.name}/unet-{core.name}"
-    fnl_cache = (
-        f"/lustre/smuexa01/client/users/stevensonb/tf_cache/{core.name}/fnl-{core.name}"
-    )
+    temp_folder = os.environ.get("SCRATCH", "/tmp")
+    cache_dir = f"{temp_folder}/tf_cache/{core.name}"
+    os.makedirs(cache_dir, exist_ok=True)
+
+    unet_cache = f"{cache_dir}/unet-{core.name}"
+    fnl_cache = f"{cache_dir}/fnl-{core.name}"
     for file in [unet_keras_file, fnl_keras_file]:
         logger.debug(f"file {file} exists: {os.path.exists(file)}")
 
     callbacks = [
         TerminateOnNaN(),
-        EarlyStopping(monitor="val_loss", patience=30, restore_best_weights=True),
+        EarlyStopping(monitor="val_loss", patience=16, restore_best_weights=True),
         tf.keras.callbacks.BackupAndRestore(
             f"{core.dirs['model']}/chkpts/{run_info}/",
             save_freq="epoch",
@@ -760,24 +783,12 @@ def run():
             strategy,
             core.shapes,
             plot_prefix,
-            normalizer=normalizer,
+            core.tf_cache,
+            core.tf_mem_cache,
         )
     else:
         logger.info("Loading U-Net from file: '%s'", unet_keras_file)
         u_net = tf.keras.models.load_model(unet_keras_file)
-
-        ds = PhiMapDataset.fromCore(core, lensed=True)
-        train, _, _ = ds.split(
-            train_size=unet_split[0],
-            val_size=unet_split[1],
-            test_size=unet_split[2],
-            to_tf=True,
-            batch_size=batch_size,
-            duplicates=unet_duplicates,
-            cache_file=unet_cache,
-            gen_batch_size=4,
-        )
-        normalizer.adapt(train.map(lambda x, y: y))
 
     if not os.path.exists(fnl_keras_file):
         fnl_model = train_fnl(
@@ -793,12 +804,16 @@ def run():
             strategy,
             core.shapes,
             plot_prefix,
+            core.tf_cache,
+            core.tf_mem_cache,
         )
     else:
         logger.info("Loading model from %s", fnl_keras_file)
         fnl_model = tf.keras.models.load_model(fnl_keras_file)
 
-    ds_3 = MapDataset.fromCore(core, lensed=True)
+    ds_3 = KappaDataset.fromCore(
+        core, x_output="lensed", y_output="fnl", kappa_scale=np.sqrt(1e7)
+    )
     _, _, test_3 = ds_3.split(
         train_size=final_split[0],
         val_size=final_split[1],
@@ -809,13 +824,12 @@ def run():
         gen_batch_size=core.slurm.n_cpus,
     )
 
-    logger.info("Creating test_3 cache")
-    fnl_truth = np.concatenate([y for _, y in test_3])
-    logger.info("Done")
+    # logger.info("Creating test_3 cache")
+    # fnl_truth = np.concatenate([y for _, y in test_3])
+    # logger.info("Done")
 
     res_arcmin = hp.nside2resol(core.nside, arcmin=True)
     res_rad = res_arcmin * utils.arcmin
-
     # snap to nearest resolution that evenly divides the sky (vertical)
     ny = int(round(np.pi / res_rad))
     res_fixed = np.pi / ny  # exact divisor for π
@@ -828,21 +842,21 @@ def run():
 
     def _delens_py(lensed, phi, nside=core.nside):
         delensed_maps = np.zeros_like(lensed)
-        # TODO test joblib parallel here
         for i, (l_map, phi_map) in enumerate(zip(lensed, phi)):
             l_map = np.asarray(l_map)
             phi_map = np.asarray(phi_map)
 
-            l_map = hp.reorder(l_map[:, 0], n2r=True).astype(np.float32)
-            phi_map = hp.reorder(phi_map[:, 0], n2r=True).astype(np.float32)
+            l_map = hp.reorder(l_map.flatten(), n2r=True).astype(np.float32)
+            phi_map = hp.reorder(phi_map.flatten(), n2r=True).astype(np.float32)
 
             lensed_enmap = reproject.healpix2map(l_map, shape, wcs)
             phi_enmap = reproject.healpix2map(phi_map, shape, wcs)
             delensed_enmap = lensing.delens_map(lensed_enmap, phi_enmap)
 
-            dm = reproject.map2healpix(delensed_enmap, nside)
-            # TODO return to nest
-            delensed_maps[i] = hp.remove_dipole(dm, copy=False)[:, None]
+            # Convert back to healpix and flatten
+            m = reproject.map2healpix(delensed_enmap, nside)
+            m = hp.remove_dipole(m, copy=False)
+            delensed_maps[i] = m[:, None]
 
         return delensed_maps
 
@@ -858,25 +872,19 @@ def run():
         fnl.set_shape([None, len(core.shapes)])
         return delensed, fnl
 
-    phi_preds = u_net.predict(test_3, verbose=0)
-    phi_preds = undo_norm(phi_preds)
+    kappa_preds = u_net.predict(test_3, verbose=0)
+    phi_preds = ds_3.kappa_to_phi(kappa_preds)
 
     phi_ds = tf.data.Dataset.from_tensor_slices(phi_preds).batch(batch_size)
     delensed_ds = (
         tf.data.Dataset.zip((test_3, phi_ds))
         .map(_map_fn, num_parallel_calls=tf.data.AUTOTUNE)
-        .cache()
         .prefetch(tf.data.AUTOTUNE)
     )
 
     for map, _ in delensed_ds.take(1):
         m = map[0, :, 0].numpy()
-        hp.mollview(
-            m,
-            title="Delensed map",
-            unit="T",
-            cmap="viridis",
-        )
+        hp.mollview(m, title="Delensed map", unit="T")
         plt.savefig(f"{plot_prefix}-final-delensed-map.png")
 
         plt.figure()

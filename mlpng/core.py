@@ -253,6 +253,20 @@ class Core:
             help="Enable or disable TensorBoard logging",
         )
 
+        # Cache control settings for ML trainer
+        parser.add_argument(
+            "--tf_cache",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="Enable or disable file-based disk caching for TensorFlow datasets",
+        )
+        parser.add_argument(
+            "--tf_mem_cache",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="Enable or disable in-memory caching for TensorFlow datasets",
+        )
+
         # this allows us to save a copy of the final settings used for the run
         # only really useful for debugging, must be provided by the CLI and not in the settings file
         parser.add_argument(
@@ -464,6 +478,10 @@ class Core:
 
         self.use_wandb = self._get("wandb", False)
         self.use_tb = self._get("tensorboard", False)
+
+        # Cache control for TensorFlow datasets
+        self.tf_cache = self._get("tf_cache", True)
+        self.tf_mem_cache = self._get("tf_mem_cache", True)
 
         # setup our precision types to be consistent
         if self._get("double_precision", False):

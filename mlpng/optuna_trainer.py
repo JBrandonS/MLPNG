@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optuna-based trainer dedicated to tuning the Healpy U-Net."""
+"""Optuna-based trainer for tuning the CNN-Transformer Encoder fnl model."""
 
 from __future__ import annotations
 
@@ -16,29 +16,23 @@ import healpy as hp
 import numpy as np
 import optuna
 import tensorflow as tf
-from optuna.integration import TFKerasPruningCallback
 from optuna.samplers import TPESampler
 from optuna.pruners import MedianPruner
 from tensorflow.keras import backend as K
 from tensorflow.keras.callbacks import EarlyStopping, TerminateOnNaN
-from tensorflow.keras.layers import BatchNormalization, Dropout
+from tensorflow.keras.layers import Dense, Dropout, Flatten
 from tensorflow.keras.optimizers import AdamW
-from tensorflow.keras.optimizers.schedules import ExponentialDecay
+from tensorflow.keras.optimizers.schedules import CosineDecayRestarts, ExponentialDecay
 
 sys.path.append("/users/stevensonb/Research/tools/deepsphere-cosmo-tf2")
 
 from deepsphere import HealpyGCNN
-from deepsphere.healpy_layers import (
-    HealpyChebyshev,
-    HealpyPool,
-    HealpyPseudoConv_Transpose,
-)
+from deepsphere.healpy_layers import HealpyChebyshev, HealpyPool, Healpy_Transformer
 
 from mlpng import Core
 import mlpng.core
-from mlpng.utils import setup_logging
+from mlpng.utils import setup_logging, rmse_metrics
 from mlpng.utils.dataloaders import KappaDataset
-from mlpng.utils.callbacks import RMSELoss
 
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
@@ -46,17 +40,20 @@ LOGGER = setup_logging("mlpng.optuna_trainer", level=logging.INFO)
 logging.getLogger("mlpng.core").setLevel(logging.INFO)
 logging.getLogger("mlpng.utils.dataloaders").setLevel(logging.INFO)
 
-DATA_FRACTION = 0.01
+DATA_FRACTION = 0.1
 BASE_SPLIT = np.array([0.8, 0.1, 0.1], dtype=np.float32)
-DEFAULT_DUPLICATES = [10, 5, 2]
-CACHE_PREFIX = "optuna-unet"
-ACTIVATIONS = {
-    "gelu": tf.keras.activations.gelu,
-    "relu": tf.keras.activations.relu,
-    "sigmoid": tf.keras.activations.sigmoid,
-}
+DEFAULT_DUPLICATES = [10, 2, 2]
+CACHE_PREFIX = "optuna-encoder-fnl"
 
 _DATASET_CACHE: dict[str, tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset]] = {}
+
+
+def compute_max_depths(nside: int) -> dict[int, int]:
+    """Precompute maximum encoder depth for each pool_p value."""
+    return {
+        1: int(math.log(nside, 2)),  # pool_p=1 -> nside_factor=2
+        2: int(math.log(nside, 4)),  # pool_p=2 -> nside_factor=4
+    }
 
 
 def parse_args() -> tuple[argparse.Namespace, list[str]]:
@@ -74,7 +71,7 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         help="Optional wall-clock timeout (seconds)",
     )
     parser.add_argument(
-        "--study-name", default="optuna-unet", help="Name of the Optuna study"
+        "--study-name", default="encoder-fnl-n256", help="Name of the Optuna study"
     )
     parser.add_argument(
         "--storage", default=None, help="Optuna storage URL for persisting studies"
@@ -109,7 +106,7 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
 def build_run_name(core: Core, prefix: str = "optuna") -> str:
     timestamp = int(time.time())
     job = core.slurm.job if core.slurm.job else "local"
-    return f"{prefix}-{core.shapes_str()}-{job}-{timestamp}"
+    return f"{prefix}-n{core.nside}-{core.shapes_str()}-{job}-{timestamp}"
 
 
 def configure_strategy() -> tf.distribute.Strategy:
@@ -128,299 +125,173 @@ def configure_strategy() -> tf.distribute.Strategy:
 
 
 class EncoderBlock(tf.keras.layers.Layer):
+    """Encoder block with optional Healpy Transformer attention."""
+
     def __init__(
         self,
         nside,
         npix,
         fin,
         fout,
-        activation,
+        K,
+        pool_p,
         max_batch_size,
-        k_order,
-        use_multik,
-        use_bn=True,
-        use_bias=False,
-        pool=True,
-        pool_type="MAX",
-        layer_depth=2,
         dropout_rate=0.1,
+        use_transformer=False,
+        num_heads=8,
+        transformer_layers=2,
         **kwargs,
     ):
         super().__init__(**kwargs)
-        indices = np.arange(npix)
-        layers = []
-        for depth_idx in range(max(1, layer_depth)):
-            if use_multik and depth_idx > 0:
-                k_val = 1
-            else:
-                k_val = k_order
+        self.nside, self.npix, self.fin, self.fout = nside, npix, fin, fout
+        self.K, self.pool_p, self.max_batch_size, self.dropout_rate = (
+            K,
+            pool_p,
+            max_batch_size,
+            dropout_rate,
+        )
+
+        layers = [
+            HealpyChebyshev(
+                K=K,
+                Fout=fout,
+                activation="gelu",
+                use_bn=True,
+                use_bias=True,
+                initializer=tf.keras.initializers.HeNormal(),
+            )
+        ]
+        if use_transformer:
+            key_dim = max(1, min(1024, fout // num_heads))
             layers.append(
-                HealpyChebyshev(
-                    K=k_val,
-                    Fout=fout,
-                    activation=activation,
-                    use_bn=use_bn,
-                    use_bias=use_bias,
+                Healpy_Transformer(
+                    key_dim=key_dim,
+                    num_heads=num_heads,
+                    positional_encoding=True,
+                    n_layers=transformer_layers,
+                    activation="gelu",
+                    layer_norm=True,
                 )
             )
-        if dropout_rate > 0.0:
-            layers.append(Dropout(dropout_rate))
+        layers.extend(
+            [
+                Dropout(dropout_rate),
+                HealpyPool(pool_p, "AVG"),
+            ]
+        )
 
         self.body = HealpyGCNN(
             nside=nside,
-            indices=indices,
+            indices=np.arange(npix),
             layers=layers,
             n_neighbors=8,
             max_batch_size=max_batch_size,
             initial_Fin=fin,
         )
 
-        self.pool = None
-        if pool:
-            self.pool = HealpyGCNN(
-                nside=nside,
-                indices=indices,
-                layers=[HealpyPool(1, pool_type)],
-                n_neighbors=8,
-                max_batch_size=max_batch_size,
-                initial_Fin=fin,
-            )
-
-    def call(self, inputs, training=False):  # type: ignore[override]
-        x = skip = self.body(inputs, training=training)
-        if self.pool is not None:
-            x = self.pool(x, training=training)
-        return x, skip
+    def call(self, x, training=False):
+        return self.body(x, training=training)
 
 
-class DecoderBlock(tf.keras.layers.Layer):
-    def __init__(
-        self,
-        nside,
-        npix,
-        fin,
-        fout,
-        activation,
-        k_order,
-        use_multik,
-        max_batch_size,
-        upsample=True,
-        use_bn=True,
-        use_bias=False,
-        layer_depth=2,
-        dropout_rate=0.1,
-        **kwargs,
-    ):
-        super().__init__(**kwargs)
-        indices = np.arange(npix)
-        layers = []
-        if upsample:
-            layers.append(HealpyPseudoConv_Transpose(1, fout))
+class TunableEncoderFnlModel:
+    """CNN-Transformer encoder model for fnl prediction with tunable architecture."""
 
-        for depth_idx in range(layer_depth):
-            if use_multik and depth_idx > 0:
-                k_val = 1
-            else:
-                k_val = k_order
-            layers.append(
-                HealpyChebyshev(
-                    K=k_val,
-                    Fout=fout,
-                    activation=activation,
-                    use_bn=use_bn,
-                    use_bias=use_bias,
-                )
-            )
-
-        if dropout_rate > 0.0:
-            layers.append(Dropout(dropout_rate))
-
-        self.body = HealpyGCNN(
-            nside=nside,
-            indices=indices,
-            layers=layers,
-            n_neighbors=8,
-            max_batch_size=max_batch_size,
-            initial_Fin=fin,
-        )
-
-    def call(self, inputs, skip, training=False):  # type: ignore[override]
-        x = self.body(inputs, training=training)
-        if skip is not None:
-            x = x + skip
-        return x
-
-
-class TunableResidualHealpyUNet:
     def __init__(
         self,
         input_shape,
-        activation_name="gelu",
+        n_outputs,
         max_batch_size=32,
+        pool_p=2,
+        transformer_levels=0,
+        num_heads=8,
+        transformer_layers=2,
         dropout_rate=0.1,
-        use_multik=False,
-        use_bn=True,
-        use_input_bn=True,
-        use_bias=True,
-        k_step=3,
-        initial_k=3,
-        pool_type="MAX",
-        encoder_depth=2,
-        decoder_depth=2,
-        bottleneck_depth=2,
+        dense_units=64,
+        dense_layers=2,
+        head_dropout=0.0,
     ):
         self.input_shape = input_shape
-        activation_key = activation_name.lower()
-        if activation_key not in ACTIVATIONS:
-            raise ValueError(f"Unsupported activation '{activation_name}'")
-        self.activation = ACTIVATIONS[activation_key]
+        self.n_outputs = n_outputs
         self.max_batch_size = max_batch_size
+        self.pool_p = pool_p
+        self.transformer_levels = (
+            transformer_levels  # int: number of deepest levels with transformers
+        )
+        self.num_heads = num_heads
+        self.transformer_layers = transformer_layers
         self.dropout_rate = dropout_rate
-        self.use_bn = use_bn
-        self.use_input_bn = use_input_bn
-        self.use_bias = use_bias
-        self.k_step = k_step
-        self.initial_k = initial_k
-        self.use_multik = use_multik
-        pool_mode = pool_type.upper()
-        if pool_mode not in {"MAX", "AVG"}:
-            raise ValueError("pool_type must be either 'MAX' or 'AVG'")
-        self.pool_type = pool_mode
-        self.encoder_depth = max(1, encoder_depth)
-        self.decoder_depth = max(1, decoder_depth)
-        self.bottleneck_depth = max(1, bottleneck_depth)
+        self.dense_units = dense_units
+        self.dense_layers = dense_layers
+        self.head_dropout = head_dropout
         self.npix = input_shape[1]
-        self.npol = input_shape[2]
         self.nside = hp.npix2nside(self.npix)
-
-    def _channel_schedule(self):
-        depth = int(math.log2(self.nside))
-        base = [self.npol]
-        for i in range(depth + 1):
-            base_width = 2 ** (i + 4)
-            width = int(round(base_width))
-            base.append(width)
-        print("Channel schedule:", base)
-        return base[: depth + 2]
-
-    def _k_schedule(self):
-        depth = int(math.log2(self.nside))
-        ks = []
-        for i in range(depth + 1):
-            base_k = self.initial_k + 2 * (i // self.k_step)
-            ks.append(base_k)
-        print("K schedule:", ks)
-        return ks
+        self.npol = input_shape[2]
+        self.initializer = tf.keras.initializers.HeNormal()
 
     def get_model(self) -> tf.keras.Model:
-        channels = self._channel_schedule()
-        ks = self._k_schedule()
-        depth = len(ks) - 1
-        level_npixels = [self.npix // (4**i) for i in range(depth + 1)]
-        level_nsides = [hp.npix2nside(npix) for npix in level_npixels]
+        nside_factor = 2**self.pool_p
+        pixel_factor = 4**self.pool_p
 
-        inputs = tf.keras.Input(shape=self.input_shape[1:])
-        x = BatchNormalization()(inputs) if self.use_input_bn else inputs
-        skips = []
+        depth = int(math.log(self.nside, nside_factor))
+        level_nsides = [self.nside // (nside_factor**i) for i in range(depth + 1)]
+        level_npixels = [12 * ns**2 for ns in level_nsides]
+        channels = [self.npol] + [2 ** (i + 5) for i in range(depth + 1)]
+        Ks = [3] * (depth + 1)
+
+        # transformer_levels is an int: 0 = none, depth = all
+        # Apply transformers to the last `transformer_levels` encoder blocks
+        use_transformer = [False] * depth
+        if self.transformer_levels > 0:
+            start_idx = max(0, depth - self.transformer_levels)
+            for i in range(start_idx, depth):
+                use_transformer[i] = True
+
+        LOGGER.debug(
+            "Depth: %d, pool_p: %d (%dx pixel reduction)",
+            depth,
+            self.pool_p,
+            pixel_factor,
+        )
+        LOGGER.debug("Level nsides: %s", level_nsides)
+        LOGGER.debug("Level npixels: %s", level_npixels)
+        LOGGER.debug("Channels: %s, Ks: %s", channels, Ks)
+        LOGGER.debug(
+            "Transformer at levels: %s",
+            [i for i, t in enumerate(use_transformer) if t],
+        )
+
+        inputs = tf.keras.Input(shape=self.input_shape[1:], name="lensed")
+        x = inputs
 
         for i in range(depth):
-            block = EncoderBlock(
+            x = EncoderBlock(
                 level_nsides[i],
                 level_npixels[i],
                 fin=channels[i],
                 fout=channels[i + 1],
-                activation=self.activation,
+                K=Ks[i],
+                pool_p=self.pool_p,
                 max_batch_size=self.max_batch_size,
-                k_order=ks[i],
-                use_multik=self.use_multik,
                 dropout_rate=self.dropout_rate,
-                use_bias=self.use_bias,
-                use_bn=self.use_bn,
-                pool_type=self.pool_type,
-                layer_depth=self.encoder_depth,
-            )
-            x, skip = block(x)
-            skips.append(skip)
+                use_transformer=use_transformer[i],
+                num_heads=self.num_heads,
+                transformer_layers=self.transformer_layers,
+            )(x)
 
-        bottleneck_layers = []
-        for depth_idx in range(max(1, self.bottleneck_depth)):
-            if self.use_multik and depth_idx > 0:
-                k_val = 1
-            else:
-                k_val = ks[-1]
-            bottleneck_layers.append(
-                HealpyChebyshev(
-                    K=k_val,
-                    Fout=channels[-1],
-                    activation=self.activation,
-                    use_bn=self.use_bn,
-                    use_bias=self.use_bias,
-                )
-            )
+        # Dense head
+        x = Flatten()(x)
+        for _ in range(self.dense_layers):
+            x = Dense(
+                self.dense_units,
+                activation="gelu",
+                kernel_initializer=self.initializer,
+            )(x)
+            if self.head_dropout > 0:
+                x = Dropout(self.head_dropout)(x)
 
-        bottleneck = HealpyGCNN(
-            nside=level_nsides[-1],
-            indices=np.arange(level_npixels[-1]),
-            layers=bottleneck_layers,
-            n_neighbors=8,
-            max_batch_size=self.max_batch_size,
-            initial_Fin=channels[-1],
-            name="bottleneck",
-        )
-        x = bottleneck(x)
+        outputs = Dense(self.n_outputs, kernel_initializer=self.initializer)(x)
 
-        for i in reversed(range(1, depth + 1)):
-            block = DecoderBlock(
-                level_nsides[i],
-                level_npixels[i],
-                fin=channels[i],
-                fout=channels[i],
-                activation=self.activation,
-                max_batch_size=self.max_batch_size,
-                k_order=ks[i],
-                use_multik=self.use_multik,
-                dropout_rate=self.dropout_rate,
-                use_bias=self.use_bias,
-                use_bn=self.use_bn,
-                layer_depth=self.decoder_depth,
-            )
-            x = block(x, skips[i - 1])
-
-        head = DecoderBlock(
-            level_nsides[0],
-            level_npixels[0],
-            fin=channels[i],
-            fout=channels[0],
-            activation=self.activation,
-            max_batch_size=self.max_batch_size,
-            k_order=ks[0],
-            use_multik=self.use_multik,
-            dropout_rate=self.dropout_rate,
-            use_bias=self.use_bias,
-            use_bn=self.use_bn,
-            layer_depth=self.decoder_depth,
-        )
-        x = head(x, None)
-
-        output_layer = HealpyGCNN(
-            nside=self.nside,
-            indices=np.arange(self.npix),
-            layers=[
-                HealpyChebyshev(
-                    K=1,
-                    Fout=self.npol,
-                    activation=None,
-                    use_bn=False,
-                    use_bias=True,
-                )
-            ],
-            n_neighbors=8,
-            max_batch_size=self.max_batch_size,
-            initial_Fin=self.npol,
-            name="output",
-        )
-        outputs = output_layer(x)
-        return tf.keras.Model(inputs, outputs, name="tunable_residual_healpy_unet")
+        return tf.keras.Model(inputs, outputs, name="tunable_encoder_fnl")
 
 
 def prepare_datasets(
@@ -428,17 +299,14 @@ def prepare_datasets(
     batch_size: int,
     duplicates: list[int],
     cache_tag: str,
-    kappa_scale: float = 1.0,
 ) -> tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset]:
-    cache_key = f"{cache_tag}-bs{batch_size}-ks{kappa_scale}"
+    cache_key = f"{cache_tag}-bs{batch_size}"
     if cache_key in _DATASET_CACHE:
         return _DATASET_CACHE[cache_key]
 
-    ds = KappaDataset.fromCore(
-        core, x_output="lensed", y_output="kappa", kappa_scale=kappa_scale
-    )
+    ds = KappaDataset.fromCore(core, x_output="lensed", y_output="fnl")
     fractions = BASE_SPLIT * DATA_FRACTION
-    cache_dir = os.path.join(core.dirs["base"], "tf-cache")
+    cache_dir = os.environ.get("SCRATCH", "/tmp") + "/tf_cache"
     os.makedirs(cache_dir, exist_ok=True)
     available_cpus = max(1, core.slurm.n_cpus or os.cpu_count() or 4)
 
@@ -453,28 +321,6 @@ def prepare_datasets(
         cache_file=cache_tag,
         gen_batch_size=available_cpus,
     )
-
-    normalizer = tf.keras.layers.Normalization(axis=-1)
-    normalizer.adapt(train.map(lambda _x, y: y))
-
-    def normalize_y(x, y):
-        return x, normalizer(y)
-
-    def finalize(ds_split, name, warm=False):
-        cached = (
-            ds_split.map(normalize_y, num_parallel_calls=tf.data.AUTOTUNE)
-            .cache()
-            .prefetch(tf.data.AUTOTUNE)
-        )
-        if warm:
-            for _ in cached:
-                pass
-            LOGGER.debug("Dataset %s cached", name)
-        return cached
-
-    train = finalize(train, "train", warm=True)
-    val = finalize(val, "val", warm=True)
-    test = finalize(test, "test")
     _DATASET_CACHE[cache_key] = (train, val, test)
     return train, val, test
 
@@ -494,79 +340,86 @@ class ObjectiveContext:
     strategy: tf.distribute.Strategy
     args: argparse.Namespace
     run_name: str
+    max_depths: dict[int, int]
 
 
-class UnetObjective:
+class EncoderFnlObjective:
+    """Optuna objective for tuning the CNN-Transformer Encoder fnl model."""
+
     def __init__(self, ctx: ObjectiveContext):
         self.ctx = ctx
         self.cache_tag = f"{CACHE_PREFIX}-{ctx.core.name}"
 
     def __call__(self, trial: optuna.Trial) -> float:
-        # K.clear_session()
-        batch_size = 32  # trial.suggest_categorical("batch_size", [16, 24, 32, 64])
-        dropout = trial.suggest_float("dropout_rate", 0.0, 0.3, step=0.1)
-        initial_k = trial.suggest_categorical("initial_k", [1, 2, 3])
-        k_step = trial.suggest_categorical("k_step", [1, 2, 3])
-        multik = trial.suggest_categorical("use_multik", [False, True])
-        encoder_depth = trial.suggest_categorical("encoder_depth", [1, 2, 3])
-        decoder_depth = trial.suggest_categorical("decoder_depth", [1, 2, 3])
-        bottleneck_depth = trial.suggest_categorical("bottleneck_depth", [1, 2, 3])
-        pool_type = trial.suggest_categorical("pool_type", ["MAX", "AVG"])
-        activation_name = trial.suggest_categorical(
-            "activation", ["gelu", "relu", "sigmoid"]
-        )
-        use_bn = trial.suggest_categorical("use_bn", [False, True])
-        use_input_bn = trial.suggest_categorical("use_input_bn", [False, True])
-        use_bias = trial.suggest_categorical("use_bias", [False, True])
-        initial_lr = trial.suggest_float("initial_lr", 5e-5, 2e-3, log=True)
+        batch_size = 32
+
+        # Learning rate schedule selection
+        use_cosine_decay = trial.suggest_categorical("use_cosine_decay", [True, False])
+        initial_lr = trial.suggest_float("initial_lr", 1e-5, 1e-1, log=True)
+
+        # Architecture: pool_p first to determine depth
+        pool_p = trial.suggest_categorical("pool_p", [1, 2])
+        max_depth = self.ctx.max_depths[pool_p]
+
+        # Transformer configuration
+        transformer_levels = trial.suggest_int("transformer_levels", 0, max_depth)
+        num_heads = trial.suggest_categorical("num_heads", [1, 2, 4, 8])
+        transformer_layers = trial.suggest_categorical("transformer_layers", [1, 2, 3])
+
+        # Regularization
+        dropout_rate = trial.suggest_float("dropout_rate", 0.0, 0.3, step=0.05)
         weight_decay = trial.suggest_float("weight_decay", 1e-7, 1e-3, log=True)
-        decay_rate = trial.suggest_float("lr_decay", 0.92, 0.99, step=0.01)
-        use_ema = trial.suggest_categorical("use_ema", [False, True])
-        use_amsgrad = trial.suggest_categorical("use_amsgrad", [False, True])
-        kappa_scale = trial.suggest_categorical("kappa_scale", [1.0, np.sqrt(1e7)])
+
+        # Dense head configuration
+        dense_units = trial.suggest_categorical("dense_units", [32, 64, 128, 256])
+        dense_layers = trial.suggest_categorical("dense_layers", [1, 2, 3])
+        head_dropout = trial.suggest_float("head_dropout", 0.0, 0.5, step=0.1)
 
         train_ds, val_ds, _ = prepare_datasets(
             self.ctx.core,
             batch_size=batch_size,
             duplicates=DEFAULT_DUPLICATES,
             cache_tag=self.cache_tag,
-            kappa_scale=kappa_scale,
         )
 
         steps, decay_steps = estimate_steps(self.ctx.core, batch_size)
+
         with self.ctx.strategy.scope():
-            lr_schedule = ExponentialDecay(
-                initial_learning_rate=initial_lr,
-                decay_steps=decay_steps,
-                decay_rate=decay_rate,
-                staircase=True,
-            )
-            model = TunableResidualHealpyUNet(
+            if use_cosine_decay:
+                lr_schedule = CosineDecayRestarts(
+                    initial_learning_rate=initial_lr,
+                    first_decay_steps=decay_steps,
+                    t_mul=2.0,
+                    m_mul=0.95,
+                    alpha=0.01,
+                )
+            else:
+                lr_schedule = ExponentialDecay(
+                    initial_learning_rate=initial_lr,
+                    decay_steps=decay_steps,
+                    decay_rate=0.96,
+                    staircase=True,
+                )
+
+            model = TunableEncoderFnlModel(
                 (None, self.ctx.core.npix, self.ctx.core.npols),
-                activation_name=activation_name,
+                n_outputs=len(self.ctx.core.shapes),
                 max_batch_size=batch_size,
-                dropout_rate=dropout,
-                k_step=k_step,
-                initial_k=initial_k,
-                use_multik=multik,
-                pool_type=pool_type,
-                encoder_depth=encoder_depth,
-                decoder_depth=decoder_depth,
-                bottleneck_depth=bottleneck_depth,
-                use_bn=use_bn,
-                use_input_bn=use_input_bn,
-                use_bias=use_bias,
+                pool_p=pool_p,
+                transformer_levels=transformer_levels,
+                num_heads=num_heads,
+                transformer_layers=transformer_layers,
+                dropout_rate=dropout_rate,
+                dense_units=dense_units,
+                dense_layers=dense_layers,
+                head_dropout=head_dropout,
             ).get_model()
-            optimizer = AdamW(
-                learning_rate=lr_schedule,
-                weight_decay=weight_decay,
-                amsgrad=use_amsgrad,
-                use_ema=use_ema,
-            )
+
+            optimizer = AdamW(learning_rate=lr_schedule, weight_decay=weight_decay)
             model.compile(
                 optimizer=optimizer,
                 loss="mse",
-                metrics=[],
+                metrics=rmse_metrics(self.ctx.core.shapes),
             )
 
         callbacks = [
@@ -577,8 +430,6 @@ class UnetObjective:
                 restore_best_weights=True,
             ),
         ]
-        if self.ctx.args.pruning:
-            callbacks.append(TFKerasPruningCallback(trial, "val_loss"))
 
         history = model.fit(
             train_ds,
@@ -597,41 +448,47 @@ def main() -> int:
     core = Core(argv=[args.settings_file] + unknown)
     strategy = configure_strategy()
     run_name = build_run_name(core)
+    max_depths = compute_max_depths(core.nside)
+
     LOGGER.info("Run name: %s", run_name)
+    LOGGER.info("Max depths by pool_p: %s", max_depths)
+
     ctx = ObjectiveContext(
         core=core,
         strategy=strategy,
         args=args,
         run_name=run_name,
+        max_depths=max_depths,
     )
 
     LOGGER.info("Using %.2f%% of the data for tuning", DATA_FRACTION * 100)
 
     storage_url = args.storage
-    load_existing = True  # bool(storage_url)
+    load_existing = True
     if not storage_url:
         storage_dir = Path("data/tuner")
         storage_dir.mkdir(parents=True, exist_ok=True)
-        storage_file = storage_dir / f"optuna.db"
+        storage_file = storage_dir / "optuna.db"
         storage_url = f"sqlite:///{storage_file}"
         LOGGER.info("Optuna storage set to %s", storage_file)
 
-    sampler = TPESampler(multivariate=True, group=True, seed=ctx.core.seed)
+    sampler = TPESampler(multivariate=True, seed=ctx.core.seed, constant_liar=True)
     pruner = MedianPruner(n_warmup_steps=10) if args.pruning else None
     study = optuna.create_study(
         direction="minimize",
         study_name=args.study_name,
         storage=storage_url,
         sampler=sampler,
-        pruner=pruner,
         load_if_exists=load_existing,
     )
 
-    objective = UnetObjective(ctx)
+    objective = EncoderFnlObjective(ctx)
     study.optimize(objective, n_trials=args.trials, timeout=args.timeout)
 
     LOGGER.info("Best value: %.6f", study.best_value)
     LOGGER.info("Best params: %s", study.best_params)
+
+    return 0
 
 
 if __name__ == "__main__":
