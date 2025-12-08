@@ -9,6 +9,8 @@ import numpy as np
 
 from .utils import Slurm
 
+logger = logging.getLogger(__name__)
+
 
 class Core:
     """
@@ -85,7 +87,7 @@ class Core:
             argv (list): List of the CLI Args
             If None, sys.argv will be used.
         """
-        self.logger = logging.getLogger(__name__)
+        self.logger = logger
 
         # init our core object, split for readability
         self._process_settings(argv)

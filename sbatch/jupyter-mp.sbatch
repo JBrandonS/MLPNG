@@ -3,8 +3,8 @@
 #SBATCH --output=.jupyter.out
 #SBATCH --partition=batch
 #SBATCH --ntasks=1
-#SBATCH --mem=256G
-#SBATCH --cpus-per-task=16
+#SBATCH --mem=512G
+#SBATCH --cpus-per-task=32
 #SBATCH --gpus-per-task=1
 #SBATCH --time=12:00:00
 #SBATCH --account=jrmeyers_ml_cmb_0001

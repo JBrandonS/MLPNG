@@ -6,14 +6,12 @@ import h5py
 import numpy as np
 import healpy as hp
 
-logger = logging.getLogger(__name__)
-
 
 def setup_logging(
     name=__name__,
     level=logging.INFO,
     scripts_level=None,
-    base_level=logging.WARNING,
+    base_level=None,
     handlers=None,
 ):
     """
@@ -41,18 +39,22 @@ def setup_logging(
     if base_level is None:
         base_level = level
 
-    # Only configure root logger if no handlers exist (prevents duplicate handlers)
+    # Configure root logger, clearing any existing handlers first to prevent duplicates
+    # This is especially important in Jupyter notebooks which add their own handlers
     root_logger = logging.getLogger()
-    if not root_logger.handlers:
-        if handlers is None:
-            handlers = [logging.StreamHandler(sys.stdout)]
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
 
-        logging.basicConfig(
-            level=base_level,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            datefmt="%d-%b-%y %H:%M:%S",
-            handlers=handlers,
-        )
+    if handlers is None:
+        handlers = [logging.StreamHandler(sys.stdout)]
+
+    logging.basicConfig(
+        level=base_level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%d-%b-%y %H:%M:%S",
+        handlers=handlers,
+        force=True,
+    )
 
     logging.getLogger("mlpng").setLevel(scripts_level)
     log = logging.getLogger(name)
@@ -72,6 +74,8 @@ def recursive_save(file, path, data, verbose=True):
     Returns:
         None
     """
+    logger = logging.getLogger(__name__)
+
     for key, value in data.items():
         npath = f"{path}/{key}"
         if verbose:
@@ -130,6 +134,8 @@ def save_data(file_path, data_dict, mode="a", verbose=False):
     Returns:
         None
     """
+    logger = logging.getLogger(__name__)
+
     if verbose:
         logger.info("Saving data to '%s'", file_path)
     with h5py.File(file_path, mode) as hf:
@@ -260,6 +266,7 @@ def print_errors(truth, preds, fisher, n_sigma=5):
         fisher (float): The Fisher information value.
         n_sigma (int, optional): The number of standard deviations to consider. Default is 5.
     """
+    logger = logging.getLogger(__name__)
 
     truth = truth.flatten()
     preds = preds.flatten()
@@ -350,6 +357,8 @@ def try_init_wandb(
     Raises:
     - ValueError: If patch_tb is True but patch_logdir is not set.
     """
+    logger = logging.getLogger(__name__)
+
     try:
         import wandb
         from wandb.integration.keras import WandbMetricsLogger
