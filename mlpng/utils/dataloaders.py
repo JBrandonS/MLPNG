@@ -381,12 +381,29 @@ class ALMDataset:
         """
         Generator wrapper that unpacks dict outputs to tensors when single outputs are requested.
         Used by to_tf() to automatically convert single-value dicts to tensors.
+        Casts outputs to the declared dtypes (x_dtype, y_dtype).
         """
+        x_np_dtype = (
+            self.x_dtype.as_numpy_dtype
+            if hasattr(self.x_dtype, "as_numpy_dtype")
+            else np.float32
+        )
+        y_np_dtype = (
+            self.y_dtype.as_numpy_dtype
+            if hasattr(self.y_dtype, "as_numpy_dtype")
+            else np.float32
+        )
+
         for x_dict, y_dict in self._generator(
             batch_size, duplicates, n_jobs, pre_dispatch
         ):
             x_out = x_dict[list(x_dict.keys())[0]] if single_x_output else x_dict
             y_out = y_dict[list(y_dict.keys())[0]] if single_y_output else y_dict
+            # Cast to declared dtypes to avoid TensorFlow dtype mismatch errors
+            if single_x_output:
+                x_out = np.asarray(x_out, dtype=x_np_dtype)
+            if single_y_output:
+                y_out = np.asarray(y_out, dtype=y_np_dtype)
             yield x_out, y_out
 
 
@@ -993,47 +1010,15 @@ class KappaDataset(MapDataset):
         if cache and cache_file:
             logger.debug("Using cache file: '%s'", cache_file)
             os.makedirs(os.path.dirname(cache_file), exist_ok=True)
-            if os.path.exists(cache_file):
-                logger.debug("Cache file exists, reusing cached dataset.")
-
-        # Generate a sample batch to infer shapes and dtypes
-        sample_x_dict, sample_y_dict = self._generate(
-            np.arange(
-                self.start_idx, min(self.start_idx + gen_batch_size, self.end_idx)
-            ),
-            duplicates,
-        )
 
         # Check if outputs should be single tensors or dicts
         single_x_output = len(self.x_output) == 1
         single_y_output = len(self.y_output) == 1
 
-        # Build TensorSpecs based on output structure
-        if single_x_output:
-            # Extract single key
-            key = list(sample_x_dict.keys())[0]
-            val = sample_x_dict[key]
-            shape = (None,) + val.shape[1:]
-            x_spec = tf.TensorSpec(shape=shape, dtype=tf.as_dtype(val.dtype))
-        else:
-            # Keep as dict
-            x_spec = {}
-            for key, val in sample_x_dict.items():
-                shape = (None,) + val.shape[1:]
-                x_spec[key] = tf.TensorSpec(shape=shape, dtype=tf.as_dtype(val.dtype))
-
-        if single_y_output:
-            # Extract single key
-            key = list(sample_y_dict.keys())[0]
-            val = sample_y_dict[key]
-            shape = (None,) + val.shape[1:]
-            y_spec = tf.TensorSpec(shape=shape, dtype=tf.as_dtype(val.dtype))
-        else:
-            # Keep as dict
-            y_spec = {}
-            for key, val in sample_y_dict.items():
-                shape = (None,) + val.shape[1:]
-                y_spec[key] = tf.TensorSpec(shape=shape, dtype=tf.as_dtype(val.dtype))
+        # Use inherited x_shape/y_shape for TensorSpecs (avoids expensive _generate call)
+        # x_shape/y_shape are set by fromCore() via _compute_output_shape()
+        x_spec = tf.TensorSpec(shape=self.x_shape, dtype=self.x_dtype)
+        y_spec = tf.TensorSpec(shape=self.y_shape, dtype=self.y_dtype)
 
         ds = tf.data.Dataset.from_generator(
             self._generator_with_unpacking,
