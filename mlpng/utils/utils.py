@@ -1,10 +1,10 @@
 import logging
-import warnings
 import sys
+import warnings
 
 import h5py
-import numpy as np
 import healpy as hp
+import numpy as np
 
 
 def setup_logging(
@@ -234,7 +234,7 @@ def remove_mono_dipole(alm, inplace=False):
     Remove the monopole and dipole terms from the alms.
 
     Parameters:
-        alm (array-like): The input alms.
+        alm (array-like): The input alms, either 1d array or any number of dimensions with the last dimension being the alm data.
         inplace (bool, optional): If True, the input alms will be modified in-place.
                                 If False, a copy of the input alms will be made before modification.
                                 Default is False.
@@ -254,7 +254,7 @@ def remove_mono_dipole(alm, inplace=False):
         data[..., hp.Alm.getidx(lmax, 0, 0)] = 0.0
         data[..., hp.Alm.getidx(lmax, 1, 0)] = 0.0
         data[..., hp.Alm.getidx(lmax, 1, 1)] = 0.0
-    return data
+    return np.ascontiguousarray(data)
 
 
 def print_errors(truth, preds, fisher, n_sigma=5):

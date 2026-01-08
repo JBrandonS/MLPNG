@@ -1,8 +1,9 @@
-import sys
 import argparse
 import json
 import logging
 import os
+import sys
+
 import h5py
 import healpy as hp
 import numpy as np
@@ -688,6 +689,21 @@ class Core:
 
         return os.path.join(base_dir, f"{self.slurm.job}_{name}{extension}")
 
+    def get_mc_file(self, shape_str, lensed=False):
+        """
+        Get the Monte Carlo file path for a specific shape and lensing configuration.
+
+        Parameters:
+            shape_str: The shape name ("local", "equilateral", "orthogonal").
+            lensed: Whether using lensed data.
+
+        Returns:
+            str: The full path to the shape-specific MC file.
+        """
+        lensed_str = "lensed" if lensed else "unlensed"
+        mc_filename = f"{self.name}_{shape_str}_{lensed_str}.hdf5"
+        return os.path.join(self.dirs["mc"], mc_filename)
+
     def check_existing_data_file(self):
         """Check if the data file already exists and handle it based on the `force_gen` setting.
         If the file exists and `force_gen` is True, the file is removed."""
@@ -739,4 +755,7 @@ class Core:
                         case _:
                             self.logger.warning("Unknown shape %s, ignoring", s)
                 like = f.get("marginal_likelihoods")[l_str][np.array(indxs)]
+        return like
+        return like
+        return like
         return like
