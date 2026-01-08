@@ -21,7 +21,7 @@ This code is designed to do two things; provide a generation framework for gener
    - For `ksw`
       - You need to switch to the dev branch `git checkout -b dev origin/dev`
       - run `make && pip install -e . && make check` in the root.
-4. You can now run the code, using the pipeline with `generator.sh` or manually with `mlpng/generator.py`, `mlpng/combiner.py`, and `mlpng/estimator.py`. See [Running](#running) for more information.
+4. You can now run the code, using the automated pipeline with `generator.sh` (which includes initialization, generation, and combining), or manually with the individual modules. See [Running](#running) for more information.
 
 ### Trainer
 
@@ -56,27 +56,43 @@ You can then run the script.
 
 > This script will use slurm's run chaining to queue up runs but only start them once a previous run has been completed.
 
+#### Pipeline Overview
+
+The data generation pipeline consists of three stages:
+
+1. **Initialization** (Initializor): Pre-computes KSW Monte Carlo states for each bispectrum shape using MPI. This step is required when using the automated pipeline but can be skipped for quick manual runs.
+   ```sh
+   # For automated pipeline (MPI required)
+   sbatch sbatch/initializor.sbatch settings/planck.json --lensing
+   ```
+
+2. **Generation** (Generator): Generates Gaussian and non-Gaussian CMB alms, computes Fisher information matrices, and optionally computes KSW estimates inline during generation. Uses Slurm array jobs for parallel per-array generation.
+   ```sh
+   sbatch --array=1-N sbatch/generator.sbatch settings/planck.json --lensing
+   ```
+
+3. **Combining** (Combiner): Merges per-array outputs into a single consolidated HDF5 file.
+   ```sh
+   sbatch sbatch/combiner.sbatch settings/planck.json --lensing
+   ```
+
 #### Manual Data Generation
 
 The data generator is controlled by settings files located in the `settings/` directory. You can specify a different settings file as an argument when running the Python scripts. For some arguments, a command line option is available which will take priority. All options have defaults. See `settings/settings.md` for more.
 
-To manually generate the data you will need to run the generator python module, providing at least a settings file with optional CLI overrides, from the root folder:
+To manually generate data without the initialization step (serial mode, no KSW estimates in MPI):
 
 ```sh
 python -m mlpng.generator --lensing settings/planck.json
 ```
 
-After data generation, the data will be in separate files based on the array size you have used. You can use the `combiner.py` module to combine the data into a single file. Simply give it the same settings that you used to generate the data.
+After data generation, if using `narray > 1`, combine the per-array output files into a single file:
 
 ```sh
 python -m mlpng.combiner --lensing settings/planck.json
 ```
 
-The `estimator` script applies the [KSW estimator](https://github.com/AdriJD/ksw) to the data. You can run this once the data is combined. You run this like the other scripts
-
-```sh
-python -m mlpng.estimator --lensing settings/planck.json
-```
+> **Note**: By default, the generator computes KSW estimates inline (controlled by the `--estimate` flag). In manual mode, estimates are computed on the main process only. For distributed MPI-based estimation, use the full pipeline with initializor.
 
 ### Training
 
@@ -96,14 +112,28 @@ The training pipeline is very simple. From Superpod,
 
 The data is stored in `hdf5` files as they allow reading and appending data without needing to load the whole dataset into memory. You can think of these files as Python dictionaries. Some important data values are:
 
-- `alm` : The $a_{\ell m}^{NG,loc}$ values. `Shape: (nsims, ndup, npol, nelem)`
-- `alm_lensed` : If lensing is enabled, The lensed $a_{\ell m}^{NG,loc}$ values. `Shape: (nsims, ndup, npol, nelem)`
-- `fnl`: The $f_{nl}$ values used. `Shape (nsims, ndup, 1, 1)`
-- `fisher`:  The fisher value found by the estimator. `Shape: ()`
-- `map`: The full sky map of the data. `Shape: (nsims, ndup, npol, npix)`
-- `map_lensed`: The lensed full sky map of the data. `Shape: (nsims, ndup, npol, npix)`
+**Gaussian alms:**
+- `alm_l/unlensed` : The Gaussian $a_{\ell m}$ values (unlensed). `Shape: (nsims, npol, nelem)`
+- `alm_l/lensed` : The Gaussian $a_{\ell m}$ values (if lensing enabled). `Shape: (nsims, npol, nelem)`
 
-Other keys include: `alm_l`, `alm_nl`, `error`, `error_lensed`, `estimate`, `estimate_lensed`, `fisher_iso`, `fisher_iso_lensed`, `fnl_norm`, `phi_map`
+**Non-Gaussian alms (per bispectrum shape):**
+- `alm_nl/{unlensed|lensed}/{local|equilateral|orthogonal}` : The non-Gaussian contributions. `Shape: (nsims, npol, nelem)`
+
+**Fisher information and estimates (only if `--estimate` flag used):**
+- `fisher/{unlensed|lensed}/{shape}` : Fisher information values for each shape.
+- `estimates/{unlensed|lensed}/{shape}` : Estimated $f_{nl}$ values (shape: `(n_estimates,)`)
+- `fisher_matrix/{...}` : Full Fisher matrices for multi-parameter estimation
+- `marginal_likelihoods/{...}` : Marginal likelihood information
+
+**Lensing (if enabled):**
+- `phi_map` : The lensing potential map
+- Associated keys may have `_lensed` suffix variants
+
+**Other optional keys:**
+- `error`, `error_lensed` : Estimation errors
+- `fnl_norm` : Normalized $f_{nl}$ values
+
+> **Note**: Estimate-related keys (`estimates`, `fisher_matrix`, `marginal_likelihoods`) are only present if the generator was run with the `--estimate` flag (default: True).
 
 ### Notes on files
 
@@ -116,6 +146,37 @@ Filenames are generated from select settings for easy reading once you understan
 For alms: `l[lmax]_n[nside]_[polarizations]_[total sim]x[ndup]_f[fnl range]`
 
 > See `scripts/core.py:_paths` for the where this gets set
+
+## Configuration and CLI Flags
+
+Both the settings JSON files and command-line arguments control the pipeline behavior. CLI arguments override JSON settings. Key flags include:
+
+**Estimation (KSW):**
+- `--estimate/--no-estimate` : Enable or disable inline KSW estimate computation during generation (default: True)
+- `--num_estimates NUM` : Number of samples to estimate (default: min(nsims × narray, 1000))
+- `--mc_steps STEPS` : Number of Monte Carlo steps for KSW initialization (default: 300)
+
+**Data Generation:**
+- `--force_generation` : Force regeneration, overwriting existing files
+- `--shapes {local|equilateral|orthogonal|all}` : Specify which bispectrum shapes to generate (can specify multiple)
+- `--lensing/--no-lensing` : Include or exclude gravitational lensing
+- `--noise/--no-noise` : Include or exclude instrumental noise
+- `--double_precision` : Use double precision (float64/complex128) instead of single precision
+
+**Data I/O:**
+- `--save_alms` : Save combined alms to disk (otherwise reconstructed on-the-fly during training)
+- `--save_ksw` : Save KSW MC states to disk
+
+**Slurm and Execution:**
+- `--narray N` : Number of array job tasks (must equal SLURM_ARRAY_TASK_COUNT when running under Slurm)
+- `--nsims N` : Number of simulations per array task
+
+**Other:**
+- `--phi_scale SCALE` : Scaling factor for the lensing potential (default: 1.0)
+- `--plot/--no-plot` : Enable or disable plot generation
+- `--seed SEED` : Random seed for reproducibility
+
+See `settings/settings.md` for the complete list of configurable parameters.
 
 ## Thanks
 
