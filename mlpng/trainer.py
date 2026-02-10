@@ -701,7 +701,7 @@ def run():
     max_epochs = 300
     initial_LR = 1e-3
 
-    data_fraction = 0.01
+    data_fraction = 1.0
     unet_split = np.array([0.8, 0.1, 0.1]) * data_fraction
     unet_duplicates = [25, 10, 2]
 

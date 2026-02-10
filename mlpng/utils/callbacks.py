@@ -19,8 +19,16 @@ class RMSELoss(tf.keras.losses.Loss):
         if self.index is None:
             return tf.sqrt(tf.reduce_mean(tf.square(y_true - y_pred)))
         else:
-            # Compute the loss for the specified index
-            error = y_true[:, self.index] - y_pred[:, self.index]
+            # Handle both concatenated output (single tensor) and separate heads (list of tensors)
+            if isinstance(y_pred, list):
+                # Multiple output heads: y_pred is a list of tensors
+                pred_val = tf.squeeze(y_pred[self.index])
+            else:
+                # Single concatenated output: y_pred is a tensor, index into it
+                pred_val = y_pred[:, self.index]
+
+            true_val = y_true[:, self.index]
+            error = true_val - pred_val
             return tf.sqrt(tf.reduce_mean(tf.square(error)))
 
     def get_config(self):
@@ -42,9 +50,17 @@ class RMSELoss2(tf.keras.losses.Loss):
             dom = 0.01 * y_true + 1e-6  # avoid zero division
             return tf.sqrt(tf.reduce_mean(tf.square((y_true - y_pred) / dom)))
         else:
-            # Compute the loss for the specified index
-            dom = 0.01 * y_true[:, self.index] + 1e-6  # avoid zero division
-            error = (y_true[:, self.index] - y_pred[:, self.index]) / dom
+            # Handle both concatenated output (single tensor) and separate heads (list of tensors)
+            if isinstance(y_pred, list):
+                # Multiple output heads: y_pred is a list of tensors
+                pred_val = tf.squeeze(y_pred[self.index])
+            else:
+                # Single concatenated output: y_pred is a tensor, index into it
+                pred_val = y_pred[:, self.index]
+
+            true_val = y_true[:, self.index]
+            dom = 0.01 * true_val + 1e-6  # avoid zero division
+            error = (true_val - pred_val) / dom
             return tf.sqrt(tf.reduce_mean(tf.square(error)))
 
     def get_config(self):
@@ -67,7 +83,16 @@ class RMSEMetric(tf.keras.metrics.Metric):
         if self.index is None:
             error = y_true - y_pred
         else:
-            error = y_true[:, self.index] - y_pred[:, self.index]
+            # Handle both concatenated output (single tensor) and separate heads (list of tensors)
+            if isinstance(y_pred, list):
+                # Multiple output heads: y_pred is a list of tensors
+                pred_val = tf.squeeze(y_pred[self.index])
+            else:
+                # Single concatenated output: y_pred is a tensor, index into it
+                pred_val = y_pred[:, self.index]
+
+            true_val = y_true[:, self.index]
+            error = true_val - pred_val
 
         squared_error = tf.square(error)
         if sample_weight is not None:

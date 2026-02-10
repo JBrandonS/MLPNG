@@ -530,6 +530,7 @@ class Generator(Core):
             else:
                 alm_l = alms  # just use the original alms, no lensing
 
+            # todo: move alm_l up since there is no shape dependance for that
             sdata = {
                 "alm_l": {l_str: {shape: alm_l.astype(self.c_dtype)}},
                 "alm_nl": {l_str: {shape: alm_nl.astype(self.c_dtype)}},

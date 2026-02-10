@@ -74,7 +74,11 @@ class ALMDataset:
 
         self.start_idx = start_idx
         if end_idx is None:
-            self.end_idx = get_data(file_path, f"alm_l/{self.l_str}").shape[0]
+            # Use first shape to determine dataset size (all shapes should have same size)
+            first_shape = self.shapes[0]
+            self.end_idx = get_data(
+                file_path, f"alm_l/{self.l_str}/{first_shape}"
+            ).shape[0]
         else:
             self.end_idx = end_idx  # type: ignore
 
@@ -242,7 +246,7 @@ class ALMDataset:
         unbatch=True,
         cache=True,
         cache_file="",
-        shuffle=True,
+        shuffle=False,
         buffer_size=128,
         reshuffle=True,
         batch_size=64,
@@ -327,7 +331,13 @@ class ALMDataset:
             size=(len(self.shapes), duplicates, len(indices), 1, 1),
         )
 
-        alm_l = get_data(self.file_path, f"alm_l/{self.l_str}", indices)
+        # Load alm_l and alm_nl per-shape for multi-shape data structure
+        alm_l = np.array(
+            [
+                get_data(self.file_path, f"alm_l/{self.l_str}/{s}", indices)
+                for s in self.shapes
+            ]
+        )
         alm_nl = np.array(
             [
                 get_data(self.file_path, f"alm_nl/{self.l_str}/{s}", indices)
@@ -335,7 +345,10 @@ class ALMDataset:
             ]
         )
 
-        alms = alm_l + np.einsum("i...,i...->...", fnls, alm_nl)
+        # alm_l and alm_nl are (nshapes, batch, sim, alm_size)
+        # fnls is (nshapes, duplicates, batch, 1, 1)
+        # Sum over shapes to get combined alms
+        alms = alm_l[0] + np.einsum("i...,i...->...", fnls, alm_nl)
         return alms, fnls
 
     def _generator(
@@ -343,7 +356,7 @@ class ALMDataset:
         batch_size,
         duplicates,
         n_jobs=len(os.sched_getaffinity(0)),
-        pre_dispatch="n_jobs",
+        pre_dispatch="2*n_jobs",
     ):
         """
         Returns a parallel generator to read data from the file. This is used to load the data in parallel.
@@ -355,15 +368,17 @@ class ALMDataset:
         # note: temping to shuffle here but h5py wants the arguments sorted too
         # we also shuffle on the TF side so not a big deal
         indices = np.arange(self.start_idx, self.end_idx)
-        batched_indices = [
-            indices[i : i + batch_size] for i in range(0, len(indices), batch_size)
-        ]
+        # batched_indices = [
+        #     indices[i : i + batch_size] for i in range(0, len(indices), batch_size)
+        # ]
+        n_batches = int(np.ceil(len(indices) / batch_size))
+        batched_indices = np.array_split(indices, n_batches)
 
         # we use parallel to generate the data in parallel, this is done by splitting the indices into batches and then calling _generate on each batch
         temp_folder = os.environ.get("SCRATCH", None)
         return Parallel(
             min(n_jobs, len(batched_indices)),
-            # return_as="generator",
+            return_as="generator",
             pre_dispatch=pre_dispatch,
             prefer=self.parallel_prefer,
             temp_folder=temp_folder,
@@ -376,34 +391,24 @@ class ALMDataset:
         single_x_output,
         single_y_output,
         n_jobs=len(os.sched_getaffinity(0)),
-        pre_dispatch="n_jobs",
+        pre_dispatch="2*n_jobs",
     ):
         """
         Generator wrapper that unpacks dict outputs to tensors when single outputs are requested.
         Used by to_tf() to automatically convert single-value dicts to tensors.
         Casts outputs to the declared dtypes (x_dtype, y_dtype).
         """
-        x_np_dtype = (
-            self.x_dtype.as_numpy_dtype
-            if hasattr(self.x_dtype, "as_numpy_dtype")
-            else np.float32
-        )
-        y_np_dtype = (
-            self.y_dtype.as_numpy_dtype
-            if hasattr(self.y_dtype, "as_numpy_dtype")
-            else np.float32
-        )
-
-        for x_dict, y_dict in self._generator(
+        for x_out, y_out in self._generator(
             batch_size, duplicates, n_jobs, pre_dispatch
         ):
-            x_out = x_dict[list(x_dict.keys())[0]] if single_x_output else x_dict
-            y_out = y_dict[list(y_dict.keys())[0]] if single_y_output else y_dict
-            # Cast to declared dtypes to avoid TensorFlow dtype mismatch errors
             if single_x_output:
-                x_out = np.asarray(x_out, dtype=x_np_dtype)
+                x_out = np.asarray(
+                    x_out[list(x_out.keys())[0]], dtype=self.x_dtype.as_numpy_dtype
+                )
             if single_y_output:
-                y_out = np.asarray(y_out, dtype=y_np_dtype)
+                y_out = np.asarray(
+                    y_out[list(y_out.keys())[0]], dtype=self.y_dtype.as_numpy_dtype
+                )
             yield x_out, y_out
 
 
@@ -476,7 +481,13 @@ class MapDataset(ALMDataset):
         if self.gaussian_mask:
             fnls = self._mask_fnls(fnls)
 
-        alm_l = get_data(self.file_path, f"alm_l/{self.l_str}", indices)
+        # Load alm_l and alm_nl per-shape for multi-shape data structure
+        alm_l = np.array(
+            [
+                get_data(self.file_path, f"alm_l/{self.l_str}/{s}", indices)
+                for s in self.shapes
+            ]
+        )
         alm_nl = np.array(
             [
                 get_data(self.file_path, f"alm_nl/{self.l_str}/{s}", indices)
@@ -484,7 +495,8 @@ class MapDataset(ALMDataset):
             ]
         )
 
-        alms = alm_l + np.einsum("i...,i...->...", fnls, alm_nl)
+        # Sum over shapes to get combined alms
+        alms = alm_l[0] + np.einsum("i...,i...->...", fnls, alm_nl)
 
         # number of CPUs, accounting for slurm, use 1 less to avoid overloading
         n_cpus = len(os.sched_getaffinity(0))
@@ -572,8 +584,19 @@ class UnlensMapDataset(MapDataset):
         if self.gaussian_mask:
             fnls = self._mask_fnls(fnls)
 
-        alm_l_lens = get_data(self.file_path, f"alm_l/lensed", indices)
-        alm_l_unlensed = get_data(self.file_path, f"alm_l/unlensed", indices)
+        # Load alm_l and alm_nl per-shape for multi-shape data structure
+        alm_l_lens = np.array(
+            [
+                get_data(self.file_path, f"alm_l/lensed/{s}", indices)
+                for s in self.shapes
+            ]
+        )
+        alm_l_unlensed = np.array(
+            [
+                get_data(self.file_path, f"alm_l/unlensed/{s}", indices)
+                for s in self.shapes
+            ]
+        )
 
         alm_nl_lens = np.array(
             [
@@ -588,8 +611,9 @@ class UnlensMapDataset(MapDataset):
             ]
         )
 
-        alm_lens = alm_l_lens + np.einsum("i...,i...->...", fnls, alm_nl_lens)
-        alm_unlensed = alm_l_unlensed + np.einsum(
+        # Sum over shapes to get combined alms
+        alm_lens = alm_l_lens[0] + np.einsum("i...,i...->...", fnls, alm_nl_lens)
+        alm_unlensed = alm_l_unlensed[0] + np.einsum(
             "i...,i...->...", fnls, alm_nl_unlensed
         )
 
@@ -704,14 +728,21 @@ class PhiMapDataset(UnlensMapDataset):
         if self.gaussian_mask:
             fnls = self._mask_fnls(fnls)
 
-        alm_l_lens = get_data(self.file_path, f"alm_l/lensed", indices)
+        # Load alm_l and alm_nl per-shape for multi-shape data structure
+        alm_l_lens = np.array(
+            [
+                get_data(self.file_path, f"alm_l/lensed/{s}", indices)
+                for s in self.shapes
+            ]
+        )
         alm_nl_lens = np.array(
             [
                 get_data(self.file_path, f"alm_nl/lensed/{s}", indices)
                 for s in self.shapes
             ]
         )
-        alm_lens = alm_l_lens + np.einsum("i...,i...->...", fnls, alm_nl_lens)
+        # Sum over shapes to get combined alms
+        alm_lens = alm_l_lens[0] + np.einsum("i...,i...->...", fnls, alm_nl_lens)
 
         alm_phi = get_data(self.file_path, f"alm_phi", indices)
         alm_phi = alm_phi.astype(np.complex128)  # needed for rotate alm
@@ -779,9 +810,7 @@ class KappaDataset(MapDataset):
         x_shape = cls._compute_output_shape(
             x_output, core.npix, core.npols, len(core.shapes)
         )
-        y_shape = cls._compute_output_shape(
-            y_output, core.npix, core.npols, len(core.shapes)
-        )
+        y_shape = (None, core.nshapes)
 
         x_dtype = kwargs.pop("x_dtype", tf.float32)
         y_dtype = kwargs.pop("y_dtype", tf.float32)
@@ -834,7 +863,7 @@ class KappaDataset(MapDataset):
                 n_maps += 1
                 has_lowres = True
             elif out_type == "fnl":
-                n_params += nshapes
+                n_params += npols
             elif out_type == "phi":
                 n_params += 1
 
@@ -964,7 +993,7 @@ class KappaDataset(MapDataset):
 
     def to_tf(
         self,
-        gen_batch_size=8,
+        gen_batch_size=256,
         duplicates=1,
         unbatch=True,
         cache=True,
@@ -1085,7 +1114,8 @@ class KappaDataset(MapDataset):
         # Apply Gaussian masking vectorized: independently zero fnl and phi with gaussian_mask_prob
         if self.gaussian_mask_prob > 0:
             fnl_mask = (
-                np.random.rand(batch_size, duplicates, 1) < self.gaussian_mask_prob
+                np.random.rand(batch_size, duplicates, nshapes)
+                < self.gaussian_mask_prob
             )
             phi_mask = np.random.rand(batch_size, 1) < self.gaussian_mask_prob
             fnls[fnl_mask] = 0
@@ -1099,7 +1129,13 @@ class KappaDataset(MapDataset):
         """Load unlensed ALMs and apply lensing with phi_scale-dependent potential."""
         batch_size = len(indices)
 
-        alm_l = get_data(self.file_path, f"alm_l/unlensed", indices)
+        # Load alm_l and alm_nl per-shape for multi-shape data structure
+        alm_l = np.array(
+            [
+                get_data(self.file_path, f"alm_l/unlensed/{s}", indices)
+                for s in self.shapes
+            ]
+        )
         alm_nl = np.array(
             [
                 get_data(self.file_path, f"alm_nl/unlensed/{s}", indices)
@@ -1113,7 +1149,8 @@ class KappaDataset(MapDataset):
             for sim_idx in range(batch_size):
                 for dup_idx in range(duplicates):
                     fnl_vals = fnls[sim_idx, dup_idx]
-                    alm = np.asarray(alm_l[sim_idx], dtype=np.complex128) + np.einsum(
+                    # Sum alm_l over shapes and add fnl-weighted alm_nl
+                    alm = alm_l[0, sim_idx].astype(np.complex128) + np.einsum(
                         "i...,i...->...", fnl_vals, alm_nl[:, sim_idx]
                     )
                     alm = np.asarray(alm, dtype=np.complex128)
@@ -1183,6 +1220,7 @@ class KappaDataset(MapDataset):
     ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
         """Generate a batch of CMB maps with flexible x/y outputs as dicts. Only generates maps when requested."""
         batch_size = len(indices)
+        nshapes = len(self.shapes)
 
         fnls, phis = self._generate_parameters(indices, duplicates)
 
@@ -1208,7 +1246,13 @@ class KappaDataset(MapDataset):
 
         # Only generate unlensed maps if needed
         if need_unlensed:
-            alm_l = get_data(self.file_path, f"alm_l/unlensed", indices)
+            # Load alm_l and alm_nl per-shape for multi-shape data structure
+            alm_l = np.array(
+                [
+                    get_data(self.file_path, f"alm_l/unlensed/{s}", indices)
+                    for s in self.shapes
+                ]
+            )
             alm_nl = np.array(
                 [
                     get_data(self.file_path, f"alm_nl/unlensed/{s}", indices)
@@ -1219,7 +1263,8 @@ class KappaDataset(MapDataset):
             for sim_idx in range(batch_size):
                 for dup_idx in range(duplicates):
                     fnl_vals = fnls[sim_idx, dup_idx]
-                    alm = alm_l[sim_idx] + np.einsum(
+                    # Sum alm_l over shapes and add fnl-weighted alm_nl
+                    alm = alm_l[0, sim_idx] + np.einsum(
                         "i,i...->...", fnl_vals, alm_nl[:, sim_idx]
                     )
                     alm = np.asarray(alm, dtype=np.complex128)
@@ -1308,7 +1353,7 @@ class KappaDataset(MapDataset):
             if out_type in maps_dict:
                 y_dict[out_type] = maps_dict[out_type]
             elif out_type == "fnl":
-                y_dict[out_type] = fnls.reshape(batch_size * duplicates, 1)
+                y_dict[out_type] = fnls.reshape(batch_size * duplicates, nshapes)
             elif out_type == "phi_scale":
                 y_dict[out_type] = np.repeat(phis, duplicates, axis=0)
 

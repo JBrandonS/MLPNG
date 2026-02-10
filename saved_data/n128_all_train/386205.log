@@ -1,0 +1,453 @@
+Running trainer with module mlpng.neo_trainer on bcm-dgxa100-0014
+2026-02-09 11:02:29.326863: E external/local_xla/xla/stream_executor/cuda/cuda_dnn.cc:9261] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+2026-02-09 11:02:29.326951: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:607] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+2026-02-09 11:02:29.801324: E external/local_xla/xla/stream_executor/cuda/cuda_blas.cc:1515] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+2026-02-09 11:02:30.977551: I tensorflow/core/platform/cpu_feature_guard.cc:182] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+2026-02-09 11:02:46.160714: W tensorflow/compiler/tf2tensorrt/utils/py_utils.cc:38] TF-TRT Warning: Could not find TensorRT
+09-Feb-26 11:03:12 - __main__ - DEBUG - Core arguments: ['settings/n128.json', '--nsims', '10000', '--phi_scale', '1', '--shapes', 'all', '--fnl_range', '-1000', '1000']
+2026-02-09 11:03:13.749797: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1929] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 79194 MB memory:  -> device: 0, name: NVIDIA A100-SXM4-80GB, pci bus id: 0000:07:00.0, compute capability: 8.0
+2026-02-09 11:03:13.751530: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1929] Created device /job:localhost/replica:0/task:0/device:GPU:1 with 79194 MB memory:  -> device: 1, name: NVIDIA A100-SXM4-80GB, pci bus id: 0000:0f:00.0, compute capability: 8.0
+2026-02-09 11:03:13.753022: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1929] Created device /job:localhost/replica:0/task:0/device:GPU:2 with 79194 MB memory:  -> device: 2, name: NVIDIA A100-SXM4-80GB, pci bus id: 0000:47:00.0, compute capability: 8.0
+2026-02-09 11:03:13.754528: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1929] Created device /job:localhost/replica:0/task:0/device:GPU:3 with 79194 MB memory:  -> device: 3, name: NVIDIA A100-SXM4-80GB, pci bus id: 0000:4e:00.0, compute capability: 8.0
+INFO:tensorflow:Using MirroredStrategy with devices ('/job:localhost/replica:0/task:0/device:GPU:0', '/job:localhost/replica:0/task:0/device:GPU:1', '/job:localhost/replica:0/task:0/device:GPU:2', '/job:localhost/replica:0/task:0/device:GPU:3')
+09-Feb-26 11:03:13 - tensorflow - INFO - Using MirroredStrategy with devices ('/job:localhost/replica:0/task:0/device:GPU:0', '/job:localhost/replica:0/task:0/device:GPU:1', '/job:localhost/replica:0/task:0/device:GPU:2', '/job:localhost/replica:0/task:0/device:GPU:3')
+09-Feb-26 11:03:13 - __main__ - INFO - Using MirroredStrategy with 4 device(s)
+09-Feb-26 11:03:13 - __main__ - DEBUG - [Before Core initialization] Memory - RSS: 1.10 GB, VMS: 28.39 GB
+09-Feb-26 11:03:13 - mlpng.core - DEBUG - Parsing CLI args: ['settings/n128.json', '--nsims', '10000', '--phi_scale', '1', '--shapes', 'all', '--fnl_range', '-1000', '1000']
+09-Feb-26 11:03:13 - mlpng.core - INFO - Loading settings from file 'settings/n128.json'
+09-Feb-26 11:03:13 - mlpng.core - DEBUG - Forcing setting 'nsims' to 10000 due to CLI
+09-Feb-26 11:03:13 - mlpng.core - DEBUG - Forcing setting 'fnl_range' to [-1000, 1000] due to CLI
+09-Feb-26 11:03:13 - mlpng.core - DEBUG - Forcing setting 'phi_scale' to 1.0 due to CLI
+09-Feb-26 11:03:13 - mlpng.core - DEBUG - Forcing setting 'shapes' to ['all'] due to CLI
+09-Feb-26 11:03:13 - mlpng.core - DEBUG - Forcing setting 'tf_cache' to True due to CLI
+09-Feb-26 11:03:13 - mlpng.core - DEBUG - Forcing setting 'tf_mem_cache' to True due to CLI
+09-Feb-26 11:03:13 - mlpng.core - DEBUG - Overriding cosmo param 'As' from 2.13e-09 to 2.105e-09
+09-Feb-26 11:03:13 - mlpng.core - DEBUG - Overriding cosmo param 'ns' from 0.9624 to 0.965
+09-Feb-26 11:03:13 - mlpng.core - DEBUG - Running with settings: 
+{
+  "cosmo_params": {
+    "As": 2.105e-09,
+    "ns": 0.965,
+    "pivot_scalar": 0.05,
+    "H0": 67.4,
+    "ombh2": 0.0224,
+    "omch2": 0.12,
+    "tau": 0.054
+  },
+  "nsims": 10000,
+  "nside": 128,
+  "fnl_range": [
+    -1000,
+    1000
+  ],
+  "phi_scale": 1.0,
+  "shapes": [
+    "all"
+  ],
+  "tf_cache": true,
+  "tf_mem_cache": true
+}
+09-Feb-26 11:03:13 - mlpng.core - DEBUG - slurm: Slurm(self.name='trainer', self.job=386205, self.array=0, self.array_index=-1, self.task_count=0, self.is_main=True, self.n_cpus=32)
+09-Feb-26 11:03:13 - mlpng.core - DEBUG - Using seed: 269828106
+09-Feb-26 11:03:13 - mlpng.core - DEBUG - Found non-default value for 'nsims': 10000 (default: 100)
+09-Feb-26 11:03:13 - mlpng.core - DEBUG - Found non-default value for 'fnl_range': [-1000, 1000] (default: (-1000, 1000))
+09-Feb-26 11:03:13 - mlpng.core - DEBUG - Found non-default value for 'shapes': ['all'] (default: 'all')
+09-Feb-26 11:03:13 - __main__ - DEBUG - [After Core initialization] Memory - RSS: 1.10 GB, VMS: 28.39 GB
+09-Feb-26 11:03:13 - __main__ - INFO - Sigma values: [ 25.129524 124.4342    42.700916]
+09-Feb-26 11:03:13 - __main__ - INFO - Decay steps: 1562.0
+09-Feb-26 11:03:47 - mlpng.utils.dataloaders - DEBUG - Error information from 'data/data/l383_n128_T_10000_p1.0.hdf5'...
+09-Feb-26 11:03:47 - mlpng.utils.dataloaders - DEBUG - Fisher Matrix: [0.00207787 0.00644424 0.01829346]
+09-Feb-26 11:03:47 - mlpng.utils.dataloaders - DEBUG - Marginal Likelihoods: 25.116014
+09-Feb-26 11:03:47 - mlpng.utils.dataloaders - DEBUG - Fisher for shape local: 0.0020364805, std div: 22.1594957614005
+09-Feb-26 11:03:47 - mlpng.utils.dataloaders - DEBUG - Fisher for shape equilateral: 6.480418e-05, std div: 124.22198832125098
+09-Feb-26 11:03:47 - mlpng.utils.dataloaders - DEBUG - Fisher for shape orthogonal: 8.9865876e-05, std div: 105.48789014360806
+09-Feb-26 11:03:47 - __main__ - DEBUG - [After KappaDataset creation] Memory - RSS: 1.85 GB, VMS: 29.14 GB
+09-Feb-26 11:03:47 - mlpng.utils.dataloaders - DEBUG - Splitting 'data/data/l383_n128_T_10000_p1.0.hdf5' into train: 0:8000 (8000), val: 8000:9000 (1000), test: 9000:10000 (1000)
+09-Feb-26 11:03:47 - mlpng.utils.dataloaders - DEBUG - Using cache file: '/lustre/smuexa01/client/users/stevensonb/tf_cache/n128_local-equilateral-orthogonal-train.cache'
+09-Feb-26 11:03:47 - mlpng.utils.dataloaders - DEBUG - Using cache file: '/lustre/smuexa01/client/users/stevensonb/tf_cache/n128_local-equilateral-orthogonal-val.cache'
+09-Feb-26 11:03:47 - mlpng.utils.dataloaders - DEBUG - Using cache file: '/lustre/smuexa01/client/users/stevensonb/tf_cache/n128_local-equilateral-orthogonal-test.cache'
+09-Feb-26 11:03:47 - __main__ - DEBUG - [After dataset split] Memory - RSS: 1.85 GB, VMS: 29.14 GB
+09-Feb-26 11:03:47 - __main__ - DEBUG - Generating train cache
+09-Feb-26 11:03:48 - __main__ - DEBUG -   processed 0 batches
+09-Feb-26 11:03:48 - __main__ - DEBUG -   processed 10 batches
+09-Feb-26 11:03:49 - __main__ - DEBUG -   processed 20 batches
+09-Feb-26 11:03:49 - __main__ - DEBUG -   processed 30 batches
+09-Feb-26 11:03:49 - __main__ - DEBUG -   processed 40 batches
+09-Feb-26 11:03:50 - __main__ - DEBUG -   processed 50 batches
+09-Feb-26 11:03:50 - __main__ - DEBUG -   processed 60 batches
+09-Feb-26 11:03:51 - __main__ - DEBUG -   processed 70 batches
+09-Feb-26 11:03:51 - __main__ - DEBUG -   processed 80 batches
+09-Feb-26 11:03:52 - __main__ - DEBUG -   processed 90 batches
+09-Feb-26 11:03:52 - __main__ - DEBUG -   processed 100 batches
+09-Feb-26 11:03:53 - __main__ - DEBUG -   processed 110 batches
+09-Feb-26 11:03:53 - __main__ - DEBUG -   processed 120 batches
+09-Feb-26 11:03:54 - __main__ - DEBUG -   processed 130 batches
+09-Feb-26 11:03:54 - __main__ - DEBUG -   processed 140 batches
+09-Feb-26 11:03:55 - __main__ - DEBUG -   processed 150 batches
+09-Feb-26 11:03:55 - __main__ - DEBUG -   processed 160 batches
+09-Feb-26 11:03:55 - __main__ - DEBUG -   processed 170 batches
+09-Feb-26 11:03:56 - __main__ - DEBUG -   processed 180 batches
+09-Feb-26 11:03:56 - __main__ - DEBUG -   processed 190 batches
+09-Feb-26 11:03:57 - __main__ - DEBUG -   processed 200 batches
+09-Feb-26 11:03:57 - __main__ - DEBUG -   processed 210 batches
+09-Feb-26 11:03:58 - __main__ - DEBUG -   processed 220 batches
+09-Feb-26 11:03:58 - __main__ - DEBUG -   processed 230 batches
+09-Feb-26 11:03:59 - __main__ - DEBUG -   processed 240 batches
+09-Feb-26 11:03:59 - __main__ - DEBUG -   processed 250 batches
+09-Feb-26 11:04:00 - __main__ - DEBUG -   processed 260 batches
+09-Feb-26 11:04:00 - __main__ - DEBUG -   processed 270 batches
+09-Feb-26 11:04:00 - __main__ - DEBUG -   processed 280 batches
+09-Feb-26 11:04:01 - __main__ - DEBUG -   processed 290 batches
+09-Feb-26 11:04:01 - __main__ - DEBUG -   processed 300 batches
+09-Feb-26 11:04:02 - __main__ - DEBUG -   processed 310 batches
+09-Feb-26 11:04:02 - __main__ - DEBUG -   processed 320 batches
+09-Feb-26 11:04:03 - __main__ - DEBUG -   processed 330 batches
+09-Feb-26 11:04:03 - __main__ - DEBUG -   processed 340 batches
+09-Feb-26 11:04:04 - __main__ - DEBUG -   processed 350 batches
+09-Feb-26 11:04:04 - __main__ - DEBUG -   processed 360 batches
+09-Feb-26 11:04:05 - __main__ - DEBUG -   processed 370 batches
+09-Feb-26 11:04:05 - __main__ - DEBUG -   processed 380 batches
+09-Feb-26 11:04:05 - __main__ - DEBUG -   processed 390 batches
+09-Feb-26 11:04:06 - __main__ - DEBUG -   processed 400 batches
+09-Feb-26 11:04:06 - __main__ - DEBUG -   processed 410 batches
+09-Feb-26 11:04:07 - __main__ - DEBUG -   processed 420 batches
+09-Feb-26 11:04:07 - __main__ - DEBUG -   processed 430 batches
+09-Feb-26 11:04:08 - __main__ - DEBUG -   processed 440 batches
+09-Feb-26 11:04:08 - __main__ - DEBUG -   processed 450 batches
+09-Feb-26 11:04:09 - __main__ - DEBUG -   processed 460 batches
+09-Feb-26 11:04:09 - __main__ - DEBUG -   processed 470 batches
+09-Feb-26 11:04:10 - __main__ - DEBUG -   processed 480 batches
+09-Feb-26 11:04:10 - __main__ - DEBUG -   processed 490 batches
+09-Feb-26 11:04:11 - __main__ - DEBUG -   processed 500 batches
+09-Feb-26 11:04:11 - __main__ - DEBUG -   processed 510 batches
+09-Feb-26 11:04:11 - __main__ - DEBUG -   processed 520 batches
+09-Feb-26 11:04:12 - __main__ - DEBUG -   processed 530 batches
+09-Feb-26 11:04:12 - __main__ - DEBUG -   processed 540 batches
+09-Feb-26 11:04:13 - __main__ - DEBUG -   processed 550 batches
+09-Feb-26 11:04:13 - __main__ - DEBUG -   processed 560 batches
+09-Feb-26 11:04:14 - __main__ - DEBUG -   processed 570 batches
+09-Feb-26 11:04:14 - __main__ - DEBUG -   processed 580 batches
+09-Feb-26 11:04:15 - __main__ - DEBUG -   processed 590 batches
+09-Feb-26 11:04:15 - __main__ - DEBUG -   processed 600 batches
+09-Feb-26 11:04:15 - __main__ - DEBUG -   processed 610 batches
+09-Feb-26 11:04:16 - __main__ - DEBUG -   processed 620 batches
+09-Feb-26 11:04:16 - __main__ - DEBUG -   processed 630 batches
+09-Feb-26 11:04:17 - __main__ - DEBUG -   processed 640 batches
+09-Feb-26 11:04:17 - __main__ - DEBUG -   processed 650 batches
+09-Feb-26 11:04:18 - __main__ - DEBUG -   processed 660 batches
+09-Feb-26 11:04:18 - __main__ - DEBUG -   processed 670 batches
+09-Feb-26 11:04:19 - __main__ - DEBUG -   processed 680 batches
+09-Feb-26 11:04:19 - __main__ - DEBUG -   processed 690 batches
+09-Feb-26 11:04:19 - __main__ - DEBUG -   processed 700 batches
+09-Feb-26 11:04:20 - __main__ - DEBUG -   processed 710 batches
+09-Feb-26 11:04:20 - __main__ - DEBUG -   processed 720 batches
+09-Feb-26 11:04:21 - __main__ - DEBUG -   processed 730 batches
+09-Feb-26 11:04:21 - __main__ - DEBUG -   processed 740 batches
+09-Feb-26 11:04:22 - __main__ - DEBUG -   processed 750 batches
+09-Feb-26 11:04:22 - __main__ - DEBUG -   processed 760 batches
+09-Feb-26 11:04:23 - __main__ - DEBUG -   processed 770 batches
+09-Feb-26 11:04:23 - __main__ - DEBUG -   processed 780 batches
+09-Feb-26 11:04:23 - __main__ - DEBUG -   processed 790 batches
+09-Feb-26 11:04:24 - __main__ - DEBUG -   processed 800 batches
+09-Feb-26 11:04:24 - __main__ - DEBUG -   processed 810 batches
+09-Feb-26 11:04:25 - __main__ - DEBUG -   processed 820 batches
+09-Feb-26 11:04:25 - __main__ - DEBUG -   processed 830 batches
+09-Feb-26 11:04:26 - __main__ - DEBUG -   processed 840 batches
+09-Feb-26 11:04:26 - __main__ - DEBUG -   processed 850 batches
+09-Feb-26 11:04:26 - __main__ - DEBUG -   processed 860 batches
+09-Feb-26 11:04:27 - __main__ - DEBUG -   processed 870 batches
+09-Feb-26 11:04:27 - __main__ - DEBUG -   processed 880 batches
+09-Feb-26 11:04:28 - __main__ - DEBUG -   processed 890 batches
+09-Feb-26 11:04:28 - __main__ - DEBUG -   processed 900 batches
+09-Feb-26 11:04:29 - __main__ - DEBUG -   processed 910 batches
+09-Feb-26 11:04:29 - __main__ - DEBUG -   processed 920 batches
+09-Feb-26 11:04:29 - __main__ - DEBUG -   processed 930 batches
+09-Feb-26 11:04:30 - __main__ - DEBUG -   processed 940 batches
+09-Feb-26 11:04:30 - __main__ - DEBUG -   processed 950 batches
+09-Feb-26 11:04:31 - __main__ - DEBUG -   processed 960 batches
+09-Feb-26 11:04:31 - __main__ - DEBUG -   processed 970 batches
+09-Feb-26 11:04:32 - __main__ - DEBUG -   processed 980 batches
+09-Feb-26 11:04:32 - __main__ - DEBUG -   processed 990 batches
+09-Feb-26 11:04:32 - __main__ - DEBUG -   processed 1000 batches
+09-Feb-26 11:04:33 - __main__ - DEBUG -   processed 1010 batches
+09-Feb-26 11:04:33 - __main__ - DEBUG -   processed 1020 batches
+09-Feb-26 11:04:34 - __main__ - DEBUG -   processed 1030 batches
+09-Feb-26 11:04:34 - __main__ - DEBUG -   processed 1040 batches
+09-Feb-26 11:04:34 - __main__ - DEBUG -   processed 1050 batches
+09-Feb-26 11:04:35 - __main__ - DEBUG -   processed 1060 batches
+09-Feb-26 11:04:35 - __main__ - DEBUG -   processed 1070 batches
+09-Feb-26 11:04:36 - __main__ - DEBUG -   processed 1080 batches
+09-Feb-26 11:04:36 - __main__ - DEBUG -   processed 1090 batches
+09-Feb-26 11:04:37 - __main__ - DEBUG -   processed 1100 batches
+09-Feb-26 11:04:37 - __main__ - DEBUG -   processed 1110 batches
+09-Feb-26 11:04:37 - __main__ - DEBUG -   processed 1120 batches
+09-Feb-26 11:04:38 - __main__ - DEBUG -   processed 1130 batches
+09-Feb-26 11:04:38 - __main__ - DEBUG -   processed 1140 batches
+09-Feb-26 11:04:39 - __main__ - DEBUG -   processed 1150 batches
+09-Feb-26 11:04:39 - __main__ - DEBUG -   processed 1160 batches
+09-Feb-26 11:04:40 - __main__ - DEBUG -   processed 1170 batches
+09-Feb-26 11:04:40 - __main__ - DEBUG -   processed 1180 batches
+09-Feb-26 11:04:41 - __main__ - DEBUG -   processed 1190 batches
+09-Feb-26 11:04:41 - __main__ - DEBUG -   processed 1200 batches
+09-Feb-26 11:04:42 - __main__ - DEBUG -   processed 1210 batches
+09-Feb-26 11:04:42 - __main__ - DEBUG -   processed 1220 batches
+09-Feb-26 11:04:42 - __main__ - DEBUG -   processed 1230 batches
+09-Feb-26 11:04:43 - __main__ - DEBUG -   processed 1240 batches
+09-Feb-26 11:04:43 - __main__ - DEBUG -   processed 1250 batches
+09-Feb-26 11:04:44 - __main__ - DEBUG -   processed 1260 batches
+09-Feb-26 11:04:44 - __main__ - DEBUG -   processed 1270 batches
+09-Feb-26 11:04:45 - __main__ - DEBUG -   processed 1280 batches
+09-Feb-26 11:04:45 - __main__ - DEBUG -   processed 1290 batches
+09-Feb-26 11:04:46 - __main__ - DEBUG -   processed 1300 batches
+09-Feb-26 11:04:46 - __main__ - DEBUG -   processed 1310 batches
+09-Feb-26 11:04:47 - __main__ - DEBUG -   processed 1320 batches
+09-Feb-26 11:04:47 - __main__ - DEBUG -   processed 1330 batches
+09-Feb-26 11:04:47 - __main__ - DEBUG -   processed 1340 batches
+09-Feb-26 11:04:48 - __main__ - DEBUG -   processed 1350 batches
+09-Feb-26 11:04:48 - __main__ - DEBUG -   processed 1360 batches
+09-Feb-26 11:04:49 - __main__ - DEBUG -   processed 1370 batches
+09-Feb-26 11:04:49 - __main__ - DEBUG -   processed 1380 batches
+09-Feb-26 11:04:50 - __main__ - DEBUG -   processed 1390 batches
+09-Feb-26 11:04:50 - __main__ - DEBUG -   processed 1400 batches
+09-Feb-26 11:04:51 - __main__ - DEBUG -   processed 1410 batches
+09-Feb-26 11:04:51 - __main__ - DEBUG -   processed 1420 batches
+09-Feb-26 11:04:52 - __main__ - DEBUG -   processed 1430 batches
+09-Feb-26 11:04:52 - __main__ - DEBUG -   processed 1440 batches
+09-Feb-26 11:04:53 - __main__ - DEBUG -   processed 1450 batches
+09-Feb-26 11:04:53 - __main__ - DEBUG -   processed 1460 batches
+09-Feb-26 11:04:53 - __main__ - DEBUG -   processed 1470 batches
+09-Feb-26 11:04:54 - __main__ - DEBUG -   processed 1480 batches
+09-Feb-26 11:04:54 - __main__ - DEBUG -   processed 1490 batches
+09-Feb-26 11:04:55 - __main__ - DEBUG -   processed 1500 batches
+09-Feb-26 11:04:55 - __main__ - DEBUG -   processed 1510 batches
+09-Feb-26 11:04:56 - __main__ - DEBUG -   processed 1520 batches
+09-Feb-26 11:04:56 - __main__ - DEBUG -   processed 1530 batches
+09-Feb-26 11:04:56 - __main__ - DEBUG -   processed 1540 batches
+09-Feb-26 11:04:57 - __main__ - DEBUG -   processed 1550 batches
+09-Feb-26 11:04:57 - __main__ - DEBUG -   processed 1560 batches
+09-Feb-26 11:04:57 - __main__ - DEBUG - [After train_ds caching] Memory - RSS: 2.04 GB, VMS: 31.43 GB
+09-Feb-26 11:04:57 - __main__ - DEBUG - Generating val cache
+09-Feb-26 11:05:01 - __main__ - DEBUG - [After val_ds caching] Memory - RSS: 2.14 GB, VMS: 31.49 GB
+09-Feb-26 11:05:01 - __main__ - DEBUG - Generating test cache
+09-Feb-26 11:05:04 - __main__ - DEBUG - [After test_ds caching] Memory - RSS: 2.15 GB, VMS: 31.49 GB
+09-Feb-26 11:05:04 - __main__ - DEBUG - train_ds per-batch: X=0.094 GB, Y=0.000 GB, Total=0.094 GB
+09-Feb-26 11:05:05 - __main__ - DEBUG - val_ds per-batch: X=0.094 GB, Y=0.000 GB, Total=0.094 GB
+09-Feb-26 11:05:06 - __main__ - DEBUG - test_ds per-batch: X=0.094 GB, Y=0.000 GB, Total=0.094 GB
+09-Feb-26 11:05:06 - __main__ - DEBUG - [Before model building] Memory - RSS: 2.06 GB, VMS: 31.49 GB
+INFO:tensorflow:Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+09-Feb-26 11:05:20 - tensorflow - INFO - Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+INFO:tensorflow:Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+09-Feb-26 11:05:20 - tensorflow - INFO - Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+INFO:tensorflow:Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+09-Feb-26 11:05:20 - tensorflow - INFO - Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+INFO:tensorflow:Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+09-Feb-26 11:05:20 - tensorflow - INFO - Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+INFO:tensorflow:Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+09-Feb-26 11:05:21 - tensorflow - INFO - Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+INFO:tensorflow:Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+09-Feb-26 11:05:21 - tensorflow - INFO - Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+INFO:tensorflow:Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+09-Feb-26 11:05:21 - tensorflow - INFO - Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+INFO:tensorflow:Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+09-Feb-26 11:05:21 - tensorflow - INFO - Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+INFO:tensorflow:Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+09-Feb-26 11:05:22 - tensorflow - INFO - Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+INFO:tensorflow:Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+09-Feb-26 11:05:22 - tensorflow - INFO - Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+09-Feb-26 11:05:22 - __main__ - DEBUG - [After model building] Memory - RSS: 2.06 GB, VMS: 31.81 GB
+09-Feb-26 11:05:22 - git.cmd - DEBUG - Popen(['git', 'rev-parse', '--show-toplevel'], cwd=/users/stevensonb/Research/MLPNG, stdin=None, shell=False, universal_newlines=False)
+09-Feb-26 11:05:22 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): api.wandb.ai:443
+09-Feb-26 11:05:23 - urllib3.connectionpool - DEBUG - https://api.wandb.ai:443 "POST /graphql HTTP/1.1" 200 None
+09-Feb-26 11:05:23 - urllib3.connectionpool - DEBUG - https://api.wandb.ai:443 "POST /graphql HTTP/1.1" 200 376
+wandb: Currently logged in as: jbrandons (mlpng) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Using wandb-core as the SDK backend.  Please refer to https://wandb.me/wandb-core for more information.
+09-Feb-26 11:05:23 - git.cmd - DEBUG - Popen(['git', 'cat-file', '--batch-check'], cwd=/users/stevensonb/Research/MLPNG, stdin=<valid stream>, shell=False, universal_newlines=False)
+wandb: Tracking run with wandb version 0.19.6
+wandb: Run data is saved locally in /users/stevensonb/Research/MLPNG/wandb/run-20260209_110523-txy35iuy
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run toasty-blaze-2292
+wandb: ⭐️ View project at https://wandb.ai/mlpng/mlpng
+wandb: 🚀 View run at https://wandb.ai/mlpng/mlpng/runs/txy35iuy
+2026-02-09 11:05:29.153126: I external/local_tsl/tsl/platform/default/subprocess.cc:304] Start cannot spawn child process: No such file or directory
+Model: "task_conditioned_encoder"
+_________________________________________________________________
+ Layer (type)                Output Shape              Param #   
+=================================================================
+ lensed_maps (InputLayer)    [(None, 196608, 1)]       0         
+                                                                 
+ encoder_block (EncoderBloc  (None, 12288, 32)         320       
+ k)                                                              
+                                                                 
+ encoder_block_1 (EncoderBl  (None, 768, 64)           14528     
+ ock)                                                            
+                                                                 
+ encoder_block_2 (EncoderBl  (None, 48, 128)           57728     
+ ock)                                                            
+                                                                 
+ flatten (Flatten)           (None, 6144)              0         
+                                                                 
+ task_specific_heads (TaskS  (None, 3)                 1394211   
+ pecificHeads)                                                   
+                                                                 
+=================================================================
+Total params: 1466787 (5.60 MB)
+Trainable params: 1466339 (5.59 MB)
+Non-trainable params: 448 (1.75 KB)
+_________________________________________________________________
+09-Feb-26 11:05:30 - __main__ - DEBUG - [Before model.fit()] Memory - RSS: 1.61 GB, VMS: 31.81 GB
+2026-02-09 11:05:30.158743: W tensorflow/core/grappler/optimizers/data/auto_shard.cc:553] The `assert_cardinality` transformation is currently not handled by the auto-shard rewrite and will be removed.
+Epoch 1/100
+INFO:tensorflow:Collective all_reduce tensors: 28 all_reduces, num_devices = 4, group_size = 4, implementation = CommunicationImplementation.NCCL, num_packs = 1
+09-Feb-26 11:05:36 - tensorflow - INFO - Collective all_reduce tensors: 28 all_reduces, num_devices = 4, group_size = 4, implementation = CommunicationImplementation.NCCL, num_packs = 1
+INFO:tensorflow:Collective all_reduce tensors: 28 all_reduces, num_devices = 4, group_size = 4, implementation = CommunicationImplementation.NCCL, num_packs = 1
+09-Feb-26 11:05:49 - tensorflow - INFO - Collective all_reduce tensors: 28 all_reduces, num_devices = 4, group_size = 4, implementation = CommunicationImplementation.NCCL, num_packs = 1
+2026-02-09 11:05:58.112728: I external/local_xla/xla/stream_executor/cuda/cuda_dnn.cc:454] Loaded cuDNN version 8904
+2026-02-09 11:05:58.115296: I external/local_xla/xla/stream_executor/cuda/cuda_dnn.cc:454] Loaded cuDNN version 8904
+2026-02-09 11:05:58.116178: I external/local_xla/xla/stream_executor/cuda/cuda_dnn.cc:454] Loaded cuDNN version 8904
+2026-02-09 11:05:58.116490: I external/local_xla/xla/stream_executor/cuda/cuda_dnn.cc:454] Loaded cuDNN version 8904
+2026-02-09 11:06:00.955427: I external/local_xla/xla/service/service.cc:168] XLA service 0x15527ae0bbb0 initialized for platform CUDA (this does not guarantee that XLA will be used). Devices:
+2026-02-09 11:06:00.955471: I external/local_xla/xla/service/service.cc:176]   StreamExecutor device (0): NVIDIA A100-SXM4-80GB, Compute Capability 8.0
+2026-02-09 11:06:00.955478: I external/local_xla/xla/service/service.cc:176]   StreamExecutor device (1): NVIDIA A100-SXM4-80GB, Compute Capability 8.0
+2026-02-09 11:06:00.955483: I external/local_xla/xla/service/service.cc:176]   StreamExecutor device (2): NVIDIA A100-SXM4-80GB, Compute Capability 8.0
+2026-02-09 11:06:00.955488: I external/local_xla/xla/service/service.cc:176]   StreamExecutor device (3): NVIDIA A100-SXM4-80GB, Compute Capability 8.0
+2026-02-09 11:06:01.146207: I tensorflow/compiler/mlir/tensorflow/utils/dump_mlir_util.cc:269] disabling MLIR crash reproducer, set env var `MLIR_CRASH_REPRODUCER_DIRECTORY` to enable.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1770656761.436113 3056624 device_compiler.h:186] Compiled cluster using XLA!  This line is logged at most once for the lifetime of the process.
+2026-02-09 11:09:38.046682: W tensorflow/core/grappler/optimizers/data/auto_shard.cc:553] The `assert_cardinality` transformation is currently not handled by the auto-shard rewrite and will be removed.
+1563/1563 - 256s - loss: 67852.8281 - rmse_local: 141.2697 - rmse_equilateral: 358.6769 - rmse_orthogonal: 234.4189 - val_loss: 54235.5781 - val_rmse_local: 62.5675 - val_rmse_equilateral: 308.6489 - val_rmse_orthogonal: 252.0473 - 256s/epoch - 164ms/step
+Epoch 2/100
+1563/1563 - 214s - loss: 33597.7539 - rmse_local: 104.2138 - rmse_equilateral: 234.7346 - rmse_orthogonal: 186.6344 - val_loss: 74295.4844 - val_rmse_local: 76.8651 - val_rmse_equilateral: 254.8711 - val_rmse_orthogonal: 389.8961 - 214s/epoch - 137ms/step
+Epoch 3/100
+1563/1563 - 214s - loss: 27057.8438 - rmse_local: 99.7778 - rmse_equilateral: 202.9331 - rmse_orthogonal: 173.3091 - val_loss: 69292.1641 - val_rmse_local: 57.3648 - val_rmse_equilateral: 392.7272 - val_rmse_orthogonal: 224.3905 - 214s/epoch - 137ms/step
+Epoch 4/100
+1563/1563 - 216s - loss: 27930.0098 - rmse_local: 98.8262 - rmse_equilateral: 204.9145 - rmse_orthogonal: 178.9790 - val_loss: 121020.7734 - val_rmse_local: 93.7356 - val_rmse_equilateral: 238.3452 - val_rmse_orthogonal: 545.4058 - 216s/epoch - 138ms/step
+Epoch 5/100
+1563/1563 - 215s - loss: 24628.6621 - rmse_local: 87.2284 - rmse_equilateral: 191.5058 - rmse_orthogonal: 172.0544 - val_loss: 51945.0547 - val_rmse_local: 53.6458 - val_rmse_equilateral: 228.3224 - val_rmse_orthogonal: 317.5314 - 215s/epoch - 137ms/step
+Epoch 6/100
+1563/1563 - 212s - loss: 22375.7715 - rmse_local: 76.4267 - rmse_equilateral: 183.4295 - rmse_orthogonal: 166.2525 - val_loss: 64831.6797 - val_rmse_local: 69.6201 - val_rmse_equilateral: 298.4065 - val_rmse_orthogonal: 317.1777 - 212s/epoch - 136ms/step
+Epoch 7/100
+1563/1563 - 222s - loss: 20985.1797 - rmse_local: 72.1041 - rmse_equilateral: 177.7396 - rmse_orthogonal: 161.7567 - val_loss: 143524.7656 - val_rmse_local: 101.8308 - val_rmse_equilateral: 376.3275 - val_rmse_orthogonal: 527.8091 - 222s/epoch - 142ms/step
+Epoch 8/100
+1563/1563 - 212s - loss: 23264.6445 - rmse_local: 72.1878 - rmse_equilateral: 188.4434 - rmse_orthogonal: 170.5051 - val_loss: 111993.9062 - val_rmse_local: 91.3642 - val_rmse_equilateral: 260.5535 - val_rmse_orthogonal: 509.6530 - 212s/epoch - 136ms/step
+Epoch 9/100
+1563/1563 - 211s - loss: 21863.0664 - rmse_local: 64.7635 - rmse_equilateral: 183.1598 - rmse_orthogonal: 166.8754 - val_loss: 117020.6719 - val_rmse_local: 86.9024 - val_rmse_equilateral: 344.2438 - val_rmse_orthogonal: 474.3481 - 211s/epoch - 135ms/step
+Epoch 10/100
+1563/1563 - 219s - loss: 20753.5957 - rmse_local: 59.7790 - rmse_equilateral: 178.4900 - rmse_orthogonal: 163.7945 - val_loss: 62669.7070 - val_rmse_local: 74.4858 - val_rmse_equilateral: 257.0401 - val_rmse_orthogonal: 341.1617 - 219s/epoch - 140ms/step
+Epoch 11/100
+1563/1563 - 211s - loss: 19751.6035 - rmse_local: 56.0146 - rmse_equilateral: 174.1277 - rmse_orthogonal: 160.6135 - val_loss: 33780.0234 - val_rmse_local: 55.0910 - val_rmse_equilateral: 239.0307 - val_rmse_orthogonal: 202.9023 - 211s/epoch - 135ms/step
+Epoch 12/100
+1563/1563 - 210s - loss: 18849.9199 - rmse_local: 53.0395 - rmse_equilateral: 170.1543 - rmse_orthogonal: 157.4297 - val_loss: 79117.5078 - val_rmse_local: 83.6022 - val_rmse_equilateral: 371.8664 - val_rmse_orthogonal: 303.4445 - 210s/epoch - 134ms/step
+Epoch 13/100
+1563/1563 - 210s - loss: 17944.0430 - rmse_local: 50.1927 - rmse_equilateral: 165.8831 - rmse_orthogonal: 154.2583 - val_loss: 72578.3438 - val_rmse_local: 68.5433 - val_rmse_equilateral: 347.6334 - val_rmse_orthogonal: 303.6246 - 210s/epoch - 134ms/step
+Epoch 14/100
+1563/1563 - 209s - loss: 17346.5020 - rmse_local: 48.4297 - rmse_equilateral: 163.1746 - rmse_orthogonal: 151.8820 - val_loss: 31947.8203 - val_rmse_local: 46.9194 - val_rmse_equilateral: 223.1060 - val_rmse_orthogonal: 209.4415 - 209s/epoch - 134ms/step
+Epoch 15/100
+1563/1563 - 213s - loss: 16946.5898 - rmse_local: 47.5122 - rmse_equilateral: 161.3582 - rmse_orthogonal: 150.1529 - val_loss: 32931.4844 - val_rmse_local: 47.9861 - val_rmse_equilateral: 222.5839 - val_rmse_orthogonal: 216.6753 - 213s/epoch - 137ms/step
+Epoch 16/100
+1563/1563 - 221s - loss: 19431.1035 - rmse_local: 51.7619 - rmse_equilateral: 173.5879 - rmse_orthogonal: 159.6286 - val_loss: 66924.9062 - val_rmse_local: 83.6926 - val_rmse_equilateral: 289.2712 - val_rmse_orthogonal: 331.8018 - 221s/epoch - 141ms/step
+Epoch 17/100
+1563/1563 - 218s - loss: 18771.6152 - rmse_local: 48.9317 - rmse_equilateral: 170.6019 - rmse_orthogonal: 157.5296 - val_loss: 86847.6797 - val_rmse_local: 89.9887 - val_rmse_equilateral: 304.5714 - val_rmse_orthogonal: 399.6014 - 218s/epoch - 140ms/step
+Epoch 18/100
+1563/1563 - 216s - loss: 18176.1406 - rmse_local: 46.8874 - rmse_equilateral: 167.8176 - rmse_orthogonal: 155.4582 - val_loss: 60530.6797 - val_rmse_local: 78.1745 - val_rmse_equilateral: 282.1493 - val_rmse_orthogonal: 309.6330 - 216s/epoch - 138ms/step
+Epoch 19/100
+1563/1563 - 211s - loss: 17620.0586 - rmse_local: 45.4137 - rmse_equilateral: 165.3267 - rmse_orthogonal: 153.1824 - val_loss: 40882.8828 - val_rmse_local: 61.5360 - val_rmse_equilateral: 241.3635 - val_rmse_orthogonal: 246.1821 - 211s/epoch - 135ms/step
+Epoch 20/100
+1563/1563 - 221s - loss: 17100.5156 - rmse_local: 44.3410 - rmse_equilateral: 162.8414 - rmse_orthogonal: 151.0566 - val_loss: 40819.8906 - val_rmse_local: 57.7198 - val_rmse_equilateral: 237.7720 - val_rmse_orthogonal: 250.1851 - 221s/epoch - 141ms/step
+Epoch 21/100
+1563/1563 - 221s - loss: 16515.4258 - rmse_local: 43.4487 - rmse_equilateral: 159.7195 - rmse_orthogonal: 148.8225 - val_loss: 35229.8867 - val_rmse_local: 52.4235 - val_rmse_equilateral: 230.0363 - val_rmse_orthogonal: 223.6621 - 221s/epoch - 141ms/step
+Epoch 22/100
+1563/1563 - 222s - loss: 15960.8691 - rmse_local: 42.5049 - rmse_equilateral: 157.0039 - rmse_orthogonal: 146.3753 - val_loss: 35184.2070 - val_rmse_local: 47.2742 - val_rmse_equilateral: 247.3529 - val_rmse_orthogonal: 205.2665 - 222s/epoch - 142ms/step
+Epoch 23/100
+1563/1563 - 214s - loss: 15455.9561 - rmse_local: 41.5317 - rmse_equilateral: 154.3763 - rmse_orthogonal: 144.2599 - val_loss: 37842.6602 - val_rmse_local: 47.2930 - val_rmse_equilateral: 251.4678 - val_rmse_orthogonal: 219.2152 - 214s/epoch - 137ms/step
+Epoch 24/100
+1563/1563 - 210s - loss: 14970.3691 - rmse_local: 40.7913 - rmse_equilateral: 151.8885 - rmse_orthogonal: 142.0459 - val_loss: 54895.3398 - val_rmse_local: 60.1531 - val_rmse_equilateral: 307.5329 - val_rmse_orthogonal: 257.8588 - 210s/epoch - 134ms/step
+Epoch 25/100
+1563/1563 - 211s - loss: 14526.9688 - rmse_local: 40.1607 - rmse_equilateral: 149.4737 - rmse_orthogonal: 140.0915 - val_loss: 77319.0000 - val_rmse_local: 78.2783 - val_rmse_equilateral: 354.7839 - val_rmse_orthogonal: 316.1611 - 211s/epoch - 135ms/step
+Epoch 26/100
+1563/1563 - 209s - loss: 14089.9004 - rmse_local: 39.1481 - rmse_equilateral: 147.0019 - rmse_orthogonal: 138.3026 - val_loss: 66888.4609 - val_rmse_local: 68.6756 - val_rmse_equilateral: 324.6534 - val_rmse_orthogonal: 300.9140 - 209s/epoch - 134ms/step
+Epoch 27/100
+1563/1563 - 210s - loss: 13720.3623 - rmse_local: 38.3152 - rmse_equilateral: 145.1282 - rmse_orthogonal: 136.4949 - val_loss: 47494.9727 - val_rmse_local: 58.2477 - val_rmse_equilateral: 272.6079 - val_rmse_orthogonal: 254.5134 - 210s/epoch - 134ms/step
+Epoch 28/100
+1563/1563 - 213s - loss: 13407.7021 - rmse_local: 37.6710 - rmse_equilateral: 143.4049 - rmse_orthogonal: 135.0519 - val_loss: 33477.2734 - val_rmse_local: 51.8056 - val_rmse_equilateral: 226.3085 - val_rmse_orthogonal: 215.7138 - 213s/epoch - 136ms/step
+Epoch 29/100
+1563/1563 - 211s - loss: 13165.3086 - rmse_local: 37.2833 - rmse_equilateral: 142.0904 - rmse_orthogonal: 133.8514 - val_loss: 31192.3047 - val_rmse_local: 49.5224 - val_rmse_equilateral: 219.8478 - val_rmse_orthogonal: 206.8608 - 211s/epoch - 135ms/step
+Epoch 30/100
+1563/1563 - 213s - loss: 12977.2695 - rmse_local: 36.7747 - rmse_equilateral: 141.0985 - rmse_orthogonal: 132.9310 - val_loss: 31474.4648 - val_rmse_local: 47.2663 - val_rmse_equilateral: 225.2298 - val_rmse_orthogonal: 203.6193 - 213s/epoch - 136ms/step
+Epoch 31/100
+1563/1563 - 208s - loss: 12897.3896 - rmse_local: 36.6939 - rmse_equilateral: 140.6851 - rmse_orthogonal: 132.4893 - val_loss: 64215.3359 - val_rmse_local: 71.8884 - val_rmse_equilateral: 346.2303 - val_rmse_orthogonal: 260.0050 - 208s/epoch - 133ms/step
+Epoch 32/100
+1563/1563 - 210s - loss: 15233.2441 - rmse_local: 41.7908 - rmse_equilateral: 153.4548 - rmse_orthogonal: 142.8456 - val_loss: 33950.8555 - val_rmse_local: 52.0173 - val_rmse_equilateral: 227.0927 - val_rmse_orthogonal: 218.1184 - 210s/epoch - 134ms/step
+Epoch 33/100
+1563/1563 - 220s - loss: 14692.6006 - rmse_local: 40.9620 - rmse_equilateral: 150.3624 - rmse_orthogonal: 140.6806 - val_loss: 49605.3867 - val_rmse_local: 56.9252 - val_rmse_equilateral: 271.0637 - val_rmse_orthogonal: 268.5147 - 220s/epoch - 141ms/step
+Epoch 34/100
+1563/1563 - 212s - loss: 14344.4814 - rmse_local: 40.6009 - rmse_equilateral: 148.4971 - rmse_orthogonal: 139.0455 - val_loss: 38145.6250 - val_rmse_local: 54.3455 - val_rmse_equilateral: 237.2306 - val_rmse_orthogonal: 234.9576 - 212s/epoch - 136ms/step
+Epoch 35/100
+1563/1563 - 209s - loss: 13986.6064 - rmse_local: 40.3344 - rmse_equilateral: 146.6081 - rmse_orthogonal: 137.2552 - val_loss: 35204.6719 - val_rmse_local: 51.2527 - val_rmse_equilateral: 237.8246 - val_rmse_orthogonal: 215.4684 - 209s/epoch - 134ms/step
+Epoch 36/100
+1563/1563 - 212s - loss: 13554.1250 - rmse_local: 40.0923 - rmse_equilateral: 144.1905 - rmse_orthogonal: 135.1447 - val_loss: 33404.3984 - val_rmse_local: 48.6721 - val_rmse_equilateral: 230.9543 - val_rmse_orthogonal: 210.9605 - 212s/epoch - 135ms/step
+Epoch 37/100
+1563/1563 - 210s - loss: 13193.4775 - rmse_local: 39.6729 - rmse_equilateral: 142.2863 - rmse_orthogonal: 133.2707 - val_loss: 33886.1094 - val_rmse_local: 48.6264 - val_rmse_equilateral: 233.4492 - val_rmse_orthogonal: 211.6489 - 210s/epoch - 134ms/step
+Epoch 38/100
+1563/1563 - 213s - loss: 12846.4053 - rmse_local: 39.5309 - rmse_equilateral: 140.1974 - rmse_orthogonal: 131.6101 - val_loss: 36236.3281 - val_rmse_local: 50.9943 - val_rmse_equilateral: 240.3042 - val_rmse_orthogonal: 219.9147 - 213s/epoch - 136ms/step
+Epoch 39/100
+1563/1563 - 209s - loss: 12522.4727 - rmse_local: 39.5061 - rmse_equilateral: 138.4803 - rmse_orthogonal: 129.7301 - val_loss: 33515.1289 - val_rmse_local: 49.3202 - val_rmse_equilateral: 229.9058 - val_rmse_orthogonal: 212.7351 - 209s/epoch - 134ms/step
+Epoch 40/100
+1563/1563 - 213s - loss: 12246.5840 - rmse_local: 39.4432 - rmse_equilateral: 137.0169 - rmse_orthogonal: 128.1030 - val_loss: 34504.1367 - val_rmse_local: 49.6929 - val_rmse_equilateral: 234.4607 - val_rmse_orthogonal: 214.6420 - 213s/epoch - 136ms/step
+Epoch 41/100
+1563/1563 - 209s - loss: 12013.0889 - rmse_local: 39.3006 - rmse_equilateral: 135.6591 - rmse_orthogonal: 126.8517 - val_loss: 34225.0625 - val_rmse_local: 49.5706 - val_rmse_equilateral: 230.4315 - val_rmse_orthogonal: 217.0697 - 209s/epoch - 134ms/step
+Epoch 42/100
+1563/1563 - 221s - loss: 11888.4375 - rmse_local: 39.0771 - rmse_equilateral: 135.1373 - rmse_orthogonal: 126.0007 - val_loss: 35101.9414 - val_rmse_local: 52.1568 - val_rmse_equilateral: 232.3966 - val_rmse_orthogonal: 220.4026 - 221s/epoch - 142ms/step
+Epoch 43/100
+1563/1563 - 208s - loss: 11757.8984 - rmse_local: 38.8538 - rmse_equilateral: 134.5126 - rmse_orthogonal: 125.1815 - val_loss: 36034.6797 - val_rmse_local: 49.4076 - val_rmse_equilateral: 235.5353 - val_rmse_orthogonal: 224.0224 - 208s/epoch - 133ms/step
+Epoch 44/100
+1563/1563 - 209s - loss: 11645.3115 - rmse_local: 38.5705 - rmse_equilateral: 133.7531 - rmse_orthogonal: 124.7332 - val_loss: 48647.2969 - val_rmse_local: 55.0168 - val_rmse_equilateral: 274.7823 - val_rmse_orthogonal: 259.6339 - 209s/epoch - 134ms/step
+Epoch 45/100
+1563/1563 - 209s - loss: 11475.3086 - rmse_local: 38.3914 - rmse_equilateral: 132.7294 - rmse_orthogonal: 123.8343 - val_loss: 46735.0781 - val_rmse_local: 59.8141 - val_rmse_equilateral: 259.5822 - val_rmse_orthogonal: 263.1436 - 209s/epoch - 134ms/step
+09-Feb-26 13:46:23 - __main__ - INFO - Training complete! Best val_loss: 31192.304688
+wandb:                                                                                
+wandb: 
+wandb: Run history:
+wandb:                epoch/epoch ▁▁▁▁▂▂▂▂▂▃▃▃▃▃▃▄▄▄▄▄▅▅▅▅▅▅▆▆▆▆▆▆▇▇▇▇▇███
+wandb:        epoch/learning_rate █▄█▇▄▂▇▇▅▄▃▂▁▇▇▇▆▆▅▅▄▃▃▂▁▁▁▇▇▇▇▇▆▆▆▆▆▅▅▅
+wandb:                 epoch/loss █▄▃▃▃▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:     epoch/rmse_equilateral █▄▃▃▃▃▂▃▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▁▁▁▁▁▂▂▁▁▁▁▁▁▁▁▁▁
+wandb:           epoch/rmse_local █▆▅▅▄▄▃▃▃▂▂▂▂▂▂▂▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:      epoch/rmse_orthogonal █▅▄▄▄▄▃▄▄▃▃▃▃▃▃▃▃▃▃▂▂▂▂▂▂▂▂▂▂▂▂▂▂▁▁▁▁▁▁▁
+wandb:             epoch/val_loss ▂▄▃▇▂▃█▆▃▁▄▄▁▁▃▄▂▂▁▁▁▂▄▃▁▁▁▃▁▂▁▁▁▁▁▁▁▁▁▂
+wandb: epoch/val_rmse_equilateral ▅▂█▂▁▄▇▃▃▂▇▆▁▁▄▄▂▂▁▂▂▅▆▅▁▁▁▆▁▃▂▂▂▂▁▂▁▂▂▃
+wandb:       epoch/val_rmse_local ▃▅▂▇▂▄█▇▅▂▆▄▁▁▆▆▃▂▂▁▁▃▅▄▂▁▁▄▂▂▂▂▁▂▁▁▁▂▁▃
+wandb:  epoch/val_rmse_orthogonal ▂▅▁█▃▃█▇▄▁▃▃▁▁▄▅▂▂▁▁▁▂▃▃▁▁▁▂▁▂▂▁▁▁▁▁▁▁▁▂
+wandb: 
+wandb: Run summary:
+wandb:                epoch/epoch 44
+wandb:        epoch/learning_rate 0.00024
+wandb:                 epoch/loss 11475.30859
+wandb:     epoch/rmse_equilateral 132.72937
+wandb:           epoch/rmse_local 38.39137
+wandb:      epoch/rmse_orthogonal 123.83434
+wandb:             epoch/val_loss 46735.07812
+wandb: epoch/val_rmse_equilateral 259.58218
+wandb:       epoch/val_rmse_local 59.81412
+wandb:  epoch/val_rmse_orthogonal 263.14365
+wandb: 
+wandb: 🚀 View run toasty-blaze-2292 at: https://wandb.ai/mlpng/mlpng/runs/txy35iuy
+wandb: ⭐️ View project at: https://wandb.ai/mlpng/mlpng
+wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260209_110523-txy35iuy/logs
+2026-02-09 13:46:25.428221: W tensorflow/core/grappler/optimizers/data/auto_shard.cc:553] The `assert_cardinality` transformation is currently not handled by the auto-shard rewrite and will be removed.
+
+Test Set Performance Summary
+================================================================================
+      Shape        MAE       RMSE  RMSE/Sigma  Correlation
+      local  38.344082  48.111126    1.914526     0.997030
+equilateral 163.191605 207.075912    1.664140     0.936473
+ orthogonal 155.885544 200.131210    4.686813     0.941751
+================================================================================
+09-Feb-26 13:46:38 - __main__ - INFO - Saved training history plot: data/plots/l383_n128_T_10000_p1.0/386205/trainer/loss.png
+09-Feb-26 13:46:42 - __main__ - INFO - Saved evaluation plot: data/plots/l383_n128_T_10000_p1.0/386205/trainer/evaluation.png
+09-Feb-26 13:46:45 - __main__ - INFO - Saved evaluation plot: data/plots/l383_n128_T_10000_p1.0/386205/trainer/restricted.png
+
+real	165m2.014s
+user	0m0.023s
+sys	0m0.062s
