@@ -6,6 +6,7 @@ remove_tf=false
 remove_models=false
 remove_ksw=false
 remove_cache=false
+remove_logs=false
 
 print_help() {
     echo "Usage: $0 [options]"
@@ -17,6 +18,7 @@ print_help() {
     echo "  -d, --data      Remove the data files"
     echo "  -k, --ksw       Remove the ksw mc files"
     echo "  -p, --plots     Remove all plots"
+    echo "  -l, --logs      Remove logs"
     echo "  -t, --tf        Remove all misc tensorflow logs, such as tuning, tensorboard, and wandb logs"
     echo "  -c, --cache     Remove cached dataset files"
     echo "  --all           Remove everything"
@@ -27,8 +29,8 @@ print_help() {
 # Parse the CLI arguments
 if ! valid_args=$(
     getopt \
-        -o mdptkch \
-        --long models,data,plots,ksw,tf,all,cache,help \
+        -o mdptklch \
+        --long models,data,plots,ksw,tf,all,cache,logs,help \
         -- "$@"
 ); then
     # invalid arguments found, print usage and exit
@@ -70,6 +72,10 @@ while [ $# -gt 0 ]; do
         remove_cache=true
         shift
         ;;
+    -l | --logs)
+        remove_logs=true
+        shift
+        ;;
     --all)
         remove_data=true
         remove_ksw=true
@@ -94,8 +100,9 @@ if [[ ! $(squeue --me -h -n jupyter-dev) && -f .jupyter-dev.out ]]; then
     rm .jupyter-dev.out
 fi
 
-# logs
-rm -rvf data/logs/*
+if [[ "$remove_logs" == true ]]; then
+    rm -rvf data/logs/*
+fi
 
 if [[ "$remove_plots" == true ]]; then
     rm -rvf data/plots/*
