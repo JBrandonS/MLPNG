@@ -10,13 +10,13 @@
 
 
 #this is the sbatch file to use for the jobs
-SBATCH_FILE="sbatch/trainer.sbatch"
+SBATCH_FILE="sbatch/tuner.sbatch"
 
 # The settings files to use for the sims. These should be found in settings/*.json
 SETTINGS=(
     # "n32"
-    # "n64"
-    # "n128"
+    "n64"
+    "n128"
     "n256"
 )
 
@@ -27,7 +27,7 @@ SETTINGS=(
 ARGS=(
     "--nsims" "10000"
     "--phi_scale" "1"
-    "--shapes" "local"
+    "--shapes" "all"
     "--fnl_range" "-1000" "1000"
     # "--tensorboard"
     # "--wandb"
@@ -38,6 +38,9 @@ ARGS=(
 MODELS=(
     "optuna_trainer"
 )
+
+# Number of times to run the tuner (allows for parallel hyperparameter search)
+NUM_RUNS=20
 
 # loops through all the SETTINGS files and for each submits a slurm job for each MODEL
 for x in "${SETTINGS[@]}"; do
@@ -50,7 +53,9 @@ for x in "${SETTINGS[@]}"; do
     echo "Settings $x:"
 
     for model in "${MODELS[@]}"; do
-        JOB_ID=$(sbatch "$SBATCH_FILE" "$model" "$file" "${ARGS[@]}" | awk '{print $4}')
-        printf "\tSubmitted %s, with ID %s\n" "$model" "$JOB_ID"
+        for run in $(seq 1 $NUM_RUNS); do
+            JOB_ID=$(sbatch "$SBATCH_FILE" "$model" "$file" "${ARGS[@]}" | awk '{print $4}')
+            printf "\tSubmitted %s (run %d/%d), with ID %s\n" "$model" "$run" "$NUM_RUNS" "$JOB_ID"
+        done
     done
 done
