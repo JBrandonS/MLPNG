@@ -143,6 +143,11 @@ class Generator(Core):
         """
         ns = self.cosmo_params["ns"]
         ps = self.cosmo_params["pivot_scalar"]
+        l_str = "lensed" if lensed else "unlensed"
+
+        mc_dir = os.path.join(self.dirs["mc"], self.name)
+        mc_file = os.path.join(mc_dir, f"{shape_str}-{l_str}")
+        os.makedirs(mc_dir, exist_ok=True)
 
         match shape_str:
             case "local":
@@ -171,7 +176,6 @@ class Generator(Core):
             self.pols,
             self.precision,
         )
-        mc_file = self.get_mc_file(shape_str, lensed=lensed)
         ksw.start_from_read_state(mc_file)
         return ksw
 
@@ -547,6 +551,7 @@ class Generator(Core):
                     alm_l[:, pol_idxs],
                     alm_nl[:, pol_idxs],
                     lensed=lensed,
+                    sim=42,
                 )
 
             if self.slurm.is_main and self.estimate:
@@ -567,8 +572,10 @@ class Generator(Core):
 
                 print_errors(fnl, estimates, fisher)
                 if self.should_plot():
-                    base = f"est_{shape}_{l_str}"
-                    plot_dir = os.path.join(self.dirs["plot"], self.name, "estimates")
+                    base = f"{shape}_{l_str}"
+                    plot_dir = os.path.join(
+                        self.dirs["plot"], self.name, str(self.slurm.job), "estimates"
+                    )
                     # Ensure sigma is a scalar, not an array (fisher might be wrapped as 1-D array)
                     sigma_val = np.atleast_1d(1 / np.sqrt(fisher))[0]
                     # Flatten both fnl and estimates to 1-D for consistent shapes
@@ -577,13 +584,15 @@ class Generator(Core):
                     plot_predictions(
                         fnl_flat,
                         estimates_flat,
+                        title=f"KSW estimates for {l_str} {shape}",
                         sigma=sigma_val,  # type: ignore
-                        save_file=self.get_plot_file(f"{base}_preds", plot_dir),
+                        save_file=self.get_plot_file(f"predictions_{base}", plot_dir),
                     )
                     plot_histogram(
                         fnl_flat,
                         estimates_flat,
-                        save_file=self.get_plot_file(f"{base}_hist", plot_dir),
+                        title=f"Histogram of KSW estimates for {l_str} {shape}",
+                        save_file=self.get_plot_file(f"histogram_{base}", plot_dir),
                     )
 
             self.logger.info("Finished %s %s!", l_str, shape)

@@ -380,7 +380,7 @@ def add_sigma_legend(truth, preds, sigma, labels, n_sigma=4):
     )
 
 
-def plot_histogram(truth: np.ndarray, preds: np.ndarray, **kwargs):
+def plot_histogram(truth: np.ndarray, preds: np.ndarray, title="Predictions", **kwargs):
     """Plot and save a histogram of predictions with mean and std dev as title"""
     # Calculate mean and standard deviation
     truth = truth.flatten()
@@ -394,7 +394,7 @@ def plot_histogram(truth: np.ndarray, preds: np.ndarray, **kwargs):
     std_pred = np.std(preds)
     sns.histplot(preds, ax=axs[0], legend=False)
     axs[0].set_title(
-        f"Predictions - Mean: {mean_pred:.2f}, Standard Deviation: {std_pred:.2f}"
+        f"{title} - Mean: {mean_pred:.2f}, Standard Deviation: {std_pred:.2f}"
     )
 
     # Plot the differences on the second subplot
@@ -615,7 +615,9 @@ def plot_metrics(history, metrics=["loss"], **kwargs):
     finalize_plot(legend=False, **kwargs)
 
 
-def make_alm_plots(core, shape, alm_l=None, alm_ng=None, alms=None, lensed=False):
+def make_alm_plots(
+    core, shape, alm_l=None, alm_ng=None, alms=None, lensed=False, sim=None
+):
     """
     Generate and save various alm plots for comparison and testing.
 
@@ -626,9 +628,10 @@ def make_alm_plots(core, shape, alm_l=None, alm_ng=None, alms=None, lensed=False
         alms (array): Array of full alm values.
     """
     logger.debug("Generating alm plots")
-    sim = core.rng.integers(core.nsims)  # get random sim idx
-    l_str = f"_{shape}_lensed" if lensed else f"_{shape}_unlensed"
+    sim = sim if sim is not None else core.rng.integers(core.nsims)
+    l_str = f"{shape}_lensed" if lensed else f"{shape}_unlensed"
     l_title = f"lensed {shape}" if lensed else f"unlensed {shape}"
+    l_title += f" (lmax={core.lmax})"
 
     # plot a few comparison with different functions to get views
     idx = core.rng.integers(1, 1001)
@@ -638,7 +641,9 @@ def make_alm_plots(core, shape, alm_l=None, alm_ng=None, alms=None, lensed=False
             alm_l[sim],
             alm_ng[sim],
             index=idx,
-            save_file=core.get_plot_file(f"ecomp{l_str}"),
+            save_file=core.get_plot_file(
+                f"{sim}_{l_str}", sub_path="elsner_comp/linear/"
+            ),
             plot_func=plt.plot,
         )
         plot_elsner_comp(
@@ -646,7 +651,7 @@ def make_alm_plots(core, shape, alm_l=None, alm_ng=None, alms=None, lensed=False
             alm_l[sim],
             alm_ng[sim],
             index=idx,
-            save_file=core.get_plot_file(f"ecomp_log{l_str}"),
+            save_file=core.get_plot_file(f"{sim}_{l_str}", sub_path="elsner_comp/log/"),
             plot_func=plt.loglog,
         )
         plot_elsner_comp(
@@ -654,7 +659,9 @@ def make_alm_plots(core, shape, alm_l=None, alm_ng=None, alms=None, lensed=False
             alm_l[sim],
             alm_ng[sim],
             index=idx,
-            save_file=core.get_plot_file(f"ecomp_semilogy{l_str}"),
+            save_file=core.get_plot_file(
+                f"{sim}_{l_str}", sub_path="elsner_comp/semilogy/"
+            ),
             plot_func=plt.semilogy,
         )
 
@@ -665,7 +672,7 @@ def make_alm_plots(core, shape, alm_l=None, alm_ng=None, alms=None, lensed=False
         plot_cl_alm(
             core,
             alms[sim],
-            save_file=core.get_plot_file(f"{sim}_alm{l_str}"),
+            save_file=core.get_plot_file(f"{sim}_{l_str}_alm", sub_path="power"),
             ylabel=r"$C^{tot}_{\ell}$",
             plot_camb=True,
             plot_full_camb=True,
@@ -674,14 +681,14 @@ def make_alm_plots(core, shape, alm_l=None, alm_ng=None, alms=None, lensed=False
             core,
             alms[sim, 0],
             title=f"{l_title} full alms",
-            save_file=core.get_plot_file(f"map{l_str}"),
+            save_file=core.get_plot_file(f"{sim}_{l_str}_alm", sub_path="maps"),
         )
 
     if alm_l is not None:
         plot_cl_alm(
             core,
             alm_l[sim],
-            save_file=core.get_plot_file(f"{sim}_alm_l{l_str}"),
+            save_file=core.get_plot_file(f"{sim}_{l_str}_alm_l", sub_path="power"),
             ylabel=r"$C_{\ell}^{L}$",
             plot_camb=True,
             plot_full_camb=True,
@@ -689,22 +696,22 @@ def make_alm_plots(core, shape, alm_l=None, alm_ng=None, alms=None, lensed=False
         plot_map_alm(
             core,
             alm_l[sim, 0],
-            title=f"{l_title} full alms",
-            save_file=core.get_plot_file(f"map_l{l_str}"),
+            title=f"{l_title} alm_l",
+            save_file=core.get_plot_file(f"{sim}_{l_str}_alm_l", sub_path="maps"),
         )
 
     if alm_ng is not None:
         plot_cl_alm(
             core,
             alm_ng[sim],
-            save_file=core.get_plot_file(f"{sim}_alm_ng{l_str}"),
+            save_file=core.get_plot_file(f"{sim}_{l_str}_alm_ng", sub_path="power"),
             ylabel=r"$C_{\ell}^{NG}$",
         )
         plot_map_alm(
             core,
             alm_ng[sim, 0],
-            title=f"{l_title} ng alms",
-            save_file=core.get_plot_file(f"map_ng{l_str}"),
+            title=f"{l_title} alm_ng",
+            save_file=core.get_plot_file(f"{sim}_{l_str}_alm_ng", sub_path="maps"),
         )
 
 

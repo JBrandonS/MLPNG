@@ -79,11 +79,7 @@ class Initializor(Core):
             self.cl_phi = self.cl_phi[:, 0].astype(self.r_dtype)
 
     def generate_alm(self, lensed=False) -> np.ndarray:
-        if lensed:
-            cov = self.cov_lens
-        else:
-            cov = self.cov
-
+        cov = self.cov_lens if lensed else self.cov
         sims = hp.synalm(cov, lmax=self.lmax, new=True)
         return remove_mono_dipole(sims, True)
 
@@ -106,6 +102,11 @@ class Initializor(Core):
         """
         ns = self.cosmo_params["ns"]
         ps = self.cosmo_params["pivot_scalar"]
+        l_str = "lensed" if lensed else "unlensed"
+
+        mc_dir = os.path.join(self.dirs["mc"], self.name)
+        mc_file = os.path.join(mc_dir, f"{shape_str}-{l_str}")
+        os.makedirs(mc_dir, exist_ok=True)
 
         match shape_str:
             case "local":
@@ -117,43 +118,41 @@ class Initializor(Core):
             case _:
                 raise ValueError(f"Unknown shape {shape_str}")
 
-        #  hack to remove the previous bispectrum, if there is one
         self.cosmo.red_bispectra = []
         self.cosmo.add_prim_reduced_bispectrum(shape, self.radii)
 
-        # icov should be  x^icov = S^{-1} (S^{-1} + P^H N^{-1} P)^{-1} P^H N^{-1} P s,
-        # where data = P s + n, where s are the spherical harmonic coefficients
-        # of the signal. P = M Y B, where B is the beam, Y is spherical harmonic
-        # synthesis (alm2map) and M is the pixel mask and any custom filters.
-        # N^{-1} and S^{-1} are the inverse noise and signal covariance matrices,
-        # respectively. ^H denotes the Hermitian transpose.
         ksw = KSW(
             self.cosmo.red_bispectra,
-            lambda a: self.icov_func(a, lensed=lensed),
+            lambda a: self.icov_func(a, None, lensed),
             self.lmax,
             self.pols,
             self.precision,
         )
 
-        nsteps = n_steps if n_steps is not None else self.mc_steps
+        if not os.path.exists(mc_file):
+            nsteps = n_steps if n_steps is not None else self.mc_steps
+            print(
+                f"Training KSW estimator for {shape_str} (lensed={lensed}) with {nsteps} steps..."
+            )
 
-        self.logger.debug(
-            "Initalizing KSW for %s %s with %s steps",
-            "lensed" if lensed else "unlensed",
-            shape_str,
-            nsteps,
-        )
+            ksw.step_batch(
+                lambda _: self.icov_func(
+                    self.generate_alm(lensed)[self.pol_idxs()],
+                    None,
+                    lensed,
+                ),
+                range(nsteps),
+                comm=mpi_comm,
+                verbose=True,
+                theta_batch=self.theta_batch,
+            )
 
-        def get_step_alm(idx: int):
-            alm = self.generate_alm()[self.pol_idxs()]
-            return self.icov_func(alm, lensed=lensed)
-
-        ksw.step_batch(
-            get_step_alm,
-            range(nsteps),
-            comm=mpi_comm,
-            theta_batch=self.theta_batch,
-        )
+            # Save the trained state
+            print(f"Saving trained KSW state to {mc_file}")
+            ksw.write_state(mc_file, comm=mpi_comm)
+        else:
+            # Load from saved state
+            ksw.start_from_read_state(mc_file, comm=mpi_comm)
 
         return ksw
 
@@ -224,9 +223,6 @@ class Initializor(Core):
             for shape in self.shapes:
                 self.logger.debug("Starting %s %s", l_str, shape)
                 ksw = self.get_ksw(shape, lensed=lensed)
-                mc_file = self.get_mc_file(shape, lensed=lensed)
-                ksw.write_state(mc_file, comm=mpi_comm)
-                self.logger.info("Finished %s %s! Saved to %s", l_str, shape, mc_file)
 
                 # Wait for all processes to reach this point, not sure if needed
                 mpi_comm.Barrier()

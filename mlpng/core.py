@@ -661,7 +661,9 @@ class Core:
             idxs -= 1
         return idxs
 
-    def get_plot_file(self, name, base_dir=None, extension=".png", create_dir=True):
+    def get_plot_file(
+        self, name, base_dir=None, sub_path=None, extension=".png", create_dir=True
+    ):
         """
         Generate the file path for a plot image.
         Parameters:
@@ -679,7 +681,12 @@ class Core:
         """
 
         if base_dir is None:
-            base_dir = os.path.join(self.dirs["plot"], str(self.name))
+            base_dir = os.path.join(
+                self.dirs["plot"], str(self.name), str(self.slurm.job)
+            )
+
+        if sub_path is not None:
+            base_dir = os.path.join(base_dir, sub_path)
 
         if not os.path.exists(base_dir):
             if create_dir:
@@ -687,22 +694,14 @@ class Core:
             else:
                 raise ValueError(f"Directory {base_dir} does not exist")
 
-        return os.path.join(base_dir, f"{self.slurm.job}_{name}{extension}")
+        return os.path.join(base_dir, f"{name}{extension}")
 
     def get_mc_file(self, shape_str, lensed=False):
-        """
-        Get the Monte Carlo file path for a specific shape and lensing configuration.
-
-        Parameters:
-            shape_str: The shape name ("local", "equilateral", "orthogonal").
-            lensed: Whether using lensed data.
-
-        Returns:
-            str: The full path to the shape-specific MC file.
-        """
-        lensed_str = "lensed" if lensed else "unlensed"
-        mc_filename = f"{self.name}_{shape_str}_{lensed_str}.hdf5"
-        return os.path.join(self.dirs["mc"], mc_filename)
+        l_str = "lensed" if lensed else "unlensed"
+        mc_dir = os.path.join(self.dirs["mc"], self.name)
+        mc_file = os.path.join(mc_dir, f"{shape_str}-{l_str}")
+        os.makedirs(mc_dir, exist_ok=True)
+        return mc_file
 
     def check_existing_data_file(self):
         """Check if the data file already exists and handle it based on the `force_gen` setting.
@@ -755,7 +754,4 @@ class Core:
                         case _:
                             self.logger.warning("Unknown shape %s, ignoring", s)
                 like = f.get("marginal_likelihoods")[l_str][np.array(indxs)]
-        return like
-        return like
-        return like
         return like
