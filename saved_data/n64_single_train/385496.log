@@ -1,0 +1,447 @@
+Running trainer with module mlpng.neo_trainer on bcm-dgxa100-0009
+2026-02-05 08:50:29.705516: E external/local_xla/xla/stream_executor/cuda/cuda_dnn.cc:9261] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+2026-02-05 08:50:29.705564: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:607] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+2026-02-05 08:50:29.706689: E external/local_xla/xla/stream_executor/cuda/cuda_blas.cc:1515] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+2026-02-05 08:50:29.712908: I tensorflow/core/platform/cpu_feature_guard.cc:182] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+2026-02-05 08:50:30.640752: W tensorflow/compiler/tf2tensorrt/utils/py_utils.cc:38] TF-TRT Warning: Could not find TensorRT
+05-Feb-26 08:50:37 - __main__ - DEBUG - Core arguments: ['settings/n64.json', '--nsims', '10000', '--phi_scale', '1', '--shapes', 'local', '--fnl_range', '-1000', '1000']
+2026-02-05 08:50:38.590105: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1929] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 79194 MB memory:  -> device: 0, name: NVIDIA A100-SXM4-80GB, pci bus id: 0000:07:00.0, compute capability: 8.0
+2026-02-05 08:50:38.591858: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1929] Created device /job:localhost/replica:0/task:0/device:GPU:1 with 79194 MB memory:  -> device: 1, name: NVIDIA A100-SXM4-80GB, pci bus id: 0000:0f:00.0, compute capability: 8.0
+2026-02-05 08:50:38.593382: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1929] Created device /job:localhost/replica:0/task:0/device:GPU:2 with 79194 MB memory:  -> device: 2, name: NVIDIA A100-SXM4-80GB, pci bus id: 0000:47:00.0, compute capability: 8.0
+2026-02-05 08:50:38.594877: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1929] Created device /job:localhost/replica:0/task:0/device:GPU:3 with 79194 MB memory:  -> device: 3, name: NVIDIA A100-SXM4-80GB, pci bus id: 0000:4e:00.0, compute capability: 8.0
+INFO:tensorflow:Using MirroredStrategy with devices ('/job:localhost/replica:0/task:0/device:GPU:0', '/job:localhost/replica:0/task:0/device:GPU:1', '/job:localhost/replica:0/task:0/device:GPU:2', '/job:localhost/replica:0/task:0/device:GPU:3')
+05-Feb-26 08:50:38 - tensorflow - INFO - Using MirroredStrategy with devices ('/job:localhost/replica:0/task:0/device:GPU:0', '/job:localhost/replica:0/task:0/device:GPU:1', '/job:localhost/replica:0/task:0/device:GPU:2', '/job:localhost/replica:0/task:0/device:GPU:3')
+05-Feb-26 08:50:38 - __main__ - INFO - Using MirroredStrategy with 4 device(s)
+05-Feb-26 08:50:38 - __main__ - DEBUG - [Before Core initialization] Memory - RSS: 1.11 GB, VMS: 28.39 GB
+05-Feb-26 08:50:38 - mlpng.core - DEBUG - Parsing CLI args: ['settings/n64.json', '--nsims', '10000', '--phi_scale', '1', '--shapes', 'local', '--fnl_range', '-1000', '1000']
+05-Feb-26 08:50:38 - mlpng.core - INFO - Loading settings from file 'settings/n64.json'
+05-Feb-26 08:50:38 - mlpng.core - DEBUG - Forcing setting 'nsims' to 10000 due to CLI
+05-Feb-26 08:50:38 - mlpng.core - DEBUG - Forcing setting 'fnl_range' to [-1000, 1000] due to CLI
+05-Feb-26 08:50:38 - mlpng.core - DEBUG - Forcing setting 'phi_scale' to 1.0 due to CLI
+05-Feb-26 08:50:38 - mlpng.core - DEBUG - Forcing setting 'shapes' to ['local'] due to CLI
+05-Feb-26 08:50:38 - mlpng.core - DEBUG - Forcing setting 'tf_cache' to True due to CLI
+05-Feb-26 08:50:38 - mlpng.core - DEBUG - Forcing setting 'tf_mem_cache' to True due to CLI
+05-Feb-26 08:50:38 - mlpng.core - DEBUG - Overriding cosmo param 'As' from 2.13e-09 to 2.105e-09
+05-Feb-26 08:50:38 - mlpng.core - DEBUG - Overriding cosmo param 'ns' from 0.9624 to 0.965
+05-Feb-26 08:50:38 - mlpng.core - DEBUG - Running with settings: 
+{
+  "cosmo_params": {
+    "As": 2.105e-09,
+    "ns": 0.965,
+    "pivot_scalar": 0.05,
+    "H0": 67.4,
+    "ombh2": 0.0224,
+    "omch2": 0.12,
+    "tau": 0.054
+  },
+  "nsims": 10000,
+  "nside": 64,
+  "fnl_range": [
+    -1000,
+    1000
+  ],
+  "phi_scale": 1.0,
+  "shapes": [
+    "local"
+  ],
+  "tf_cache": true,
+  "tf_mem_cache": true
+}
+05-Feb-26 08:50:38 - mlpng.core - DEBUG - slurm: Slurm(self.name='trainer', self.job=385496, self.array=0, self.array_index=-1, self.task_count=0, self.is_main=True, self.n_cpus=32)
+05-Feb-26 08:50:38 - mlpng.core - DEBUG - Using seed: 393574826
+05-Feb-26 08:50:38 - mlpng.core - DEBUG - Found non-default value for 'nside': 64 (default: 128)
+05-Feb-26 08:50:38 - mlpng.core - DEBUG - Found non-default value for 'nsims': 10000 (default: 100)
+05-Feb-26 08:50:38 - mlpng.core - DEBUG - Found non-default value for 'fnl_range': [-1000, 1000] (default: (-1000, 1000))
+05-Feb-26 08:50:38 - mlpng.core - DEBUG - Found non-default value for 'shapes': ['local'] (default: 'all')
+05-Feb-26 08:50:38 - __main__ - DEBUG - [After Core initialization] Memory - RSS: 1.11 GB, VMS: 28.39 GB
+05-Feb-26 08:50:38 - __main__ - INFO - Sigma values: [47.40024916]
+05-Feb-26 08:50:38 - __main__ - INFO - Decay steps: 1562.0
+05-Feb-26 08:50:41 - mlpng.utils.dataloaders - DEBUG - Error information from 'data/data/l191_n64_T_10000_p1.0.hdf5'...
+05-Feb-26 08:50:41 - mlpng.utils.dataloaders - DEBUG - Fisher Matrix: [ 4.5728404e-04  1.5810940e-05 -7.7885117e-05]
+05-Feb-26 08:50:41 - mlpng.utils.dataloaders - DEBUG - Marginal Likelihoods: 75.519325
+05-Feb-26 08:50:41 - mlpng.utils.dataloaders - DEBUG - Fisher for shape local: 0.00045066615, std div: 47.105600351244846
+05-Feb-26 08:50:41 - __main__ - DEBUG - [After KappaDataset creation] Memory - RSS: 1.31 GB, VMS: 28.59 GB
+05-Feb-26 08:50:41 - mlpng.utils.dataloaders - DEBUG - Splitting 'data/data/l191_n64_T_10000_p1.0.hdf5' into train: 0:8000 (8000), val: 8000:9000 (1000), test: 9000:10000 (1000)
+05-Feb-26 08:50:41 - mlpng.utils.dataloaders - DEBUG - Using cache file: '/lustre/smuexa01/client/users/stevensonb/tf_cache/n64_local-train.cache'
+05-Feb-26 08:50:41 - mlpng.utils.dataloaders - DEBUG - Using cache file: '/lustre/smuexa01/client/users/stevensonb/tf_cache/n64_local-val.cache'
+05-Feb-26 08:50:41 - mlpng.utils.dataloaders - DEBUG - Using cache file: '/lustre/smuexa01/client/users/stevensonb/tf_cache/n64_local-test.cache'
+05-Feb-26 08:50:41 - __main__ - DEBUG - [After dataset split] Memory - RSS: 1.31 GB, VMS: 28.59 GB
+05-Feb-26 08:50:41 - __main__ - DEBUG - Generating train cache
+05-Feb-26 08:51:36 - __main__ - DEBUG -   processed 0 batches
+05-Feb-26 08:51:37 - __main__ - DEBUG -   processed 10 batches
+05-Feb-26 08:51:38 - __main__ - DEBUG -   processed 20 batches
+05-Feb-26 08:51:38 - __main__ - DEBUG -   processed 30 batches
+05-Feb-26 08:51:39 - __main__ - DEBUG -   processed 40 batches
+05-Feb-26 08:51:46 - __main__ - DEBUG -   processed 50 batches
+05-Feb-26 08:51:47 - __main__ - DEBUG -   processed 60 batches
+05-Feb-26 08:51:48 - __main__ - DEBUG -   processed 70 batches
+05-Feb-26 08:51:49 - __main__ - DEBUG -   processed 80 batches
+05-Feb-26 08:51:50 - __main__ - DEBUG -   processed 90 batches
+05-Feb-26 08:51:51 - __main__ - DEBUG -   processed 100 batches
+05-Feb-26 08:51:52 - __main__ - DEBUG -   processed 110 batches
+05-Feb-26 08:51:54 - __main__ - DEBUG -   processed 120 batches
+05-Feb-26 08:51:54 - __main__ - DEBUG -   processed 130 batches
+05-Feb-26 08:52:02 - __main__ - DEBUG -   processed 140 batches
+05-Feb-26 08:52:07 - __main__ - DEBUG -   processed 150 batches
+05-Feb-26 08:52:08 - __main__ - DEBUG -   processed 160 batches
+05-Feb-26 08:52:09 - __main__ - DEBUG -   processed 170 batches
+05-Feb-26 08:52:10 - __main__ - DEBUG -   processed 180 batches
+05-Feb-26 08:52:11 - __main__ - DEBUG -   processed 190 batches
+05-Feb-26 08:52:12 - __main__ - DEBUG -   processed 200 batches
+05-Feb-26 08:52:12 - __main__ - DEBUG -   processed 210 batches
+05-Feb-26 08:52:14 - __main__ - DEBUG -   processed 220 batches
+05-Feb-26 08:52:15 - __main__ - DEBUG -   processed 230 batches
+05-Feb-26 08:52:15 - __main__ - DEBUG -   processed 240 batches
+05-Feb-26 08:52:16 - __main__ - DEBUG -   processed 250 batches
+05-Feb-26 08:52:17 - __main__ - DEBUG -   processed 260 batches
+05-Feb-26 08:52:18 - __main__ - DEBUG -   processed 270 batches
+05-Feb-26 08:52:19 - __main__ - DEBUG -   processed 280 batches
+05-Feb-26 08:52:19 - __main__ - DEBUG -   processed 290 batches
+05-Feb-26 08:52:21 - __main__ - DEBUG -   processed 300 batches
+05-Feb-26 08:52:21 - __main__ - DEBUG -   processed 310 batches
+05-Feb-26 08:52:21 - __main__ - DEBUG -   processed 320 batches
+05-Feb-26 08:52:22 - __main__ - DEBUG -   processed 330 batches
+05-Feb-26 08:52:23 - __main__ - DEBUG -   processed 340 batches
+05-Feb-26 08:52:24 - __main__ - DEBUG -   processed 350 batches
+05-Feb-26 08:52:24 - __main__ - DEBUG -   processed 360 batches
+05-Feb-26 08:52:25 - __main__ - DEBUG -   processed 370 batches
+05-Feb-26 08:52:26 - __main__ - DEBUG -   processed 380 batches
+05-Feb-26 08:52:27 - __main__ - DEBUG -   processed 390 batches
+05-Feb-26 08:52:28 - __main__ - DEBUG -   processed 400 batches
+05-Feb-26 08:52:28 - __main__ - DEBUG -   processed 410 batches
+05-Feb-26 08:52:29 - __main__ - DEBUG -   processed 420 batches
+05-Feb-26 08:52:30 - __main__ - DEBUG -   processed 430 batches
+05-Feb-26 08:52:31 - __main__ - DEBUG -   processed 440 batches
+05-Feb-26 08:52:32 - __main__ - DEBUG -   processed 450 batches
+05-Feb-26 08:52:32 - __main__ - DEBUG -   processed 460 batches
+05-Feb-26 08:52:33 - __main__ - DEBUG -   processed 470 batches
+05-Feb-26 08:52:34 - __main__ - DEBUG -   processed 480 batches
+05-Feb-26 08:52:35 - __main__ - DEBUG -   processed 490 batches
+05-Feb-26 08:52:36 - __main__ - DEBUG -   processed 500 batches
+05-Feb-26 08:52:36 - __main__ - DEBUG -   processed 510 batches
+05-Feb-26 08:52:37 - __main__ - DEBUG -   processed 520 batches
+05-Feb-26 08:52:38 - __main__ - DEBUG -   processed 530 batches
+05-Feb-26 08:52:39 - __main__ - DEBUG -   processed 540 batches
+05-Feb-26 08:52:39 - __main__ - DEBUG -   processed 550 batches
+05-Feb-26 08:52:40 - __main__ - DEBUG -   processed 560 batches
+05-Feb-26 08:52:41 - __main__ - DEBUG -   processed 570 batches
+05-Feb-26 08:52:41 - __main__ - DEBUG -   processed 580 batches
+05-Feb-26 08:52:42 - __main__ - DEBUG -   processed 590 batches
+05-Feb-26 08:52:43 - __main__ - DEBUG -   processed 600 batches
+05-Feb-26 08:52:44 - __main__ - DEBUG -   processed 610 batches
+05-Feb-26 08:52:44 - __main__ - DEBUG -   processed 620 batches
+05-Feb-26 08:52:45 - __main__ - DEBUG -   processed 630 batches
+05-Feb-26 08:52:47 - __main__ - DEBUG -   processed 640 batches
+05-Feb-26 08:52:48 - __main__ - DEBUG -   processed 650 batches
+05-Feb-26 08:52:48 - __main__ - DEBUG -   processed 660 batches
+05-Feb-26 08:52:50 - __main__ - DEBUG -   processed 670 batches
+05-Feb-26 08:52:51 - __main__ - DEBUG -   processed 680 batches
+05-Feb-26 08:52:53 - __main__ - DEBUG -   processed 690 batches
+05-Feb-26 08:52:54 - __main__ - DEBUG -   processed 700 batches
+05-Feb-26 08:52:54 - __main__ - DEBUG -   processed 710 batches
+05-Feb-26 08:52:56 - __main__ - DEBUG -   processed 720 batches
+05-Feb-26 08:52:57 - __main__ - DEBUG -   processed 730 batches
+05-Feb-26 08:52:59 - __main__ - DEBUG -   processed 740 batches
+05-Feb-26 08:53:00 - __main__ - DEBUG -   processed 750 batches
+05-Feb-26 08:53:00 - __main__ - DEBUG -   processed 760 batches
+05-Feb-26 08:53:02 - __main__ - DEBUG -   processed 770 batches
+05-Feb-26 08:53:03 - __main__ - DEBUG -   processed 780 batches
+05-Feb-26 08:53:05 - __main__ - DEBUG -   processed 790 batches
+05-Feb-26 08:53:06 - __main__ - DEBUG -   processed 800 batches
+05-Feb-26 08:53:06 - __main__ - DEBUG -   processed 810 batches
+05-Feb-26 08:53:08 - __main__ - DEBUG -   processed 820 batches
+05-Feb-26 08:53:09 - __main__ - DEBUG -   processed 830 batches
+05-Feb-26 08:53:10 - __main__ - DEBUG -   processed 840 batches
+05-Feb-26 08:53:12 - __main__ - DEBUG -   processed 850 batches
+05-Feb-26 08:53:12 - __main__ - DEBUG -   processed 860 batches
+05-Feb-26 08:53:14 - __main__ - DEBUG -   processed 870 batches
+05-Feb-26 08:53:15 - __main__ - DEBUG -   processed 880 batches
+05-Feb-26 08:53:16 - __main__ - DEBUG -   processed 890 batches
+05-Feb-26 08:53:18 - __main__ - DEBUG -   processed 900 batches
+05-Feb-26 08:53:18 - __main__ - DEBUG -   processed 910 batches
+05-Feb-26 08:53:20 - __main__ - DEBUG -   processed 920 batches
+05-Feb-26 08:53:21 - __main__ - DEBUG -   processed 930 batches
+05-Feb-26 08:53:22 - __main__ - DEBUG -   processed 940 batches
+05-Feb-26 08:53:24 - __main__ - DEBUG -   processed 950 batches
+05-Feb-26 08:53:24 - __main__ - DEBUG -   processed 960 batches
+05-Feb-26 08:53:26 - __main__ - DEBUG -   processed 970 batches
+05-Feb-26 08:53:27 - __main__ - DEBUG -   processed 980 batches
+05-Feb-26 08:53:28 - __main__ - DEBUG -   processed 990 batches
+05-Feb-26 08:53:30 - __main__ - DEBUG -   processed 1000 batches
+05-Feb-26 08:53:30 - __main__ - DEBUG -   processed 1010 batches
+05-Feb-26 08:53:32 - __main__ - DEBUG -   processed 1020 batches
+05-Feb-26 08:53:33 - __main__ - DEBUG -   processed 1030 batches
+05-Feb-26 08:53:34 - __main__ - DEBUG -   processed 1040 batches
+05-Feb-26 08:53:36 - __main__ - DEBUG -   processed 1050 batches
+05-Feb-26 08:53:36 - __main__ - DEBUG -   processed 1060 batches
+05-Feb-26 08:53:38 - __main__ - DEBUG -   processed 1070 batches
+05-Feb-26 08:53:39 - __main__ - DEBUG -   processed 1080 batches
+05-Feb-26 08:53:41 - __main__ - DEBUG -   processed 1090 batches
+05-Feb-26 08:53:42 - __main__ - DEBUG -   processed 1100 batches
+05-Feb-26 08:53:43 - __main__ - DEBUG -   processed 1110 batches
+05-Feb-26 08:53:44 - __main__ - DEBUG -   processed 1120 batches
+05-Feb-26 08:53:46 - __main__ - DEBUG -   processed 1130 batches
+05-Feb-26 08:53:47 - __main__ - DEBUG -   processed 1140 batches
+05-Feb-26 08:53:49 - __main__ - DEBUG -   processed 1150 batches
+05-Feb-26 08:53:49 - __main__ - DEBUG -   processed 1160 batches
+05-Feb-26 08:53:50 - __main__ - DEBUG -   processed 1170 batches
+05-Feb-26 08:53:52 - __main__ - DEBUG -   processed 1180 batches
+05-Feb-26 08:53:53 - __main__ - DEBUG -   processed 1190 batches
+05-Feb-26 08:53:54 - __main__ - DEBUG -   processed 1200 batches
+05-Feb-26 08:53:55 - __main__ - DEBUG -   processed 1210 batches
+05-Feb-26 08:53:56 - __main__ - DEBUG -   processed 1220 batches
+05-Feb-26 08:53:57 - __main__ - DEBUG -   processed 1230 batches
+05-Feb-26 08:53:59 - __main__ - DEBUG -   processed 1240 batches
+05-Feb-26 08:54:00 - __main__ - DEBUG -   processed 1250 batches
+05-Feb-26 08:54:00 - __main__ - DEBUG -   processed 1260 batches
+05-Feb-26 08:54:01 - __main__ - DEBUG -   processed 1270 batches
+05-Feb-26 08:54:03 - __main__ - DEBUG -   processed 1280 batches
+05-Feb-26 08:54:04 - __main__ - DEBUG -   processed 1290 batches
+05-Feb-26 08:54:05 - __main__ - DEBUG -   processed 1300 batches
+05-Feb-26 08:54:06 - __main__ - DEBUG -   processed 1310 batches
+05-Feb-26 08:54:07 - __main__ - DEBUG -   processed 1320 batches
+05-Feb-26 08:54:08 - __main__ - DEBUG -   processed 1330 batches
+05-Feb-26 08:54:09 - __main__ - DEBUG -   processed 1340 batches
+05-Feb-26 08:54:11 - __main__ - DEBUG -   processed 1350 batches
+05-Feb-26 08:54:11 - __main__ - DEBUG -   processed 1360 batches
+05-Feb-26 08:54:12 - __main__ - DEBUG -   processed 1370 batches
+05-Feb-26 08:54:13 - __main__ - DEBUG -   processed 1380 batches
+05-Feb-26 08:54:15 - __main__ - DEBUG -   processed 1390 batches
+05-Feb-26 08:54:16 - __main__ - DEBUG -   processed 1400 batches
+05-Feb-26 08:54:16 - __main__ - DEBUG -   processed 1410 batches
+05-Feb-26 08:54:17 - __main__ - DEBUG -   processed 1420 batches
+05-Feb-26 08:54:19 - __main__ - DEBUG -   processed 1430 batches
+05-Feb-26 08:54:20 - __main__ - DEBUG -   processed 1440 batches
+05-Feb-26 08:54:21 - __main__ - DEBUG -   processed 1450 batches
+05-Feb-26 08:54:21 - __main__ - DEBUG -   processed 1460 batches
+05-Feb-26 08:54:23 - __main__ - DEBUG -   processed 1470 batches
+05-Feb-26 08:54:24 - __main__ - DEBUG -   processed 1480 batches
+05-Feb-26 08:54:25 - __main__ - DEBUG -   processed 1490 batches
+05-Feb-26 08:54:26 - __main__ - DEBUG -   processed 1500 batches
+05-Feb-26 08:54:27 - __main__ - DEBUG -   processed 1510 batches
+05-Feb-26 08:54:28 - __main__ - DEBUG -   processed 1520 batches
+05-Feb-26 08:54:29 - __main__ - DEBUG -   processed 1530 batches
+05-Feb-26 08:54:30 - __main__ - DEBUG -   processed 1540 batches
+05-Feb-26 08:54:31 - __main__ - DEBUG -   processed 1550 batches
+05-Feb-26 08:54:32 - __main__ - DEBUG -   processed 1560 batches
+2026-02-05 08:54:33.675350: W tensorflow/core/kernels/data/cache_dataset_ops.cc:302] The calling iterator did not fully read the dataset being cached. In order to avoid unexpected truncation of the dataset, the partially cached contents of the dataset  will be discarded. This can happen if you have an input pipeline similar to `dataset.cache().take(k).repeat()`. You should use `dataset.take(k).cache().repeat()` instead.
+05-Feb-26 08:54:33 - __main__ - DEBUG - [After train_ds caching] Memory - RSS: 19.58 GB, VMS: 51.10 GB
+05-Feb-26 08:54:33 - __main__ - DEBUG - Generating val cache
+2026-02-05 08:55:07.416579: W tensorflow/core/kernels/data/cache_dataset_ops.cc:302] The calling iterator did not fully read the dataset being cached. In order to avoid unexpected truncation of the dataset, the partially cached contents of the dataset  will be discarded. This can happen if you have an input pipeline similar to `dataset.cache().take(k).repeat()`. You should use `dataset.take(k).cache().repeat()` instead.
+05-Feb-26 08:55:07 - __main__ - DEBUG - [After val_ds caching] Memory - RSS: 3.75 GB, VMS: 35.22 GB
+05-Feb-26 08:55:07 - __main__ - DEBUG - Generating test cache
+2026-02-05 08:55:32.155554: W tensorflow/core/kernels/data/cache_dataset_ops.cc:302] The calling iterator did not fully read the dataset being cached. In order to avoid unexpected truncation of the dataset, the partially cached contents of the dataset  will be discarded. This can happen if you have an input pipeline similar to `dataset.cache().take(k).repeat()`. You should use `dataset.take(k).cache().repeat()` instead.
+05-Feb-26 08:55:32 - __main__ - DEBUG - [After test_ds caching] Memory - RSS: 2.76 GB, VMS: 34.16 GB
+05-Feb-26 08:55:32 - __main__ - DEBUG - train_ds per-batch: X=0.023 GB, Y=0.000 GB, Total=0.023 GB
+05-Feb-26 08:55:32 - __main__ - DEBUG - val_ds per-batch: X=0.023 GB, Y=0.000 GB, Total=0.023 GB
+05-Feb-26 08:55:32 - __main__ - DEBUG - test_ds per-batch: X=0.023 GB, Y=0.000 GB, Total=0.023 GB
+05-Feb-26 08:55:32 - __main__ - DEBUG - [Before model building] Memory - RSS: 2.56 GB, VMS: 33.79 GB
+INFO:tensorflow:Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+05-Feb-26 08:55:36 - tensorflow - INFO - Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+INFO:tensorflow:Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+05-Feb-26 08:55:36 - tensorflow - INFO - Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+INFO:tensorflow:Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+05-Feb-26 08:55:37 - tensorflow - INFO - Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+INFO:tensorflow:Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+05-Feb-26 08:55:37 - tensorflow - INFO - Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+INFO:tensorflow:Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+05-Feb-26 08:55:37 - tensorflow - INFO - Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+INFO:tensorflow:Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+05-Feb-26 08:55:37 - tensorflow - INFO - Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+INFO:tensorflow:Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+05-Feb-26 08:55:37 - tensorflow - INFO - Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+INFO:tensorflow:Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+05-Feb-26 08:55:37 - tensorflow - INFO - Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+INFO:tensorflow:Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+05-Feb-26 08:55:37 - tensorflow - INFO - Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+INFO:tensorflow:Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+05-Feb-26 08:55:37 - tensorflow - INFO - Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+05-Feb-26 08:55:38 - __main__ - DEBUG - [After model building] Memory - RSS: 2.52 GB, VMS: 33.91 GB
+05-Feb-26 08:55:38 - git.cmd - DEBUG - Popen(['git', 'rev-parse', '--show-toplevel'], cwd=/users/stevensonb/Research/MLPNG, stdin=None, shell=False, universal_newlines=False)
+05-Feb-26 08:55:38 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): api.wandb.ai:443
+05-Feb-26 08:55:38 - urllib3.connectionpool - DEBUG - https://api.wandb.ai:443 "POST /graphql HTTP/1.1" 200 None
+05-Feb-26 08:55:38 - urllib3.connectionpool - DEBUG - https://api.wandb.ai:443 "POST /graphql HTTP/1.1" 200 376
+wandb: Currently logged in as: jbrandons (mlpng) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Using wandb-core as the SDK backend.  Please refer to https://wandb.me/wandb-core for more information.
+05-Feb-26 08:55:39 - git.cmd - DEBUG - Popen(['git', 'cat-file', '--batch-check'], cwd=/users/stevensonb/Research/MLPNG, stdin=<valid stream>, shell=False, universal_newlines=False)
+wandb: Tracking run with wandb version 0.19.6
+wandb: Run data is saved locally in /users/stevensonb/Research/MLPNG/wandb/run-20260205_085538-zl3adr4e
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run elated-vortex-2285
+wandb: ⭐️ View project at https://wandb.ai/mlpng/mlpng
+wandb: 🚀 View run at https://wandb.ai/mlpng/mlpng/runs/zl3adr4e
+2026-02-05 08:55:44.674542: I external/local_tsl/tsl/platform/default/subprocess.cc:304] Start cannot spawn child process: No such file or directory
+Model: "task_conditioned_encoder"
+_________________________________________________________________
+ Layer (type)                Output Shape              Param #   
+=================================================================
+ lensed_maps (InputLayer)    [(None, 49152, 1)]        0         
+                                                                 
+ encoder_block (EncoderBloc  (None, 3072, 32)          320       
+ k)                                                              
+                                                                 
+ encoder_block_1 (EncoderBl  (None, 192, 64)           14528     
+ ock)                                                            
+                                                                 
+ encoder_block_2 (EncoderBl  (None, 12, 128)           57728     
+ ock)                                                            
+                                                                 
+ flatten (Flatten)           (None, 1536)              0         
+                                                                 
+ task_specific_heads (TaskS  (None, 3)                 362019    
+ pecificHeads)                                                   
+                                                                 
+=================================================================
+Total params: 434595 (1.66 MB)
+Trainable params: 434147 (1.66 MB)
+Non-trainable params: 448 (1.75 KB)
+_________________________________________________________________
+05-Feb-26 08:55:45 - __main__ - DEBUG - [Before model.fit()] Memory - RSS: 2.37 GB, VMS: 33.76 GB
+2026-02-05 08:55:45.230332: W tensorflow/core/grappler/optimizers/data/auto_shard.cc:553] The `assert_cardinality` transformation is currently not handled by the auto-shard rewrite and will be removed.
+Epoch 1/100
+INFO:tensorflow:Collective all_reduce tensors: 28 all_reduces, num_devices = 4, group_size = 4, implementation = CommunicationImplementation.NCCL, num_packs = 1
+05-Feb-26 08:55:50 - tensorflow - INFO - Collective all_reduce tensors: 28 all_reduces, num_devices = 4, group_size = 4, implementation = CommunicationImplementation.NCCL, num_packs = 1
+INFO:tensorflow:Collective all_reduce tensors: 28 all_reduces, num_devices = 4, group_size = 4, implementation = CommunicationImplementation.NCCL, num_packs = 1
+05-Feb-26 08:56:04 - tensorflow - INFO - Collective all_reduce tensors: 28 all_reduces, num_devices = 4, group_size = 4, implementation = CommunicationImplementation.NCCL, num_packs = 1
+2026-02-05 08:56:12.073805: I external/local_xla/xla/stream_executor/cuda/cuda_dnn.cc:454] Loaded cuDNN version 8904
+2026-02-05 08:56:12.075329: I external/local_xla/xla/stream_executor/cuda/cuda_dnn.cc:454] Loaded cuDNN version 8904
+2026-02-05 08:56:12.075669: I external/local_xla/xla/stream_executor/cuda/cuda_dnn.cc:454] Loaded cuDNN version 8904
+2026-02-05 08:56:12.076249: I external/local_xla/xla/stream_executor/cuda/cuda_dnn.cc:454] Loaded cuDNN version 8904
+2026-02-05 08:56:14.459285: I external/local_xla/xla/service/service.cc:168] XLA service 0x1552bc26fbb0 initialized for platform CUDA (this does not guarantee that XLA will be used). Devices:
+2026-02-05 08:56:14.459331: I external/local_xla/xla/service/service.cc:176]   StreamExecutor device (0): NVIDIA A100-SXM4-80GB, Compute Capability 8.0
+2026-02-05 08:56:14.459337: I external/local_xla/xla/service/service.cc:176]   StreamExecutor device (1): NVIDIA A100-SXM4-80GB, Compute Capability 8.0
+2026-02-05 08:56:14.459342: I external/local_xla/xla/service/service.cc:176]   StreamExecutor device (2): NVIDIA A100-SXM4-80GB, Compute Capability 8.0
+2026-02-05 08:56:14.459348: I external/local_xla/xla/service/service.cc:176]   StreamExecutor device (3): NVIDIA A100-SXM4-80GB, Compute Capability 8.0
+2026-02-05 08:56:14.612241: I tensorflow/compiler/mlir/tensorflow/utils/dump_mlir_util.cc:269] disabling MLIR crash reproducer, set env var `MLIR_CRASH_REPRODUCER_DIRECTORY` to enable.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1770303374.769754 1165868 device_compiler.h:186] Compiled cluster using XLA!  This line is logged at most once for the lifetime of the process.
+2026-02-05 08:57:14.078970: W tensorflow/core/grappler/optimizers/data/auto_shard.cc:553] The `assert_cardinality` transformation is currently not handled by the auto-shard rewrite and will be removed.
+1563/1563 - 93s - loss: 19687.0879 - rmse_local: 148.7116 - val_loss: 4504.7754 - val_rmse_local: 66.1399 - 93s/epoch - 59ms/step
+Epoch 2/100
+1563/1563 - 59s - loss: 8965.0557 - rmse_local: 94.9517 - val_loss: 11115.2783 - val_rmse_local: 98.2205 - 59s/epoch - 38ms/step
+Epoch 3/100
+1563/1563 - 59s - loss: 5467.0962 - rmse_local: 76.0155 - val_loss: 8501.1748 - val_rmse_local: 88.2246 - 59s/epoch - 38ms/step
+Epoch 4/100
+1563/1563 - 59s - loss: 4873.8950 - rmse_local: 69.5562 - val_loss: 10691.8291 - val_rmse_local: 102.4128 - 59s/epoch - 38ms/step
+Epoch 5/100
+1563/1563 - 60s - loss: 3611.8906 - rmse_local: 59.8377 - val_loss: 7360.7886 - val_rmse_local: 83.5124 - 60s/epoch - 39ms/step
+Epoch 6/100
+1563/1563 - 61s - loss: 2985.5559 - rmse_local: 54.6986 - val_loss: 3050.4597 - val_rmse_local: 54.8626 - 61s/epoch - 39ms/step
+Epoch 7/100
+1563/1563 - 58s - loss: 2636.7263 - rmse_local: 51.7149 - val_loss: 4745.7905 - val_rmse_local: 67.0980 - 58s/epoch - 37ms/step
+Epoch 8/100
+1563/1563 - 60s - loss: 3389.5940 - rmse_local: 57.6473 - val_loss: 11090.1875 - val_rmse_local: 104.8966 - 60s/epoch - 39ms/step
+Epoch 9/100
+1563/1563 - 61s - loss: 3103.6611 - rmse_local: 55.2761 - val_loss: 8354.6943 - val_rmse_local: 91.8867 - 61s/epoch - 39ms/step
+Epoch 10/100
+1563/1563 - 60s - loss: 2873.0256 - rmse_local: 53.3139 - val_loss: 5633.7651 - val_rmse_local: 75.1213 - 60s/epoch - 39ms/step
+Epoch 11/100
+1563/1563 - 61s - loss: 2644.0369 - rmse_local: 51.3022 - val_loss: 6513.2974 - val_rmse_local: 79.3414 - 61s/epoch - 39ms/step
+Epoch 12/100
+1563/1563 - 61s - loss: 2470.8157 - rmse_local: 49.7414 - val_loss: 3713.1543 - val_rmse_local: 60.4159 - 61s/epoch - 39ms/step
+Epoch 13/100
+1563/1563 - 60s - loss: 2301.6975 - rmse_local: 48.1874 - val_loss: 3140.1118 - val_rmse_local: 55.2038 - 60s/epoch - 38ms/step
+Epoch 14/100
+1563/1563 - 59s - loss: 2157.5588 - rmse_local: 46.8398 - val_loss: 2593.2881 - val_rmse_local: 50.4812 - 59s/epoch - 38ms/step
+Epoch 15/100
+1563/1563 - 62s - loss: 2083.5271 - rmse_local: 46.1436 - val_loss: 5382.8184 - val_rmse_local: 73.3328 - 62s/epoch - 39ms/step
+Epoch 16/100
+1563/1563 - 60s - loss: 2793.1226 - rmse_local: 52.3793 - val_loss: 8668.6436 - val_rmse_local: 94.5121 - 60s/epoch - 38ms/step
+Epoch 17/100
+1563/1563 - 60s - loss: 2683.7573 - rmse_local: 51.4282 - val_loss: 6329.6479 - val_rmse_local: 80.8696 - 60s/epoch - 38ms/step
+Epoch 18/100
+1563/1563 - 61s - loss: 2591.9775 - rmse_local: 50.6016 - val_loss: 7096.8447 - val_rmse_local: 85.2534 - 61s/epoch - 39ms/step
+Epoch 19/100
+1563/1563 - 61s - loss: 2510.5781 - rmse_local: 49.8491 - val_loss: 5704.8506 - val_rmse_local: 76.2887 - 61s/epoch - 39ms/step
+Epoch 20/100
+1563/1563 - 59s - loss: 2438.4883 - rmse_local: 49.1705 - val_loss: 5449.4507 - val_rmse_local: 74.0336 - 59s/epoch - 38ms/step
+Epoch 21/100
+1563/1563 - 61s - loss: 2356.0071 - rmse_local: 48.4043 - val_loss: 6223.2646 - val_rmse_local: 78.5529 - 61s/epoch - 39ms/step
+Epoch 22/100
+1563/1563 - 61s - loss: 2274.9175 - rmse_local: 47.6220 - val_loss: 6442.5664 - val_rmse_local: 79.4300 - 61s/epoch - 39ms/step
+Epoch 23/100
+1563/1563 - 60s - loss: 2197.1274 - rmse_local: 46.8787 - val_loss: 6336.2983 - val_rmse_local: 78.3094 - 60s/epoch - 39ms/step
+Epoch 24/100
+1563/1563 - 61s - loss: 2127.5093 - rmse_local: 46.2055 - val_loss: 4828.8174 - val_rmse_local: 68.3009 - 61s/epoch - 39ms/step
+Epoch 25/100
+1563/1563 - 61s - loss: 2050.5449 - rmse_local: 45.4565 - val_loss: 3595.2764 - val_rmse_local: 59.4308 - 61s/epoch - 39ms/step
+Epoch 26/100
+1563/1563 - 60s - loss: 1977.7682 - rmse_local: 44.7475 - val_loss: 2823.4297 - val_rmse_local: 52.7286 - 60s/epoch - 38ms/step
+Epoch 27/100
+1563/1563 - 61s - loss: 1898.4739 - rmse_local: 43.9676 - val_loss: 3081.1675 - val_rmse_local: 54.4828 - 61s/epoch - 39ms/step
+Epoch 28/100
+1563/1563 - 61s - loss: 1843.6093 - rmse_local: 43.4185 - val_loss: 2936.6289 - val_rmse_local: 53.2291 - 61s/epoch - 39ms/step
+Epoch 29/100
+1563/1563 - 60s - loss: 1789.7650 - rmse_local: 42.8656 - val_loss: 2611.5151 - val_rmse_local: 50.6209 - 60s/epoch - 38ms/step
+Epoch 30/100
+1563/1563 - 61s - loss: 1755.1797 - rmse_local: 42.5191 - val_loss: 2462.0344 - val_rmse_local: 49.4769 - 61s/epoch - 39ms/step
+Epoch 31/100
+1563/1563 - 61s - loss: 1746.7859 - rmse_local: 42.4140 - val_loss: 4419.2266 - val_rmse_local: 68.0537 - 61s/epoch - 39ms/step
+Epoch 32/100
+1563/1563 - 60s - loss: 2299.7068 - rmse_local: 47.6995 - val_loss: 6973.1567 - val_rmse_local: 83.8295 - 60s/epoch - 39ms/step
+Epoch 33/100
+1563/1563 - 62s - loss: 2242.9128 - rmse_local: 47.1780 - val_loss: 6461.6104 - val_rmse_local: 80.1929 - 62s/epoch - 39ms/step
+Epoch 34/100
+1563/1563 - 61s - loss: 2206.2134 - rmse_local: 46.8180 - val_loss: 6335.0098 - val_rmse_local: 79.1440 - 61s/epoch - 39ms/step
+Epoch 35/100
+1563/1563 - 61s - loss: 2155.3796 - rmse_local: 46.3061 - val_loss: 5783.7544 - val_rmse_local: 75.5371 - 61s/epoch - 39ms/step
+Epoch 36/100
+1563/1563 - 60s - loss: 2122.8660 - rmse_local: 45.9716 - val_loss: 7027.1704 - val_rmse_local: 82.8807 - 60s/epoch - 38ms/step
+Epoch 37/100
+1563/1563 - 60s - loss: 2084.4314 - rmse_local: 45.5675 - val_loss: 6815.6606 - val_rmse_local: 81.3486 - 60s/epoch - 39ms/step
+Epoch 38/100
+1563/1563 - 61s - loss: 2051.5671 - rmse_local: 45.2193 - val_loss: 5843.2510 - val_rmse_local: 75.3969 - 61s/epoch - 39ms/step
+Epoch 39/100
+1563/1563 - 60s - loss: 2021.1783 - rmse_local: 44.8857 - val_loss: 6375.2422 - val_rmse_local: 78.2685 - 60s/epoch - 38ms/step
+Epoch 40/100
+1563/1563 - 62s - loss: 1976.0710 - rmse_local: 44.4221 - val_loss: 7612.6118 - val_rmse_local: 85.4247 - 62s/epoch - 40ms/step
+Epoch 41/100
+1563/1563 - 61s - loss: 1939.6593 - rmse_local: 44.0342 - val_loss: 6913.3550 - val_rmse_local: 80.9178 - 61s/epoch - 39ms/step
+Epoch 42/100
+1563/1563 - 61s - loss: 1909.2375 - rmse_local: 43.6949 - val_loss: 7786.9839 - val_rmse_local: 85.6495 - 61s/epoch - 39ms/step
+Epoch 43/100
+1563/1563 - 61s - loss: 1854.2622 - rmse_local: 43.0888 - val_loss: 9413.8740 - val_rmse_local: 93.8771 - 61s/epoch - 39ms/step
+Epoch 44/100
+1563/1563 - 61s - loss: 1822.0225 - rmse_local: 42.7240 - val_loss: 8033.0591 - val_rmse_local: 86.6470 - 61s/epoch - 39ms/step
+Epoch 45/100
+1563/1563 - 60s - loss: 1795.8529 - rmse_local: 42.4185 - val_loss: 7232.1191 - val_rmse_local: 82.3080 - 60s/epoch - 38ms/step
+Epoch 46/100
+1563/1563 - 61s - loss: 1757.1864 - rmse_local: 42.0161 - val_loss: 6071.0278 - val_rmse_local: 75.4023 - 61s/epoch - 39ms/step
+05-Feb-26 09:42:57 - __main__ - INFO - Training complete! Best val_loss: 2462.034424
+wandb:                                                                                
+wandb: 
+wandb: Run history:
+wandb:          epoch/epoch ▁▁▁▁▂▂▂▂▂▃▃▃▃▃▄▄▄▄▄▄▅▅▅▅▅▅▆▆▆▆▆▇▇▇▇▇████
+wandb:  epoch/learning_rate █▄█▇▄▂▇▆▅▄▃▂▁▇▇▇▆▆▅▅▃▃▂▂▁▁▁▇▇▇▇▇▆▆▆▆▅▅▅▅
+wandb:           epoch/loss █▄▂▂▂▁▁▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:     epoch/rmse_local █▄▃▃▂▂▂▂▂▂▁▁▁▁▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:       epoch/val_loss ▃█▆█▅▁▃▆▄▄▂▂▁▃▄▅▄▃▄▄▃▂▁▂▁▁▁▅▄▄▄▅▅▄▅▅▅▇▆▅
+wandb: epoch/val_rmse_local ▃▇▆█▆▂▃▇▄▅▂▂▁▄▅▆▅▄▅▅▃▂▁▂▁▁▁▆▅▅▄▅▅▅▆▅▆▇▆▅
+wandb: 
+wandb: Run summary:
+wandb:          epoch/epoch 45
+wandb:  epoch/learning_rate 0.00022
+wandb:           epoch/loss 1757.1864
+wandb:     epoch/rmse_local 42.01612
+wandb:       epoch/val_loss 6071.02783
+wandb: epoch/val_rmse_local 75.40234
+wandb: 
+wandb: 🚀 View run elated-vortex-2285 at: https://wandb.ai/mlpng/mlpng/runs/zl3adr4e
+wandb: ⭐️ View project at: https://wandb.ai/mlpng/mlpng
+wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260205_085538-zl3adr4e/logs
+2026-02-05 09:42:59.555876: W tensorflow/core/grappler/optimizers/data/auto_shard.cc:553] The `assert_cardinality` transformation is currently not handled by the auto-shard rewrite and will be removed.
+
+Test Set Performance Summary
+================================================================================
+Shape       MAE      RMSE  RMSE/Sigma  Correlation
+local 40.473602 50.832001    1.072399     0.996144
+================================================================================
+05-Feb-26 09:43:06 - __main__ - INFO - Saved training history plot: data/plots/l191_n64_T_10000_p1.0/385496/trainer/loss.png
+05-Feb-26 09:43:07 - __main__ - INFO - Saved evaluation plot: data/plots/l191_n64_T_10000_p1.0/385496/trainer/evaluation.png
+05-Feb-26 09:43:08 - __main__ - INFO - Saved evaluation plot: data/plots/l191_n64_T_10000_p1.0/385496/trainer/restricted.png
+
+real	52m44.954s
+user	0m0.011s
+sys	0m0.102s

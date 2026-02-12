@@ -442,6 +442,7 @@ class Core:
             self.shapes = [self.shapes]
         if "all" in self.shapes:
             self.shapes = ["local", "equilateral", "orthogonal"]
+        self.nshapes = len(self.shapes)
 
         self.phi_scale = self._get("phi_scale", 1)
 
@@ -627,7 +628,7 @@ class Core:
         base = self._get("base_name", base_name)
         if base.startswith("+"):
             base = f"{base_name}{base[1:]}"
-        self.name = f"{base}_{pol_str}_{total_sims}_p{self.phi_scale:.1f}"  # _f{fstr}"
+        self.name = f"{base}_{pol_str}_{total_sims}_p{self.phi_scale:.1f}"
 
         self.dirs = {}
         self.dirs["base"] = self._get("base_dir", "data")
@@ -662,7 +663,13 @@ class Core:
         return idxs
 
     def get_plot_file(
-        self, name, base_dir=None, sub_path=None, extension=".png", create_dir=True
+        self,
+        name,
+        base_dir=None,
+        subdir=None,
+        extension=".png",
+        create_dir=True,
+        use_job_id=True,
     ):
         """
         Generate the file path for a plot image.
@@ -671,9 +678,11 @@ class Core:
             base_dir (str, optional): The base directory where the plot file will be saved.
                         Defaults to None, which sets it to a subdirectory
                         under the 'plot' directory named after the instance's name.
+            subdir (str, list, optional): Additional subdirectories to include in the path.
             extension (str, optional): The file extension for the plot file. Defaults to ".png".
             create_dir (bool, optional): Whether to create the directory if it does not exist.
                             Defaults to True.
+            use_job_id (bool, optional): Whether to include the SLURM job ID in the path.
         Returns:
             str: The full file path for the plot image.
         Raises:
@@ -681,12 +690,14 @@ class Core:
         """
 
         if base_dir is None:
-            base_dir = os.path.join(
-                self.dirs["plot"], str(self.name), str(self.slurm.job)
-            )
+            base_dir = os.path.join(self.dirs["plot"], str(self.name))
 
-        if sub_path is not None:
-            base_dir = os.path.join(base_dir, sub_path)
+        if use_job_id:
+            base_dir = os.path.join(base_dir, str(self.slurm.job))
+
+        if subdir is not None:
+            subs = np.atleast_1d(subdir)
+            base_dir = os.path.join(base_dir, *map(str, subs))
 
         if not os.path.exists(base_dir):
             if create_dir:

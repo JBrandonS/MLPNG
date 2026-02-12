@@ -224,6 +224,10 @@ class Initializor(Core):
                 self.logger.debug("Starting %s %s", l_str, shape)
                 ksw = self.get_ksw(shape, lensed=lensed)
 
+                mc_file = self.get_mc_file(shape, lensed=lensed)
+                ksw.write_state(mc_file, comm=mpi_comm)
+                self.logger.info("Finished %s %s! Saved to %s", l_str, shape, mc_file)
+
                 # Wait for all processes to reach this point, not sure if needed
                 mpi_comm.Barrier()
 

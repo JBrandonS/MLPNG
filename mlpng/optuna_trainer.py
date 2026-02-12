@@ -9,8 +9,43 @@ import math
 import os
 import sys
 import time
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
+
+# =============================================================================
+# Suppress ALL TensorFlow/CUDA/XLA logging BEFORE any imports
+# =============================================================================
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
+# Suppress XLA and CUDA factory registration messages
+os.environ["XLA_FLAGS"] = "--xla_gpu_cuda_data_dir=/dev/null"
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+# Redirect C++ logs to /dev/null
+os.environ["TF_CPP_LOG_THREAD_ID"] = "0"
+os.environ["GRPC_VERBOSITY"] = "ERROR"
+os.environ["GLOG_minloglevel"] = "3"
+
+warnings.filterwarnings("ignore")
+
+# Suppress absl logging before TensorFlow import
+import absl.logging
+
+absl.logging.set_verbosity(absl.logging.ERROR)
+absl.logging.set_stderrthreshold(absl.logging.ERROR)
+
+# =============================================================================
+# CONFIGURATION - Training hyperparameters (not CLI args)
+# =============================================================================
+CONFIG = {
+    "max_epochs": 30,  # Maximum epochs per trial
+    "patience": 8,  # Early stopping patience
+    "pruning": False,  # Enable Optuna pruning
+    "batch_size": 8,  # Training batch size
+    "data_fraction": 1.0,  # Fraction of data for tuning
+}
+# =============================================================================
 
 import healpy as hp
 import numpy as np
@@ -18,30 +53,81 @@ import optuna
 import tensorflow as tf
 from optuna.samplers import TPESampler
 from optuna.pruners import MedianPruner
-from tensorflow.keras import backend as K
 from tensorflow.keras.callbacks import EarlyStopping, TerminateOnNaN
-from tensorflow.keras.layers import Dense, Dropout, Flatten
+from tensorflow.keras.layers import Dense, Dropout, Flatten, Concatenate
 from tensorflow.keras.optimizers import AdamW
 from tensorflow.keras.optimizers.schedules import CosineDecayRestarts, ExponentialDecay
 
 sys.path.append("/users/stevensonb/Research/tools/deepsphere-cosmo-tf2")
 
 from deepsphere import HealpyGCNN
-from deepsphere.healpy_layers import HealpyChebyshev, HealpyPool, Healpy_Transformer
+from deepsphere.healpy_layers import HealpyChebyshev, HealpyPool
 
 from mlpng import Core
-import mlpng.core
 from mlpng.utils import setup_logging, rmse_metrics
 from mlpng.utils.dataloaders import KappaDataset
 
-os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+# Suppress TensorFlow loggers after import
+for logger_name in [
+    "tensorflow",
+    "tensorflow.compiler",
+    "tensorflow.compiler.tf2tensorrt",
+    "tensorflow.python",
+    "absl",
+    "h5py",
+]:
+    logging.getLogger(logger_name).setLevel(logging.ERROR)
+tf.get_logger().setLevel(logging.ERROR)
 
 LOGGER = logging.getLogger(__name__)
 
-DATA_FRACTION = 0.1
+
+def create_sigma_weighted_loss(sigma_all):
+    """
+    Create a custom MSE loss function weighted by inverse sigma (precision weighting).
+
+    Each output is normalized by its corresponding sigma value, so outputs with
+    smaller sigma (higher precision) have their errors weighted more heavily.
+    This is equivalent to maximum likelihood estimation for Gaussian errors.
+
+    Args:
+        sigma_all: Array of sigma values, one per output shape
+
+    Returns:
+        Loss function that takes (y_true, y_pred) and returns weighted MSE
+    """
+    sigma_tensor = tf.constant(sigma_all, dtype=tf.float32)
+
+    def sigma_weighted_mse(y_true, y_pred):
+        # Compute squared error per output
+        squared_error = tf.square(y_true - y_pred)  # Shape: (batch_size, n_outputs)
+
+        # Weight by inverse variance (1 / sigma^2)
+        # Outputs with smaller sigma get higher weight
+        weights = 1.0 / (sigma_tensor**2)
+
+        # Apply weights and compute mean
+        weighted_loss = squared_error * weights
+        return tf.reduce_mean(weighted_loss)
+
+    return sigma_weighted_mse
+
+
+def parse_args() -> tuple[argparse.Namespace, list[str]]:
+    """Parse CLI arguments. Unknown args are forwarded to Core."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "settings_file", help="Path to the settings JSON consumed by Core"
+    )
+    parser.add_argument(
+        "--trials", type=int, default=500, help="Number of Optuna trials to run"
+    )
+    return parser.parse_known_args()
+
+
 BASE_SPLIT = np.array([0.8, 0.1, 0.1], dtype=np.float32)
-DEFAULT_DUPLICATES = [10, 2, 2]
-CACHE_PREFIX = "optuna-encoder-fnl"
+DEFAULT_DUPLICATES = [10, 10, 2]
+CACHE_PREFIX = "all-full_ds-30epoch-2"
 
 _DATASET_CACHE: dict[str, tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset]] = {}
 
@@ -52,53 +138,6 @@ def compute_max_depths(nside: int) -> dict[int, int]:
         1: int(math.log(nside, 2)),  # pool_p=1 -> nside_factor=2
         2: int(math.log(nside, 4)),  # pool_p=2 -> nside_factor=4
     }
-
-
-def parse_args() -> tuple[argparse.Namespace, list[str]]:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "settings_file", help="Path to the settings JSON consumed by Core"
-    )
-    parser.add_argument(
-        "--trials", type=int, default=500, help="Number of Optuna trials to run"
-    )
-    parser.add_argument(
-        "--timeout",
-        type=int,
-        default=None,
-        help="Optional wall-clock timeout (seconds)",
-    )
-    parser.add_argument(
-        "--study-name", default="encoder-fnl-n256", help="Name of the Optuna study"
-    )
-    parser.add_argument(
-        "--storage", default=None, help="Optuna storage URL for persisting studies"
-    )
-    parser.add_argument(
-        "--max-epochs", type=int, default=30, help="Maximum epochs per trial"
-    )
-    parser.add_argument(
-        "--patience", type=int, default=8, help="Early stopping patience"
-    )
-    parser.add_argument(
-        "--pruning",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Enable Optuna pruning based on validation loss",
-    )
-    parser.add_argument(
-        "--save-best",
-        action="store_true",
-        help="Train a final model with the best hyper-parameters and save it",
-    )
-    parser.add_argument(
-        "--best-model-path",
-        default=None,
-        help="Custom path for the exported best model (.keras)",
-    )
-
-    args, unknown = parser.parse_known_args()
-    return args, unknown
 
 
 def build_run_name(core: Core, prefix: str = "optuna") -> str:
@@ -123,7 +162,7 @@ def configure_strategy() -> tf.distribute.Strategy:
 
 
 class EncoderBlock(tf.keras.layers.Layer):
-    """Encoder block with optional Healpy Transformer attention."""
+    """Encoder block with Healpy Chebyshev convolution and pooling."""
 
     def __init__(
         self,
@@ -135,9 +174,8 @@ class EncoderBlock(tf.keras.layers.Layer):
         pool_p,
         max_batch_size,
         dropout_rate=0.1,
-        use_transformer=False,
-        num_heads=8,
-        transformer_layers=2,
+        encoder_activation="gelu",
+        pool_type="AVG",
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -149,34 +187,24 @@ class EncoderBlock(tf.keras.layers.Layer):
             dropout_rate,
         )
 
+        # Select initializer based on activation
+        if encoder_activation == "relu":
+            initializer = tf.keras.initializers.HeNormal()
+        else:  # gelu or sigmoid
+            initializer = tf.keras.initializers.GlorotNormal()
+
         layers = [
             HealpyChebyshev(
                 K=K,
                 Fout=fout,
-                activation="gelu",
+                activation=encoder_activation,
                 use_bn=True,
                 use_bias=True,
-                initializer=tf.keras.initializers.HeNormal(),
-            )
+                initializer=initializer,
+            ),
+            Dropout(dropout_rate),
+            HealpyPool(pool_p, pool_type),
         ]
-        if use_transformer:
-            key_dim = max(1, min(1024, fout // num_heads))
-            layers.append(
-                Healpy_Transformer(
-                    key_dim=key_dim,
-                    num_heads=num_heads,
-                    positional_encoding=True,
-                    n_layers=transformer_layers,
-                    activation="gelu",
-                    layer_norm=True,
-                )
-            )
-        layers.extend(
-            [
-                Dropout(dropout_rate),
-                HealpyPool(pool_p, "AVG"),
-            ]
-        )
 
         self.body = HealpyGCNN(
             nside=nside,
@@ -191,8 +219,96 @@ class EncoderBlock(tf.keras.layers.Layer):
         return self.body(x, training=training)
 
 
+class SplitHeadLayer(tf.keras.layers.Layer):
+    """Split head layer with shared and shape-specific branches."""
+
+    def __init__(
+        self,
+        n_outputs,
+        shared_units=64,
+        shared_layers=1,
+        split_units=32,
+        split_layers=1,
+        head_activation="gelu",
+        head_dropout=0.0,
+        head_initializer=None,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.n_outputs = n_outputs
+        self.shared_units = shared_units
+        self.shared_layers = shared_layers
+        self.split_units = split_units
+        self.split_layers = split_layers
+        self.head_activation = head_activation
+        self.head_dropout = head_dropout
+        self.head_initializer = (
+            head_initializer
+            if head_initializer is not None
+            else tf.keras.initializers.GlorotNormal()
+        )
+
+        # Build shared layers
+        self.shared = []
+        for _ in range(shared_layers):
+            self.shared.append(
+                Dense(
+                    shared_units,
+                    activation=head_activation,
+                    kernel_initializer=self.head_initializer,
+                )
+            )
+            if head_dropout > 0:
+                self.shared.append(Dropout(head_dropout))
+
+        # Build split branches (one per output)
+        self.split_branches = []
+        for i in range(n_outputs):
+            branch = []
+            for _ in range(split_layers):
+                branch.append(
+                    Dense(
+                        split_units,
+                        activation=head_activation,
+                        kernel_initializer=self.head_initializer,
+                        name=f"split_dense_{i}_layer_{_}",
+                    )
+                )
+                if head_dropout > 0:
+                    branch.append(
+                        Dropout(head_dropout, name=f"split_dropout_{i}_layer_{_}")
+                    )
+            # Final output layer for this branch
+            branch.append(
+                Dense(1, kernel_initializer=self.head_initializer, name=f"output_{i}")
+            )
+            self.split_branches.append(branch)
+
+    def call(self, x, training=False):
+        # Pass through shared layers
+        for layer in self.shared:
+            if isinstance(layer, Dropout):
+                x = layer(x, training=training)
+            else:
+                x = layer(x)
+
+        # Split into separate branches
+        outputs = []
+        for branch in self.split_branches:
+            branch_out = x
+            for layer in branch:
+                if isinstance(layer, Dropout):
+                    branch_out = layer(branch_out, training=training)
+                else:
+                    branch_out = layer(branch_out)
+            outputs.append(branch_out)
+
+        # Concatenate all outputs
+        return Concatenate()(outputs)
+
+
 class TunableEncoderFnlModel:
-    """CNN-Transformer encoder model for fnl prediction with tunable architecture."""
+    """CNN encoder model for fnl prediction with tunable architecture."""
 
     def __init__(
         self,
@@ -200,63 +316,55 @@ class TunableEncoderFnlModel:
         n_outputs,
         max_batch_size=32,
         pool_p=2,
-        transformer_levels=0,
-        num_heads=8,
-        transformer_layers=2,
+        K=3,
+        encoder_activation="gelu",
+        head_activation="gelu",
+        pool_type="AVG",
         dropout_rate=0.1,
         dense_units=64,
         dense_layers=2,
         head_dropout=0.0,
+        use_split_head=False,
+        shared_units=64,
+        shared_layers=1,
+        split_units=32,
+        split_layers=1,
     ):
         self.input_shape = input_shape
         self.n_outputs = n_outputs
         self.max_batch_size = max_batch_size
         self.pool_p = pool_p
-        self.transformer_levels = (
-            transformer_levels  # int: number of deepest levels with transformers
-        )
-        self.num_heads = num_heads
-        self.transformer_layers = transformer_layers
+        self.K = K
+        self.encoder_activation = encoder_activation
+        self.head_activation = head_activation
+        self.pool_type = pool_type
         self.dropout_rate = dropout_rate
         self.dense_units = dense_units
         self.dense_layers = dense_layers
         self.head_dropout = head_dropout
+        self.use_split_head = use_split_head
+        self.shared_units = shared_units
+        self.shared_layers = shared_layers
+        self.split_units = split_units
+        self.split_layers = split_layers
         self.npix = input_shape[1]
         self.nside = hp.npix2nside(self.npix)
         self.npol = input_shape[2]
-        self.initializer = tf.keras.initializers.HeNormal()
+
+        # Select head initializer based on activation
+        if head_activation == "relu":
+            self.head_initializer = tf.keras.initializers.HeNormal()
+        else:  # gelu or sigmoid
+            self.head_initializer = tf.keras.initializers.GlorotNormal()
 
     def get_model(self) -> tf.keras.Model:
         nside_factor = 2**self.pool_p
-        pixel_factor = 4**self.pool_p
 
         depth = int(math.log(self.nside, nside_factor))
         level_nsides = [self.nside // (nside_factor**i) for i in range(depth + 1)]
         level_npixels = [12 * ns**2 for ns in level_nsides]
         channels = [self.npol] + [2 ** (i + 5) for i in range(depth + 1)]
-        Ks = [3] * (depth + 1)
-
-        # transformer_levels is an int: 0 = none, depth = all
-        # Apply transformers to the last `transformer_levels` encoder blocks
-        use_transformer = [False] * depth
-        if self.transformer_levels > 0:
-            start_idx = max(0, depth - self.transformer_levels)
-            for i in range(start_idx, depth):
-                use_transformer[i] = True
-
-        LOGGER.debug(
-            "Depth: %d, pool_p: %d (%dx pixel reduction)",
-            depth,
-            self.pool_p,
-            pixel_factor,
-        )
-        LOGGER.debug("Level nsides: %s", level_nsides)
-        LOGGER.debug("Level npixels: %s", level_npixels)
-        LOGGER.debug("Channels: %s, Ks: %s", channels, Ks)
-        LOGGER.debug(
-            "Transformer at levels: %s",
-            [i for i, t in enumerate(use_transformer) if t],
-        )
+        Ks = [self.K] * depth
 
         inputs = tf.keras.Input(shape=self.input_shape[1:], name="lensed")
         x = inputs
@@ -271,23 +379,37 @@ class TunableEncoderFnlModel:
                 pool_p=self.pool_p,
                 max_batch_size=self.max_batch_size,
                 dropout_rate=self.dropout_rate,
-                use_transformer=use_transformer[i],
-                num_heads=self.num_heads,
-                transformer_layers=self.transformer_layers,
+                encoder_activation=self.encoder_activation,
+                pool_type=self.pool_type,
             )(x)
 
-        # Dense head
+        # Dense head or split head
         x = Flatten()(x)
-        for _ in range(self.dense_layers):
-            x = Dense(
-                self.dense_units,
-                activation="gelu",
-                kernel_initializer=self.initializer,
-            )(x)
-            if self.head_dropout > 0:
-                x = Dropout(self.head_dropout)(x)
 
-        outputs = Dense(self.n_outputs, kernel_initializer=self.initializer)(x)
+        if self.use_split_head:
+            # Use split head with shared and shape-specific branches
+            outputs = SplitHeadLayer(
+                n_outputs=self.n_outputs,
+                shared_units=self.shared_units,
+                shared_layers=self.shared_layers,
+                split_units=self.split_units,
+                split_layers=self.split_layers,
+                head_activation=self.head_activation,
+                head_dropout=self.head_dropout,
+                head_initializer=self.head_initializer,
+            )(x)
+        else:
+            # Use standard dense head
+            for _ in range(self.dense_layers):
+                x = Dense(
+                    self.dense_units,
+                    activation=self.head_activation,
+                    kernel_initializer=self.head_initializer,
+                )(x)
+                if self.head_dropout > 0:
+                    x = Dropout(self.head_dropout)(x)
+
+            outputs = Dense(self.n_outputs, kernel_initializer=self.head_initializer)(x)
 
         return tf.keras.Model(inputs, outputs, name="tunable_encoder_fnl")
 
@@ -297,17 +419,18 @@ def prepare_datasets(
     batch_size: int,
     duplicates: list[int],
     cache_tag: str,
+    data_fraction: float,
 ) -> tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset]:
     cache_key = f"{cache_tag}-bs{batch_size}"
     if cache_key in _DATASET_CACHE:
         return _DATASET_CACHE[cache_key]
 
     ds = KappaDataset.fromCore(core, x_output="lensed", y_output="fnl")
-    fractions = BASE_SPLIT * DATA_FRACTION
-    cache_dir = os.environ.get("SCRATCH", "/tmp") + "/tf_cache"
-    os.makedirs(cache_dir, exist_ok=True)
-    available_cpus = max(1, core.slurm.n_cpus or os.cpu_count() or 4)
+    fractions = BASE_SPLIT * data_fraction
+    available_cpus = 8  # max(1, core.slurm.n_cpus or os.cpu_count() or 4)
 
+    # Use in-memory caching to avoid concurrent file-based cache lockfile conflicts
+    # when multiple Optuna trials run in parallel
     train, val, test = ds.split(
         train_size=float(fractions[0]),
         val_size=float(fractions[1]),
@@ -315,16 +438,18 @@ def prepare_datasets(
         to_tf=True,
         batch_size=batch_size,
         duplicates=duplicates,
-        cache_dir=cache_dir,
-        cache_file=cache_tag,
+        buffer_size=8,
+        cache_file="",  # Empty string for in-memory caching
         gen_batch_size=available_cpus,
     )
     _DATASET_CACHE[cache_key] = (train, val, test)
     return train, val, test
 
 
-def estimate_steps(core: Core, batch_size: int) -> tuple[int, int]:
-    train_fraction = float(BASE_SPLIT[0] * DATA_FRACTION)
+def estimate_steps(
+    core: Core, batch_size: int, data_fraction: float
+) -> tuple[int, int]:
+    train_fraction = float(BASE_SPLIT[0] * data_fraction)
     approx_samples = (
         max(1, int(core.total_sims * train_fraction)) * DEFAULT_DUPLICATES[0]
     )
@@ -336,51 +461,80 @@ def estimate_steps(core: Core, batch_size: int) -> tuple[int, int]:
 class ObjectiveContext:
     core: Core
     strategy: tf.distribute.Strategy
-    args: argparse.Namespace
+    config: dict
     run_name: str
     max_depths: dict[int, int]
 
 
 class EncoderFnlObjective:
-    """Optuna objective for tuning the CNN-Transformer Encoder fnl model."""
+    """Optuna objective for tuning the CNN Encoder fnl model."""
 
     def __init__(self, ctx: ObjectiveContext):
         self.ctx = ctx
-        self.cache_tag = f"{CACHE_PREFIX}-{ctx.core.name}"
+        self.cache_tag = f"{CACHE_PREFIX}-{ctx.core.name}-n{ctx.core.nside}"
+        # Create custom loss with sigma values baked in
+        sigma_all = ctx.core.get_likelihoods(True)
+        self.custom_loss = create_sigma_weighted_loss(sigma_all)
+        LOGGER.info("Sigma values for shapes %s: %s", ctx.core.shapes, sigma_all)
 
     def __call__(self, trial: optuna.Trial) -> float:
-        batch_size = 32
+        batch_size = self.ctx.config["batch_size"]
+        nside = self.ctx.core.nside
 
-        # Learning rate schedule selection
-        use_cosine_decay = trial.suggest_categorical("use_cosine_decay", [True, False])
-        initial_lr = trial.suggest_float("initial_lr", 1e-5, 1e-1, log=True)
-
-        # Architecture: pool_p first to determine depth
+        # Architecture: pool_p determines network depth
         pool_p = trial.suggest_categorical("pool_p", [1, 2])
         max_depth = self.ctx.max_depths[pool_p]
 
-        # Transformer configuration
-        transformer_levels = trial.suggest_int("transformer_levels", 0, max_depth)
-        num_heads = trial.suggest_categorical("num_heads", [1, 2, 4, 8])
-        transformer_layers = trial.suggest_categorical("transformer_layers", [1, 2, 3])
+        # Kernel size for Chebyshev polynomials
+        K = trial.suggest_categorical("K", [2, 3, 5])
+
+        # Activation functions
+        encoder_activation = trial.suggest_categorical(
+            "encoder_activation", ["relu", "gelu", "sigmoid"]
+        )
+        head_activation = trial.suggest_categorical(
+            "head_activation", ["relu", "gelu", "sigmoid"]
+        )
+
+        # Pooling type
+        pool_type = trial.suggest_categorical("pool_type", ["AVG", "MAX"])
+
+        # Learning rate
+        use_cosine_decay = trial.suggest_categorical("use_cosine_decay", [True, False])
+        initial_lr = trial.suggest_float("initial_lr", 1e-6, 1e-2, log=True)
+
+        # Decay rate for both cosine and exponential decay
+        decay_rate = trial.suggest_float("decay_rate", 0.9, 0.98, step=0.01)
 
         # Regularization
         dropout_rate = trial.suggest_float("dropout_rate", 0.0, 0.3, step=0.05)
-        weight_decay = trial.suggest_float("weight_decay", 1e-7, 1e-3, log=True)
+        weight_decay = trial.suggest_float("weight_decay", 1e-8, 1e-2, log=True)
 
-        # Dense head configuration
-        dense_units = trial.suggest_categorical("dense_units", [32, 64, 128, 256])
-        dense_layers = trial.suggest_categorical("dense_layers", [1, 2, 3])
-        head_dropout = trial.suggest_float("head_dropout", 0.0, 0.5, step=0.1)
+        # Head configuration - always use split head with all parameters tuned
+        use_split_head = True
+
+        # Split head hyperparameters - always tuned
+        shared_units = trial.suggest_categorical("shared_units", [32, 64, 128])
+        dense_layers = trial.suggest_int("dense_layers", 0, 3)  # Shared layers
+        split_units = trial.suggest_categorical("split_units", [16, 32, 64])
+        head_layers = trial.suggest_int("head_layers", 0, 3)  # Per-shape branch layers
+        head_dropout = trial.suggest_float("head_dropout", 0.0, 0.3, step=0.1)
+
+        # Aliases for compatibility
+        shared_layers = dense_layers  # Use dense_layers as shared_layers
+        split_layers = head_layers  # Use head_layers as split_layers
 
         train_ds, val_ds, _ = prepare_datasets(
             self.ctx.core,
             batch_size=batch_size,
             duplicates=DEFAULT_DUPLICATES,
             cache_tag=self.cache_tag,
+            data_fraction=self.ctx.config["data_fraction"],
         )
 
-        steps, decay_steps = estimate_steps(self.ctx.core, batch_size)
+        steps, decay_steps = estimate_steps(
+            self.ctx.core, batch_size, self.ctx.config["data_fraction"]
+        )
 
         with self.ctx.strategy.scope():
             if use_cosine_decay:
@@ -388,14 +542,14 @@ class EncoderFnlObjective:
                     initial_learning_rate=initial_lr,
                     first_decay_steps=decay_steps,
                     t_mul=2.0,
-                    m_mul=0.95,
-                    alpha=0.01,
+                    m_mul=decay_rate,
+                    alpha=0.001,
                 )
             else:
                 lr_schedule = ExponentialDecay(
                     initial_learning_rate=initial_lr,
                     decay_steps=decay_steps,
-                    decay_rate=0.96,
+                    decay_rate=decay_rate,
                     staircase=True,
                 )
 
@@ -404,19 +558,25 @@ class EncoderFnlObjective:
                 n_outputs=len(self.ctx.core.shapes),
                 max_batch_size=batch_size,
                 pool_p=pool_p,
-                transformer_levels=transformer_levels,
-                num_heads=num_heads,
-                transformer_layers=transformer_layers,
+                K=K,
+                encoder_activation=encoder_activation,
+                head_activation=head_activation,
+                pool_type=pool_type,
                 dropout_rate=dropout_rate,
-                dense_units=dense_units,
+                dense_units=shared_units,
                 dense_layers=dense_layers,
                 head_dropout=head_dropout,
+                use_split_head=use_split_head,
+                shared_units=shared_units,
+                shared_layers=dense_layers,
+                split_units=split_units,
+                split_layers=head_layers,
             ).get_model()
 
             optimizer = AdamW(learning_rate=lr_schedule, weight_decay=weight_decay)
             model.compile(
                 optimizer=optimizer,
-                loss="mse",
+                loss="mse",  # self.custom_loss,
                 metrics=rmse_metrics(self.ctx.core.shapes),
             )
 
@@ -424,7 +584,7 @@ class EncoderFnlObjective:
             TerminateOnNaN(),
             EarlyStopping(
                 monitor="val_loss",
-                patience=self.ctx.args.patience,
+                patience=self.ctx.config["patience"],
                 restore_best_weights=True,
             ),
         ]
@@ -432,17 +592,42 @@ class EncoderFnlObjective:
         history = model.fit(
             train_ds,
             validation_data=val_ds,
-            epochs=self.ctx.args.max_epochs,
+            epochs=self.ctx.config["max_epochs"],
             steps_per_epoch=steps,
             callbacks=callbacks,
             verbose=0,
         )
         val_loss = min(history.history["val_loss"])
+
+        # Store per-shape RMSE metrics in trial user attributes
+        for shape in self.ctx.core.shapes:
+            val_rmse_key = f"val_rmse_{shape}"
+            if val_rmse_key in history.history:
+                # Get the best (minimum) validation RMSE for this shape
+                best_val_rmse = min(history.history[val_rmse_key])
+                trial.set_user_attr(f"best_val_rmse_{shape}", float(best_val_rmse))
+
         return float(val_loss)
 
 
 def main() -> int:
     args, unknown = parse_args()
+
+    # Clean up any stale TensorFlow cache lockfiles from previous runs
+    # This prevents "AlreadyExistsError" from concurrent cache access
+    cache_dirs = [
+        os.environ.get("SCRATCH", "/tmp") + "/tf_cache",
+        "/lustre/smuexa01/client/users/stevensonb/tf_cache",  # HPC specific
+    ]
+    for cache_dir in cache_dirs:
+        if os.path.isdir(cache_dir):
+            for lockfile in Path(cache_dir).glob("*.lockfile"):
+                try:
+                    lockfile.unlink()
+                    LOGGER.debug("Removed stale cache lockfile: %s", lockfile)
+                except OSError as e:
+                    LOGGER.debug("Could not remove lockfile %s: %s", lockfile, e)
+
     core = Core(argv=[args.settings_file] + unknown)
     strategy = configure_strategy()
     run_name = build_run_name(core)
@@ -454,34 +639,37 @@ def main() -> int:
     ctx = ObjectiveContext(
         core=core,
         strategy=strategy,
-        args=args,
+        config=CONFIG,
         run_name=run_name,
         max_depths=max_depths,
     )
 
-    LOGGER.info("Using %.2f%% of the data for tuning", DATA_FRACTION * 100)
+    LOGGER.info("Using %.2f%% of the data for tuning", CONFIG["data_fraction"] * 100)
 
-    storage_url = args.storage
-    load_existing = True
-    if not storage_url:
-        storage_dir = Path("data/tuner")
-        storage_dir.mkdir(parents=True, exist_ok=True)
-        storage_file = storage_dir / "optuna.db"
-        storage_url = f"sqlite:///{storage_file}"
-        LOGGER.info("Optuna storage set to %s", storage_file)
+    # Generate study name from nside and shapes
+    shapes_str = "_".join(str(s) for s in ctx.core.shapes)
+    study_name = f"neo-mse-n{ctx.core.nside}-{shapes_str}"
+
+    # Storage in local SQLite database
+    storage_dir = Path("data/tuner")
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    storage_file = storage_dir / f"optuna-n{ctx.core.nside}-2.db"
+    storage_url = f"sqlite:///{storage_file}"
+    LOGGER.info("Optuna storage: %s", storage_file)
 
     sampler = TPESampler(multivariate=True, seed=ctx.core.seed, constant_liar=True)
-    pruner = MedianPruner(n_warmup_steps=10) if args.pruning else None
+    pruner = MedianPruner(n_warmup_steps=10) if CONFIG["pruning"] else None
     study = optuna.create_study(
         direction="minimize",
-        study_name=args.study_name,
+        study_name=study_name,
         storage=storage_url,
         sampler=sampler,
-        load_if_exists=load_existing,
+        pruner=pruner,
+        load_if_exists=True,
     )
 
     objective = EncoderFnlObjective(ctx)
-    study.optimize(objective, n_trials=args.trials, timeout=args.timeout)
+    study.optimize(objective, n_trials=args.trials)
 
     LOGGER.info("Best value: %.6f", study.best_value)
     LOGGER.info("Best params: %s", study.best_params)
@@ -491,7 +679,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     setup_logging(__name__, level=logging.INFO)
-    # Set related loggers to INFO to reduce noise
     logging.getLogger("mlpng.core").setLevel(logging.INFO)
     logging.getLogger("mlpng.utils.dataloaders").setLevel(logging.INFO)
 
