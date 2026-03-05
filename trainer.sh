@@ -14,9 +14,9 @@ SBATCH_FILE="sbatch/trainer.sbatch"
 
 # The settings files to use for the sims. These should be found in settings/*.json
 SETTINGS=(
-    "n32"
-    # "n64"
-    # "n128"
+    # "n32"
+    "n64"
+    "n128"
     "n256"
 )
 
@@ -27,7 +27,7 @@ SETTINGS=(
 ARGS=(
     "--nsims" "10000"
     "--phi_scale" "1"
-    "--shapes" "equilateral"
+    "--shapes" "orthogonal"
     "--fnl_range" "-1000" "1000"
 )
 
@@ -35,7 +35,7 @@ ARGS=(
 # these models should be registered with @register_model
 MODELS=(
     # "trainer"
-    "neo_trainer"
+    "neo_trainer_2"
 )
 
 # loops through all the SETTINGS files and for each submits a slurm job for each MODEL

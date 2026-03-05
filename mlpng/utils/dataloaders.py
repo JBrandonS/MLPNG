@@ -808,9 +808,11 @@ class KappaDataset(MapDataset):
 
         # Determine output shapes based on output types
         x_shape = cls._compute_output_shape(
-            x_output, core.npix, core.npols, len(core.shapes)
+            x_output, core.npix, core.npols, len(shapes)
         )
-        y_shape = (None, core.nshapes)
+        y_shape = cls._compute_output_shape(
+            y_output, core.npix, core.npols, len(shapes)
+        )
 
         x_dtype = kwargs.pop("x_dtype", tf.float32)
         y_dtype = kwargs.pop("y_dtype", tf.float32)
@@ -863,7 +865,7 @@ class KappaDataset(MapDataset):
                 n_maps += 1
                 has_lowres = True
             elif out_type == "fnl":
-                n_params += npols
+                n_params += nshapes
             elif out_type == "phi":
                 n_params += 1
 
@@ -875,9 +877,9 @@ class KappaDataset(MapDataset):
             else:
                 # lensed/unlensed at standard nside: npix
                 return (None, npix, npols)
-        # If single param and no params, keep 1D shape (1,)
-        elif n_params == 1 and n_maps == 0:
-            return (None, 1)
+        # If params and no maps, keep 1D shape (n_params,)
+        elif n_maps == 0 and n_params > 0:
+            return (None, n_params)
         # Multiple items: dict output handles mixed resolutions naturally
         else:
             # Dict-based output allows mixing different resolutions
@@ -1259,6 +1261,14 @@ class KappaDataset(MapDataset):
                     for s in self.shapes
                 ]
             )
+            # Determine expected npols for unlensed map output
+            if "unlensed" in self.x_output and len(self.x_shape) >= 3:
+                _npols = self.x_shape[-1]
+            elif "unlensed" in self.y_output and len(self.y_shape) >= 3:
+                _npols = self.y_shape[-1]
+            else:
+                _npols = 1
+
             maps_unlensed = []
             for sim_idx in range(batch_size):
                 for dup_idx in range(duplicates):
@@ -1268,6 +1278,9 @@ class KappaDataset(MapDataset):
                         "i,i...->...", fnl_vals, alm_nl[:, sim_idx]
                     )
                     alm = np.asarray(alm, dtype=np.complex128)
+                    # Select only the expected polarization components
+                    if alm.ndim > 1:
+                        alm = alm[:_npols]
                     # Use deterministic seeding per (sim, dup) pair for reproducibility
                     seed = self.fnl_seed + indices[0] + sim_idx * 1000 + dup_idx
                     map_unlensed = self._alm_to_map(
@@ -1276,7 +1289,12 @@ class KappaDataset(MapDataset):
                     maps_unlensed.append(map_unlensed)
 
             maps_unlensed = np.array(maps_unlensed)
-            maps_unlensed = np.transpose(maps_unlensed, (0, 2, 1))
+            if maps_unlensed.ndim == 2:
+                # Single polarization: (N, npix) → (N, npix, 1)
+                maps_unlensed = maps_unlensed[:, :, np.newaxis]
+            else:
+                # Multiple polarizations: (N, npols, npix) → (N, npix, npols)
+                maps_unlensed = np.transpose(maps_unlensed, (0, 2, 1))
             maps_dict["unlensed"] = maps_unlensed
 
         # Only generate phi maps if needed

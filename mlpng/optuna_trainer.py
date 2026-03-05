@@ -47,7 +47,6 @@ CONFIG = {
 }
 # =============================================================================
 
-import healpy as hp
 import numpy as np
 import optuna
 import tensorflow as tf
@@ -219,199 +218,128 @@ class EncoderBlock(tf.keras.layers.Layer):
         return self.body(x, training=training)
 
 
-class SplitHeadLayer(tf.keras.layers.Layer):
-    """Split head layer with shared and shape-specific branches."""
+class TaskSpecificHeads(tf.keras.layers.Layer):
+    """Shape-dependent heads with increasing capacity for local, equilateral, orthogonal."""
 
-    def __init__(
-        self,
-        n_outputs,
-        shared_units=64,
-        shared_layers=1,
-        split_units=32,
-        split_layers=1,
-        head_activation="gelu",
-        head_dropout=0.0,
-        head_initializer=None,
-        **kwargs,
-    ):
+    SHAPE_TO_HEAD_INDEX = {
+        "local": 0,
+        "equilateral": 1,
+        "orthogonal": 2,
+    }
+
+    HEAD_ARCHITECTURES = {
+        0: [64, 32, 32, 1],
+        1: [32, 128, 256, 256, 64, 32, 1],
+        2: [16, 64, 64, 32, 32, 1],
+    }
+
+    def __init__(self, n_outputs, task_names, activation="relu", dropout=0.0, **kwargs):
         super().__init__(**kwargs)
         self.n_outputs = n_outputs
-        self.shared_units = shared_units
-        self.shared_layers = shared_layers
-        self.split_units = split_units
-        self.split_layers = split_layers
-        self.head_activation = head_activation
-        self.head_dropout = head_dropout
-        self.head_initializer = (
-            head_initializer
-            if head_initializer is not None
+        self.task_names = (
+            task_names if isinstance(task_names, (list, tuple)) else [task_names]
+        )
+        self.activation = activation
+
+        init = (
+            tf.keras.initializers.HeNormal()
+            if activation == "relu"
             else tf.keras.initializers.GlorotNormal()
         )
 
-        # Build shared layers
-        self.shared = []
-        for _ in range(shared_layers):
-            self.shared.append(
-                Dense(
-                    shared_units,
-                    activation=head_activation,
-                    kernel_initializer=self.head_initializer,
-                )
-            )
+        def build_head(sizes, prefix, head_dropout=0.0, head_activation=None):
+            layers = []
             if head_dropout > 0:
-                self.shared.append(Dropout(head_dropout))
-
-        # Build split branches (one per output)
-        self.split_branches = []
-        for i in range(n_outputs):
-            branch = []
-            for _ in range(split_layers):
-                branch.append(
+                layers.append(Dropout(head_dropout, name=f"{prefix}_dropout_0"))
+            act = head_activation or activation
+            for i, size in enumerate(sizes[:-1]):
+                layers.append(
                     Dense(
-                        split_units,
-                        activation=head_activation,
-                        kernel_initializer=self.head_initializer,
-                        name=f"split_dense_{i}_layer_{_}",
+                        size,
+                        activation=act,
+                        kernel_initializer=init,
+                        name=f"{prefix}_dense_{i+1}",
                     )
                 )
-                if head_dropout > 0:
-                    branch.append(
-                        Dropout(head_dropout, name=f"split_dropout_{i}_layer_{_}")
-                    )
-            # Final output layer for this branch
-            branch.append(
-                Dense(1, kernel_initializer=self.head_initializer, name=f"output_{i}")
+            layers.append(
+                Dense(sizes[-1], kernel_initializer=init, name=f"{prefix}_output")
             )
-            self.split_branches.append(branch)
+            return layers
+
+        self.heads = {}
+        for shape_name in self.task_names:
+            if shape_name in self.SHAPE_TO_HEAD_INDEX:
+                head_idx = self.SHAPE_TO_HEAD_INDEX[shape_name]
+                head_arch = self.HEAD_ARCHITECTURES[head_idx]
+                self.heads[shape_name] = build_head(
+                    head_arch, f"head_{shape_name}", dropout, activation
+                )
+            else:
+                LOGGER.warning(f"Unknown shape: {shape_name}, skipping head creation")
 
     def call(self, x, training=False):
-        # Pass through shared layers
-        for layer in self.shared:
-            if isinstance(layer, Dropout):
-                x = layer(x, training=training)
-            else:
-                x = layer(x)
-
-        # Split into separate branches
         outputs = []
-        for branch in self.split_branches:
-            branch_out = x
-            for layer in branch:
-                if isinstance(layer, Dropout):
-                    branch_out = layer(branch_out, training=training)
-                else:
-                    branch_out = layer(branch_out)
-            outputs.append(branch_out)
+        for shape_name in self.task_names:
+            if shape_name in self.heads:
+                out = x
+                for layer in self.heads[shape_name]:
+                    out = (
+                        layer(out, training=training)
+                        if isinstance(layer, Dropout)
+                        else layer(out)
+                    )
+                outputs.append(out)
+        return tf.keras.layers.Concatenate()(outputs) if outputs else x
 
-        # Concatenate all outputs
-        return Concatenate()(outputs)
 
+def build_task_model(
+    nside,
+    npix,
+    npol,
+    n_outputs,
+    task_names,
+    max_batch_size=128,
+    pool_p=2,
+    K=7,
+    encoder_activation="gelu",
+    head_activation="gelu",
+    pool_type="AVG",
+    dropout_rate=0.1,
+    head_dropout=0.05,
+):
+    """Build encoder with task-specific heads of different capacities."""
+    nside_factor = 2**pool_p
+    depth = int(math.log(nside, nside_factor))
+    level_nsides = [nside // (nside_factor**i) for i in range(depth + 1)]
+    level_npixels = [12 * ns**2 for ns in level_nsides]
+    channels = [npol] + [2 ** (i + 5) for i in range(depth + 1)]
 
-class TunableEncoderFnlModel:
-    """CNN encoder model for fnl prediction with tunable architecture."""
+    inputs = tf.keras.Input(shape=(npix, npol), name="lensed_maps")
+    x = inputs
 
-    def __init__(
-        self,
-        input_shape,
-        n_outputs,
-        max_batch_size=32,
-        pool_p=2,
-        K=3,
-        encoder_activation="gelu",
-        head_activation="gelu",
-        pool_type="AVG",
-        dropout_rate=0.1,
-        dense_units=64,
-        dense_layers=2,
-        head_dropout=0.0,
-        use_split_head=False,
-        shared_units=64,
-        shared_layers=1,
-        split_units=32,
-        split_layers=1,
-    ):
-        self.input_shape = input_shape
-        self.n_outputs = n_outputs
-        self.max_batch_size = max_batch_size
-        self.pool_p = pool_p
-        self.K = K
-        self.encoder_activation = encoder_activation
-        self.head_activation = head_activation
-        self.pool_type = pool_type
-        self.dropout_rate = dropout_rate
-        self.dense_units = dense_units
-        self.dense_layers = dense_layers
-        self.head_dropout = head_dropout
-        self.use_split_head = use_split_head
-        self.shared_units = shared_units
-        self.shared_layers = shared_layers
-        self.split_units = split_units
-        self.split_layers = split_layers
-        self.npix = input_shape[1]
-        self.nside = hp.npix2nside(self.npix)
-        self.npol = input_shape[2]
+    for i in range(depth):
+        x = EncoderBlock(
+            nside=level_nsides[i],
+            npix=level_npixels[i],
+            fin=channels[i],
+            fout=channels[i + 1],
+            K=K,
+            pool_p=pool_p,
+            max_batch_size=max_batch_size,
+            dropout_rate=dropout_rate,
+            encoder_activation=encoder_activation,
+            pool_type=pool_type,
+        )(x)
 
-        # Select head initializer based on activation
-        if head_activation == "relu":
-            self.head_initializer = tf.keras.initializers.HeNormal()
-        else:  # gelu or sigmoid
-            self.head_initializer = tf.keras.initializers.GlorotNormal()
+    x = Flatten()(x)
+    outputs = TaskSpecificHeads(
+        n_outputs=n_outputs,
+        task_names=task_names,
+        activation=head_activation,
+        dropout=head_dropout,
+    )(x)
 
-    def get_model(self) -> tf.keras.Model:
-        nside_factor = 2**self.pool_p
-
-        depth = int(math.log(self.nside, nside_factor))
-        level_nsides = [self.nside // (nside_factor**i) for i in range(depth + 1)]
-        level_npixels = [12 * ns**2 for ns in level_nsides]
-        channels = [self.npol] + [2 ** (i + 5) for i in range(depth + 1)]
-        Ks = [self.K] * depth
-
-        inputs = tf.keras.Input(shape=self.input_shape[1:], name="lensed")
-        x = inputs
-
-        for i in range(depth):
-            x = EncoderBlock(
-                level_nsides[i],
-                level_npixels[i],
-                fin=channels[i],
-                fout=channels[i + 1],
-                K=Ks[i],
-                pool_p=self.pool_p,
-                max_batch_size=self.max_batch_size,
-                dropout_rate=self.dropout_rate,
-                encoder_activation=self.encoder_activation,
-                pool_type=self.pool_type,
-            )(x)
-
-        # Dense head or split head
-        x = Flatten()(x)
-
-        if self.use_split_head:
-            # Use split head with shared and shape-specific branches
-            outputs = SplitHeadLayer(
-                n_outputs=self.n_outputs,
-                shared_units=self.shared_units,
-                shared_layers=self.shared_layers,
-                split_units=self.split_units,
-                split_layers=self.split_layers,
-                head_activation=self.head_activation,
-                head_dropout=self.head_dropout,
-                head_initializer=self.head_initializer,
-            )(x)
-        else:
-            # Use standard dense head
-            for _ in range(self.dense_layers):
-                x = Dense(
-                    self.dense_units,
-                    activation=self.head_activation,
-                    kernel_initializer=self.head_initializer,
-                )(x)
-                if self.head_dropout > 0:
-                    x = Dropout(self.head_dropout)(x)
-
-            outputs = Dense(self.n_outputs, kernel_initializer=self.head_initializer)(x)
-
-        return tf.keras.Model(inputs, outputs, name="tunable_encoder_fnl")
+    return tf.keras.Model(inputs, outputs, name="task_conditioned_encoder")
 
 
 def prepare_datasets(
@@ -427,7 +355,7 @@ def prepare_datasets(
 
     ds = KappaDataset.fromCore(core, x_output="lensed", y_output="fnl")
     fractions = BASE_SPLIT * data_fraction
-    available_cpus = 8  # max(1, core.slurm.n_cpus or os.cpu_count() or 4)
+    available_cpus = 16  # max(1, core.slurm.n_cpus or os.cpu_count() or 4)
 
     # Use in-memory caching to avoid concurrent file-based cache lockfile conflicts
     # when multiple Optuna trials run in parallel
@@ -438,7 +366,7 @@ def prepare_datasets(
         to_tf=True,
         batch_size=batch_size,
         duplicates=duplicates,
-        buffer_size=8,
+        buffer_size=32,
         cache_file="",  # Empty string for in-memory caching
         gen_batch_size=available_cpus,
     )
@@ -486,7 +414,7 @@ class EncoderFnlObjective:
         max_depth = self.ctx.max_depths[pool_p]
 
         # Kernel size for Chebyshev polynomials
-        K = trial.suggest_categorical("K", [2, 3, 5])
+        K = trial.suggest_categorical("K", [5, 7, 9, 11, 13, 15, 32])
 
         # Activation functions
         encoder_activation = trial.suggest_categorical(
@@ -510,19 +438,8 @@ class EncoderFnlObjective:
         dropout_rate = trial.suggest_float("dropout_rate", 0.0, 0.3, step=0.05)
         weight_decay = trial.suggest_float("weight_decay", 1e-8, 1e-2, log=True)
 
-        # Head configuration - always use split head with all parameters tuned
-        use_split_head = True
-
-        # Split head hyperparameters - always tuned
-        shared_units = trial.suggest_categorical("shared_units", [32, 64, 128])
-        dense_layers = trial.suggest_int("dense_layers", 0, 3)  # Shared layers
-        split_units = trial.suggest_categorical("split_units", [16, 32, 64])
-        head_layers = trial.suggest_int("head_layers", 0, 3)  # Per-shape branch layers
-        head_dropout = trial.suggest_float("head_dropout", 0.0, 0.3, step=0.1)
-
-        # Aliases for compatibility
-        shared_layers = dense_layers  # Use dense_layers as shared_layers
-        split_layers = head_layers  # Use head_layers as split_layers
+        # Head dropout for TaskSpecificHeads
+        head_dropout = trial.suggest_float("head_dropout", 0.0, 0.3, step=0.05)
 
         train_ds, val_ds, _ = prepare_datasets(
             self.ctx.core,
@@ -553,9 +470,12 @@ class EncoderFnlObjective:
                     staircase=True,
                 )
 
-            model = TunableEncoderFnlModel(
-                (None, self.ctx.core.npix, self.ctx.core.npols),
+            model = build_task_model(
+                nside=nside,
+                npix=self.ctx.core.npix,
+                npol=self.ctx.core.npols,
                 n_outputs=len(self.ctx.core.shapes),
+                task_names=self.ctx.core.shapes,
                 max_batch_size=batch_size,
                 pool_p=pool_p,
                 K=K,
@@ -563,15 +483,8 @@ class EncoderFnlObjective:
                 head_activation=head_activation,
                 pool_type=pool_type,
                 dropout_rate=dropout_rate,
-                dense_units=shared_units,
-                dense_layers=dense_layers,
                 head_dropout=head_dropout,
-                use_split_head=use_split_head,
-                shared_units=shared_units,
-                shared_layers=dense_layers,
-                split_units=split_units,
-                split_layers=head_layers,
-            ).get_model()
+            )
 
             optimizer = AdamW(learning_rate=lr_schedule, weight_decay=weight_decay)
             model.compile(
@@ -648,7 +561,7 @@ def main() -> int:
 
     # Generate study name from nside and shapes
     shapes_str = "_".join(str(s) for s in ctx.core.shapes)
-    study_name = f"neo-mse-n{ctx.core.nside}-{shapes_str}"
+    study_name = f"neo-task-n{ctx.core.nside}-{shapes_str}"
 
     # Storage in local SQLite database
     storage_dir = Path("data/tuner")

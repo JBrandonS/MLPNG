@@ -16,8 +16,8 @@ SBATCH_FILE="sbatch/tuner.sbatch"
 SETTINGS=(
     # "n32"
     "n64"
-    "n128"
-    "n256"
+    # "n128"
+    # "n256"
 )
 
 # CLI args to change the command ran, helps prevent needing to change the settings file for small / test changes

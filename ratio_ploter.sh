@@ -8,6 +8,7 @@
 # list of the settings files to be used
 # these must be in settings/ and have the .json extension
 SETTINGS=(
+  # "n64"
   "n256"
   # "n128"
   # "n512"

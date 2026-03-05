@@ -28,3 +28,5 @@ mlpng/bispectrum/bispectrum.c
 docs/
 tools.toolsets.json
 wandb/
+saved_data/
+*.tar.gz

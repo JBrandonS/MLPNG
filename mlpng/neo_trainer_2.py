@@ -1,9 +1,9 @@
 """
-Neo Trainer: Encoder-based fnl prediction trainer with Weights & Biases logging.
+Neo Trainer 2: Deep encoder-based fnl prediction trainer with Weights & Biases logging.
 
 This module provides a complete training pipeline for fnl prediction using
-task-specific encoder architecture with support for multiple CMB bispectrum shapes
-(local, equilateral, orthogonal).
+a deep task-specific encoder architecture (double-conv blocks, progressive K,
+MAX pooling) designed for nside=128 HEALPix maps.
 """
 
 import os
@@ -54,8 +54,13 @@ from mlpng.utils.dataloaders import KappaDataset
 logger = logging.getLogger(__name__)
 
 
-class EncoderBlock(tf.keras.layers.Layer):
-    """Encoder block with HEALPix Chebyshev convolution and pooling."""
+class DeepEncoderBlock(tf.keras.layers.Layer):
+    """Deep encoder block with double HEALPix Chebyshev convolution and pooling.
+
+    Two graph convolutions per block before pooling, inspired by the double-conv
+    pattern in U-Net. This gives the network more capacity to learn features at
+    each resolution level before downsampling.
+    """
 
     def __init__(
         self,
@@ -81,7 +86,16 @@ class EncoderBlock(tf.keras.layers.Layer):
             else tf.keras.initializers.GlorotNormal()
         )
 
+        # Double convolution: fin → fout → fout, then dropout, then pool
         layers = [
+            HealpyChebyshev(
+                K=K,
+                Fout=fout,
+                activation=encoder_activation,
+                use_bn=True,
+                use_bias=True,
+                initializer=initializer,
+            ),
             HealpyChebyshev(
                 K=K,
                 Fout=fout,
@@ -117,10 +131,11 @@ class TaskSpecificHeads(tf.keras.layers.Layer):
         "orthogonal": 2,
     }
 
+    # Larger heads for nside=128 deeper encoder
     HEAD_ARCHITECTURES = {
-        0: [32, 32, 1],
-        1: [256, 256, 64, 32, 1],
-        2: [64, 64, 32, 32, 1],
+        0: [64, 32, 32, 1],  # local (strongest signal)
+        1: [128, 64, 64, 1],  # equilateral (weaker signal, needs more capacity)
+        2: [64, 64, 32, 32, 1],  # orthogonal (weaker signal, needs more capacity)
     }
 
     def __init__(self, n_outputs, task_names, activation="relu", dropout=0.0, **kwargs):
@@ -186,41 +201,78 @@ class TaskSpecificHeads(tf.keras.layers.Layer):
         return tf.keras.layers.Concatenate()(outputs) if outputs else x
 
 
-def build_task_model(
+def build_deep_task_model(
     nside,
     npix,
     npol,
     n_outputs,
     task_names,
-    max_batch_size=128,
-    pool_p=2,
-    K=7,
+    max_batch_size=64,
+    pool_p=1,
+    K_schedule=None,
+    channels=None,
     encoder_activation="gelu",
     head_activation="gelu",
     pool_type="AVG",
     dropout_rate=0.1,
     head_dropout=0.05,
 ):
-    """Build encoder with task-specific heads of different capacities."""
+    """Build deep encoder with double-conv blocks, progressive K, and task-specific heads.
 
-    # Calculate encoder depth
+    Uses pool_p=1 (halving nside each level) for maximum depth.
+    For nside=128 this gives 7 encoder blocks (14 graph convolutions total).
+
+    Architecture per block:
+        HealpyChebyshev(K, fin→fout) → HealpyChebyshev(K, fout→fout) → Dropout → HealpyPool
+
+    Args:
+        nside: HEALPix nside parameter
+        npix: Number of pixels (12 * nside^2)
+        npol: Number of polarization channels
+        n_outputs: Number of output values
+        task_names: List of shape names for task-specific heads
+        max_batch_size: Maximum batch size for HealpyGCNN
+        pool_p: Pooling parameter (1 = halve nside each level)
+        K_schedule: List of K values per level. If None, uses progressive schedule.
+        channels: List of channel sizes [fin, fout_0, fout_1, ...]. If None, auto-computed.
+        encoder_activation: Activation function for encoder blocks
+        head_activation: Activation function for task heads
+        pool_type: Pooling type ("AVG" or "AVG")
+        dropout_rate: Dropout rate in encoder blocks
+        head_dropout: Dropout rate in task heads
+    """
     nside_factor = 2**pool_p
     depth = int(math.log(nside, nside_factor))
     level_nsides = [nside // (nside_factor**i) for i in range(depth + 1)]
     level_npixels = [12 * ns**2 for ns in level_nsides]
-    channels = [npol] + [2 ** (i + 5) for i in range(depth + 1)]
 
-    # Build encoder
+    # Default channel schedule: gradual increase, capped at 256
+    if channels is None:
+        channels = [npol] + [2 ** (i + 4) for i in range(depth)]
+
+    # Default K schedule: progressive increase with depth
+    if K_schedule is None:
+        K_schedule = [min(5 + i, 12) for i in range(depth)]
+
+    logger.info(f"Deep encoder architecture (depth={depth}):")
+    logger.info(f"  Level nsides:  {level_nsides}")
+    logger.info(f"  Level npixels: {level_npixels}")
+    logger.info(f"  Channels:      {channels}")
+    logger.info(f"  K schedule:    {K_schedule}")
+    logger.info(
+        f"  Flatten size:  {level_npixels[-1]} x {channels[-1]} = {level_npixels[-1] * channels[-1]}"
+    )
+
     inputs = tf.keras.Input(shape=(npix, npol), name="lensed_maps")
     x = inputs
 
     for i in range(depth):
-        x = EncoderBlock(
+        x = DeepEncoderBlock(
             nside=level_nsides[i],
             npix=level_npixels[i],
             fin=channels[i],
             fout=channels[i + 1],
-            K=K,
+            K=K_schedule[i],
             pool_p=pool_p,
             max_batch_size=max_batch_size,
             dropout_rate=dropout_rate,
@@ -237,7 +289,7 @@ def build_task_model(
         dropout=head_dropout,
     )(x)
 
-    model = tf.keras.Model(inputs, outputs, name="task_conditioned_encoder")
+    model = tf.keras.Model(inputs, outputs, name="deep_task_encoder")
     return model
 
 
@@ -255,15 +307,15 @@ def create_sigma_weighted_loss(sigma_all):
 
 
 class NeoTrainer:
-    """Main trainer class for fnl prediction."""
+    """Main trainer class for deep fnl prediction."""
 
     def __init__(
         self,
         core_args: list,
         data_fraction: float = 1.0,
-        batch_size: int = 32,
+        batch_size: int = 64,
         max_epochs: int = 100,
-        patience: int = 16,
+        patience: int = 15,
         cache_dir: Optional[str] = None,
     ):
         """
@@ -272,7 +324,7 @@ class NeoTrainer:
         Args:
             core_args: List of core arguments
             data_fraction: Fraction of data to use (0-1)
-            batch_size: Batch size for training
+            batch_size: Batch size for training (default 64 for nside=128)
             max_epochs: Maximum number of training epochs
             patience: Early stopping patience
             cache_dir: Directory for caching datasets
@@ -287,7 +339,6 @@ class NeoTrainer:
 
         # Setup cache directory
         if cache_dir is None:
-            # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             cache_dir = f"/lustre/smuexa01/client/users/stevensonb/tf_cache/"
         os.makedirs(cache_dir, exist_ok=True)
         self.cache_dir = cache_dir
@@ -319,7 +370,9 @@ class NeoTrainer:
         logger.info(f"Sigma values: {self.sigma_all}")
 
         # Calculate training parameters
-        decay_steps = self.core.total_sims * 0.8 * self.data_fraction // self.batch_size
+        decay_steps = (
+            self.core.total_sims * 0.8 * 25 * self.data_fraction // self.batch_size
+        )
         logger.info(f"Decay steps: {decay_steps}")
 
         ds = KappaDataset.fromCore(self.core, x_output="lensed", y_output="fnl")
@@ -332,7 +385,7 @@ class NeoTrainer:
         )
         cache_file = os.path.join(
             self.cache_dir,
-            f"n{self.core.nside}_{shapes_str}_d{'_'.join(map(str, [10, 10, 2]))}",
+            f"n{self.core.nside}_{shapes_str}_d{'_'.join(map(str, [25, 10, 2]))}",
         )
 
         # Split dataset
@@ -342,8 +395,8 @@ class NeoTrainer:
             test_size=0.1 * self.data_fraction,
             to_tf=True,
             batch_size=self.batch_size,
-            duplicates=[10, 10, 2],
-            gen_batch_size=8,
+            duplicates=[25, 10, 2],
+            gen_batch_size=8,  # Reduced for larger nside=128 maps
             cache_file=cache_file,
         )
 
@@ -364,20 +417,32 @@ class NeoTrainer:
 
     def build_model(
         self,
-        pool_p: int = 2,
-        K: int = 7,
+        pool_p: int = 1,
+        K_schedule: Optional[list] = None,
+        channels: Optional[list] = None,
         encoder_activation: str = "gelu",
         head_activation="gelu",
         pool_type: str = "AVG",
         dropout_rate: float = 0.1,
-        head_dropout: float = 0.1,
+        head_dropout: float = 0.05,
     ):
-        """Build the model."""
+        """Build the deep model.
+
+        Args:
+            pool_p: Pooling parameter (1 = halve nside each level, 7 levels for nside=128)
+            K_schedule: List of K values per level. If None, uses progressive schedule.
+            channels: List of channel sizes. If None, auto-computed.
+            encoder_activation: Activation function for encoder blocks
+            head_activation: Activation function for task heads
+            pool_type: Pooling type ("AVG" or "AVG")
+            dropout_rate: Dropout rate in encoder blocks
+            head_dropout: Dropout rate in task heads
+        """
         if head_activation is None:
             head_activation = LeakyReLU(0.3)
 
         with self.strategy.scope():
-            self.model = build_task_model(
+            self.model = build_deep_task_model(
                 nside=self.core.nside,
                 npix=self.core.npix,
                 npol=self.core.npols,
@@ -385,7 +450,8 @@ class NeoTrainer:
                 task_names=self.core.shapes,
                 max_batch_size=self.batch_size,
                 pool_p=pool_p,
-                K=K,
+                K_schedule=K_schedule,
+                channels=channels,
                 encoder_activation=encoder_activation,
                 head_activation=head_activation,
                 pool_type=pool_type,
@@ -395,12 +461,13 @@ class NeoTrainer:
 
     def train(
         self,
-        initial_lr: float = 1e-5,
-        decay_rate: float = 0.98,
+        initial_lr: float = 1e-4,
+        decay_rate: float = 0.96,
         decay_steps: float = 1000,
         weight_decay: float = 1e-5,
-        use_cosine_decay: bool = False,
+        use_cosine_decay: bool = True,
         use_wandb: bool = True,
+        K_schedule: Optional[list] = None,
     ) -> Tuple:
         if use_wandb:
             wandb.init(
@@ -422,13 +489,23 @@ class NeoTrainer:
                     "decay_steps": decay_steps,
                     "max_epochs": self.max_epochs,
                     "patience": self.patience,
+                    # Deep model parameters
+                    "model_type": "deep_task",
+                    "K_schedule": K_schedule,
+                    "head_architectures": TaskSpecificHeads.HEAD_ARCHITECTURES,
+                    # Optimizer parameters
                     "use_cosine_decay": use_cosine_decay,
                     "initial_lr": initial_lr,
                     "decay_rate": decay_rate,
                     "weight_decay": weight_decay,
                     "loss": "mse",  # make sure to update this
                 },
-                tags=[f"nside-{self.core.nside}", "task", *self.core.shapes],
+                tags=[
+                    f"nside-{self.core.nside}",
+                    "deep_task",
+                    "deep",
+                    *self.core.shapes,
+                ],
             )
 
         # Compile model within strategy scope for distributed training
@@ -454,7 +531,7 @@ class NeoTrainer:
 
             self.model.compile(
                 optimizer=optimizer,
-                loss="mse",  # self.custom_loss, # update wandb.init loss above on change
+                loss="mse",  # update wandb.init loss above on change
                 metrics=rmse_metrics(self.core.shapes),
             )
 
@@ -829,25 +906,25 @@ class NeoTrainer:
 
 
 def main():
-    """Command-line interface for the trainer.
+    """Command-line interface for the deep trainer.
 
     All arguments are passed directly to Core (settings file, --shapes, --nsims, etc.).
-    Training hyperparameters are hardcoded below.
+    Training hyperparameters are hardcoded below for nside=128 deep architecture.
     """
-    setup_logging("mlpng.neo_trainer", level=logging.DEBUG)
+    setup_logging("mlpng.neo_trainer_2", level=logging.DEBUG)
 
-    # Training hyperparameters (hardcoded)
-    batch_size = 32
-    max_epochs = 500
-    patience = 32
-    pool_p = 2
-    K = 7
+    # Training hyperparameters for deep model (nside=128)
+    batch_size = 64
+    max_epochs = 100
+    patience = 15
+    pool_p = 1  # Halve nside each level → 7 levels for nside=128
+    K_schedule = [3, 5, 7, 7, 7, 5, 3]
     dropout_rate = 0.1
-    head_dropout = 0.00
+    head_dropout = 0.1
     initial_lr = 1e-4
     decay_rate = 0.96
-    weight_decay = 1e-6
-    use_cosine_decay = True
+    weight_decay = 1e-5
+    use_cosine_decay = False
 
     # All CLI args go to Core (settings file, --shapes, --nsims, --wandb, etc.)
     trainer = NeoTrainer(
@@ -862,7 +939,7 @@ def main():
 
     trainer.build_model(
         pool_p=pool_p,
-        K=K,
+        K_schedule=K_schedule,
         dropout_rate=dropout_rate,
         head_dropout=head_dropout,
     )
@@ -874,6 +951,7 @@ def main():
         weight_decay=weight_decay,
         use_cosine_decay=use_cosine_decay,
         use_wandb=use_wandb,
+        K_schedule=K_schedule,
     )
 
     predictions, truth = trainer.evaluate()
