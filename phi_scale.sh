@@ -9,8 +9,8 @@
 # Settings files to use (must be in settings/ with .json extension)
 SETTINGS=(
   "n64"
+  "n128"
   # "n256"
-  # "n128"
   # "n512"
 )
 
@@ -18,7 +18,7 @@ SETTINGS=(
 ARGS=(
   "--nsims" "10000"
   "--pols" "T"
-  "--shapes" "local"
+  "--shapes" "all"
   "--lensing"
 )
 

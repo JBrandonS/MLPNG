@@ -133,9 +133,9 @@ class TaskSpecificHeads(tf.keras.layers.Layer):
 
     # Larger heads for nside=128 deeper encoder
     HEAD_ARCHITECTURES = {
-        0: [32, 32, 16, 1],  # local (strongest signal)
-        1: [64, 32, 32, 16, 1],  # equilateral (weaker signal, needs more capacity)
-        2: [32, 32, 16, 1],  # orthogonal (weaker signal, needs more capacity)
+        0: [32, 32, 1],  # local (strongest signal)
+        1: [64, 64, 32, 32, 1],  # equilateral (weaker signal, needs more capacity)
+        2: [64, 32, 32, 1],  # orthogonal (weaker signal, needs more capacity)
     }
 
     def __init__(self, n_outputs, task_names, activation="relu", dropout=0.0, **kwargs):
@@ -263,7 +263,7 @@ def build_deep_task_model(
         f"  Flatten size:  {level_npixels[-1]} x {channels[-1]} = {level_npixels[-1] * channels[-1]}"
     )
 
-    inputs = tf.keras.Input(shape=(npix, npol), name="lensed_maps")
+    inputs = tf.keras.Input(shape=(npix, npol), name="unlensed_maps")
     x = inputs
 
     for i in range(depth):
@@ -339,7 +339,7 @@ class NeoTrainer:
 
         # Setup cache directory
         if cache_dir is None:
-            cache_dir = f"/lustre/smuexa01/client/users/stevensonb/tf_cache/"
+            cache_dir = f"/lustre/smuexa01/client/users/stevensonb/tf_cache/unlensed/"
         os.makedirs(cache_dir, exist_ok=True)
         self.cache_dir = cache_dir
 
@@ -375,7 +375,7 @@ class NeoTrainer:
         )
         logger.info(f"Decay steps: {decay_steps}")
 
-        ds = KappaDataset.fromCore(self.core, x_output="lensed", y_output="fnl")
+        ds = KappaDataset.fromCore(self.core, x_output="unlensed", y_output="fnl")
 
         # Create unique cache filename with nside and shapes to avoid lockfile conflicts
         shapes_str = (
@@ -921,9 +921,9 @@ def main():
     K_schedule = None  # [3, 5, 7, 7, 7, 5, 3]
     dropout_rate = 0.1
     head_dropout = 0.0
-    initial_lr = 5e-5
-    decay_rate = 0.98
-    weight_decay = 1e-6
+    initial_lr = 1e-5
+    decay_rate = 0.96
+    weight_decay = 1e-7
     use_cosine_decay = False
 
     # All CLI args go to Core (settings file, --shapes, --nsims, --wandb, etc.)

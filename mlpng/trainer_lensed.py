@@ -133,9 +133,9 @@ class TaskSpecificHeads(tf.keras.layers.Layer):
 
     # Larger heads for nside=128 deeper encoder
     HEAD_ARCHITECTURES = {
-        0: [32, 32, 16, 1],  # local (strongest signal)
-        1: [64, 32, 32, 16, 1],  # equilateral (weaker signal, needs more capacity)
-        2: [32, 32, 16, 1],  # orthogonal (weaker signal, needs more capacity)
+        0: [32, 32, 1],  # local (strongest signal)
+        1: [64, 64, 32, 32, 1],  # equilateral (weaker signal, needs more capacity)
+        2: [64, 32, 32, 1],  # orthogonal (weaker signal, needs more capacity)
     }
 
     def __init__(self, n_outputs, task_names, activation="relu", dropout=0.0, **kwargs):
@@ -461,10 +461,10 @@ class NeoTrainer:
 
     def train(
         self,
-        initial_lr: float = 1e-4,
+        initial_lr: float = 1e-5,
         decay_rate: float = 0.96,
         decay_steps: float = 1000,
-        weight_decay: float = 1e-5,
+        weight_decay: float = 1e-7,
         use_cosine_decay: bool = True,
         use_wandb: bool = True,
         K_schedule: Optional[list] = None,
@@ -921,9 +921,9 @@ def main():
     K_schedule = None  # [3, 5, 7, 7, 7, 5, 3]
     dropout_rate = 0.1
     head_dropout = 0.0
-    initial_lr = 5e-5
-    decay_rate = 0.98
-    weight_decay = 1e-6
+    initial_lr = 1e-5
+    decay_rate = 0.96
+    weight_decay = 1e-7
     use_cosine_decay = False
 
     # All CLI args go to Core (settings file, --shapes, --nsims, --wandb, etc.)

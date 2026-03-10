@@ -2,8 +2,11 @@
 Phi Scale Analysis: Train ML models at each phi_scale and compare R_GL with analytical values.
 
 Loads pre-computed analytical R_GL data from ratio_ploter.py output, trains a
-TaskSpecificHeads encoder model at each phi_scale, evaluates RMSE, and computes
-R_GL^ML = sigma_Fisher / RMSE_ML. Generates comparison plots.
+DeepEncoderBlock + TaskSpecificHeads model at each phi_scale, evaluates RMSE,
+and computes R_GL^ML = sigma_Fisher / RMSE_ML. Generates comparison plots.
+
+Uses the deep encoder architecture from neo_trainer_2.py: double-conv blocks,
+progressive K schedule, and MAX pooling.
 
 Models are saved to disk so incomplete runs can be resumed.
 
@@ -62,13 +65,18 @@ PHI_SCALES_ML = [1, 10, 100, 500]
 
 
 # =============================================================================
-# Model Architecture (from trainer.ipynb)
+# Model Architecture (from neo_trainer_2.py)
 # =============================================================================
 
 
 @tf.keras.saving.register_keras_serializable(package="phi_scale")
-class EncoderBlock(tf.keras.layers.Layer):
-    """Encoder block with HEALPix Chebyshev convolution and pooling."""
+class DeepEncoderBlock(tf.keras.layers.Layer):
+    """Deep encoder block with double HEALPix Chebyshev convolution and pooling.
+
+    Two graph convolutions per block before pooling, inspired by the double-conv
+    pattern in U-Net. This gives the network more capacity to learn features at
+    each resolution level before downsampling.
+    """
 
     def __init__(
         self,
@@ -80,7 +88,7 @@ class EncoderBlock(tf.keras.layers.Layer):
         pool_p,
         max_batch_size,
         dropout_rate=0.1,
-        activation="gelu",
+        encoder_activation="gelu",
         pool_type="AVG",
         **kwargs,
     ):
@@ -93,18 +101,30 @@ class EncoderBlock(tf.keras.layers.Layer):
         self._pool_p = pool_p
         self._max_batch_size = max_batch_size
         self._dropout_rate = dropout_rate
-        self._activation = activation
+        self._encoder_activation = encoder_activation
         self._pool_type = pool_type
+
+        # Select initializer based on activation
         initializer = (
             tf.keras.initializers.HeNormal()
-            if activation == "relu"
+            if encoder_activation == "relu"
             else tf.keras.initializers.GlorotNormal()
         )
+
+        # Double convolution: fin -> fout -> fout, then dropout, then pool
         layers = [
             HealpyChebyshev(
                 K=K,
                 Fout=fout,
-                activation=activation,
+                activation=encoder_activation,
+                use_bn=True,
+                use_bias=True,
+                initializer=initializer,
+            ),
+            HealpyChebyshev(
+                K=K,
+                Fout=fout,
+                activation=encoder_activation,
                 use_bn=True,
                 use_bias=True,
                 initializer=initializer,
@@ -133,7 +153,7 @@ class EncoderBlock(tf.keras.layers.Layer):
                 "pool_p": self._pool_p,
                 "max_batch_size": self._max_batch_size,
                 "dropout_rate": self._dropout_rate,
-                "activation": self._activation,
+                "encoder_activation": self._encoder_activation,
                 "pool_type": self._pool_type,
             }
         )
@@ -148,10 +168,11 @@ class TaskSpecificHeads(tf.keras.layers.Layer):
     """Shape-dependent heads with increasing capacity for local, equilateral, orthogonal."""
 
     SHAPE_TO_HEAD_INDEX = {"local": 0, "equilateral": 1, "orthogonal": 2}
+    # Larger heads for deeper encoder
     HEAD_ARCHITECTURES = {
-        0: [32, 32, 1],
-        1: [32, 128, 256, 256, 64, 32, 1],
-        2: [16, 64, 64, 32, 32, 1],
+        0: [64, 32, 32, 1],  # local (strongest signal)
+        1: [128, 64, 64, 1],  # equilateral (weaker signal, needs more capacity)
+        2: [64, 64, 32, 32, 1],  # orthogonal (weaker signal, needs more capacity)
     }
 
     def __init__(self, n_outputs, task_names, activation="relu", dropout=0.0, **kwargs):
@@ -226,46 +247,96 @@ class TaskSpecificHeads(tf.keras.layers.Layer):
         return config
 
 
-def build_task_model(
+def build_deep_task_model(
     nside,
     npix,
     npol,
     n_outputs,
     task_names,
-    max_batch_size=128,
-    pool_p=2,
-    K=7,
+    max_batch_size=64,
+    pool_p=1,
+    K_schedule=None,
+    channels=None,
     encoder_activation="gelu",
     head_activation="gelu",
     pool_type="AVG",
     dropout_rate=0.1,
     head_dropout=0.05,
 ):
-    """Build encoder with task-specific heads."""
+    """Build deep encoder with double-conv blocks, progressive K, and task-specific heads.
+
+    Uses pool_p=1 (halving nside each level) for maximum depth.
+    For nside=128 this gives 7 encoder blocks (14 graph convolutions total).
+
+    Architecture per block:
+        HealpyChebyshev(K, fin->fout) -> HealpyChebyshev(K, fout->fout) -> Dropout -> HealpyPool
+
+    Args:
+        nside: HEALPix nside parameter
+        npix: Number of pixels (12 * nside^2)
+        npol: Number of polarization channels
+        n_outputs: Number of output values
+        task_names: List of shape names for task-specific heads
+        max_batch_size: Maximum batch size for HealpyGCNN
+        pool_p: Pooling parameter (1 = halve nside each level)
+        K_schedule: List of K values per level. If None, uses progressive schedule.
+        channels: List of channel sizes [fin, fout_0, fout_1, ...]. If None, auto-computed.
+        encoder_activation: Activation function for encoder blocks
+        head_activation: Activation function for task heads
+        pool_type: Pooling type ("AVG" or "MAX")
+        dropout_rate: Dropout rate in encoder blocks
+        head_dropout: Dropout rate in task heads
+    """
     nside_factor = 2**pool_p
     depth = int(math.log(nside, nside_factor))
     level_nsides = [nside // (nside_factor**i) for i in range(depth + 1)]
     level_npixels = [12 * ns**2 for ns in level_nsides]
-    channels = [npol] + [2 ** (i + 5) for i in range(depth + 1)]
+
+    # Default channel schedule: gradual increase, capped at 256
+    if channels is None:
+        channels = [npol] + [2 ** (i + 4) for i in range(depth)]
+
+    # Default K schedule: progressive increase with depth
+    if K_schedule is None:
+        K_schedule = [min(5 + i, 12) for i in range(depth)]
+
+    logger.info(f"Deep encoder architecture (depth={depth}):")
+    logger.info(f"  Level nsides:  {level_nsides}")
+    logger.info(f"  Level npixels: {level_npixels}")
+    logger.info(f"  Channels:      {channels}")
+    logger.info(f"  K schedule:    {K_schedule}")
+    logger.info(
+        f"  Flatten size:  {level_npixels[-1]} x {channels[-1]} = {level_npixels[-1] * channels[-1]}"
+    )
 
     inputs = tf.keras.Input(shape=(npix, npol), name="lensed_maps")
     x = inputs
+
     for i in range(depth):
-        x = EncoderBlock(
+        x = DeepEncoderBlock(
             nside=level_nsides[i],
             npix=level_npixels[i],
             fin=channels[i],
             fout=channels[i + 1],
-            K=K,
+            K=K_schedule[i],
             pool_p=pool_p,
             max_batch_size=max_batch_size,
             dropout_rate=dropout_rate,
-            activation=encoder_activation,
+            encoder_activation=encoder_activation,
             pool_type=pool_type,
         )(x)
+
+    # Task-specific heads with different capacities
     x = Flatten()(x)
-    outputs = TaskSpecificHeads(n_outputs, task_names, head_activation, head_dropout)(x)
-    return tf.keras.Model(inputs, outputs, name="task_conditioned_encoder")
+    outputs = TaskSpecificHeads(
+        n_outputs=n_outputs,
+        task_names=task_names,
+        activation=head_activation,
+        dropout=head_dropout,
+    )(x)
+
+    model = tf.keras.Model(inputs, outputs, name="deep_task_encoder")
+    return model
 
 
 # =============================================================================
@@ -284,14 +355,15 @@ class PhiScaleAnalysis:
         self.patience = 32
         self.batch_size = 128
 
-        # Model hyperparameters
-        self.pool_p = 2
-        self.K = 7
+        # Model hyperparameters (matching neo_trainer_2 deep encoder)
+        self.pool_p = 1
+        self.K_schedule = None  # progressive: [min(5+i, 12) for i in range(depth)]
+        self.channels = None  # auto: [npol] + [2**(i+4) for i in range(depth)]
         self.encoder_activation = "gelu"
         self.head_activation = "gelu"
         self.pool_type = "AVG"
         self.dropout_rate = 0.1
-        self.head_dropout = 0.0
+        self.head_dropout = 0.05
 
         # Optimizer settings
         self.use_cosine_decay = True
@@ -310,7 +382,7 @@ class PhiScaleAnalysis:
 
         # Paths
         self.data_file = self.core.file
-        self.ratio_data_file = self.data_file.replace("10000", "100")
+        self.ratio_data_file = self.data_file.replace("10000", "1000")
         self.model_dir = os.path.join(self.core.dirs["model"], "phi_scale_analysis_2")
         os.makedirs(self.model_dir, exist_ok=True)
 
@@ -383,8 +455,8 @@ class PhiScaleAnalysis:
         return train_ds, val_ds, test_ds
 
     def _build_model(self):
-        """Build a new task model."""
-        return build_task_model(
+        """Build a new deep task model."""
+        return build_deep_task_model(
             nside=self.core.nside,
             npix=self.core.npix,
             npol=self.core.npols,
@@ -392,7 +464,8 @@ class PhiScaleAnalysis:
             task_names=self.core.shapes,
             max_batch_size=self.batch_size,
             pool_p=self.pool_p,
-            K=self.K,
+            K_schedule=self.K_schedule,
+            channels=self.channels,
             encoder_activation=self.encoder_activation,
             head_activation=self.head_activation,
             pool_type=self.pool_type,
@@ -464,7 +537,9 @@ class PhiScaleAnalysis:
         if os.path.exists(model_path):
             logger.info(f"Loading existing model from {model_path}")
             with self.strategy.scope():
-                model = load_model(model_path)
+                model = load_model(
+                    model_path, custom_objects={"EncoderBlock": DeepEncoderBlock}
+                )
             gc.collect()
             tf.keras.backend.clear_session()
             return model, None, 0
