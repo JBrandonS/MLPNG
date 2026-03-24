@@ -286,13 +286,13 @@ def plot_predictions(
 
     df = pd.DataFrame(
         {
-            "True Fnl": np.array(truth_).flatten(),
-            "Predicted Fnl": np.array(preds_).flatten(),
+            "True": np.array(truth_).flatten(),
+            "Predicted": np.array(preds_).flatten(),
         }
     )
 
     sns.scatterplot(
-        data=df, x="True Fnl", y="Predicted Fnl", label=data_label, alpha=0.5
+        data=df, x=r"True", y=r"Predicted", label=data_label, alpha=0.5
     )
 
     # Truth line
@@ -357,8 +357,6 @@ def add_sigma_legend(truth, preds, sigma, labels, n_sigma=4):
     sigma_ = np.atleast_1d(sigma)
     labels_ = np.atleast_1d(labels)
     row_labels = [f"{i} $\\sigma$" for i in range(1, n_sigma + 1)]
-
-    print("preds shape:", np.shape(preds_), "truth shape:", np.shape(truth_))
 
     data = []
     for i in range(1, n_sigma + 1):
