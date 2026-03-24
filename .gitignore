@@ -29,4 +29,8 @@ docs/
 tools.toolsets.json
 wandb/
 saved_data/
+saved_data_old/
+
+*.gif
 *.tar.gz
+cp_save.sh
