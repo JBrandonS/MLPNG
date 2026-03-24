@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --gpus-per-task=4
 #SBATCH --output=data/logs/trainer/%j.log
-#SBATCH --time=1-00:00:00
+#SBATCH --time=2-00:00:00
 #SBATCH --account=jrmeyers_ml_cmb_0001
 
 module="mlpng.${1:-scn-jorik}"

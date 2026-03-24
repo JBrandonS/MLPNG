@@ -353,7 +353,7 @@ class PhiScaleAnalysis:
         self.duplicates = [25, 10, 2]
         self.max_epochs = 100
         self.patience = 32
-        self.batch_size = 128
+        self.batch_size = 32
 
         # Model hyperparameters (matching neo_trainer_2 deep encoder)
         self.pool_p = 1
@@ -363,13 +363,13 @@ class PhiScaleAnalysis:
         self.head_activation = "gelu"
         self.pool_type = "AVG"
         self.dropout_rate = 0.1
-        self.head_dropout = 0.05
+        self.head_dropout = 0.00
 
         # Optimizer settings
         self.use_cosine_decay = True
-        self.initial_lr = 1e-4
-        self.decay_rate = 0.98
-        self.weight_decay = 1e-5
+        self.initial_lr = 1e-5
+        self.decay_rate = 0.96
+        self.weight_decay = 1e-7
 
         # Initialize Core
         if core_args is None:

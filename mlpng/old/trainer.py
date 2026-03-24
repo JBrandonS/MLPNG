@@ -721,7 +721,7 @@ def run():
     logger.info(f"Run name: {run_name}")
 
     save_dir = f"{core.dirs['model']}/{core.name}"
-    run_info = f"{core.shapes_str()}-{run_name}"
+    run_info = f"{core.shapes_str}-{run_name}"
     plot_prefix = f"{core.dirs['plot']}/{core.name}/train/{core.slurm.job}"
     os.makedirs(save_dir, exist_ok=True)
     os.makedirs(f"{core.dirs['plot']}/{core.name}", exist_ok=True)

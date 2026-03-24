@@ -142,7 +142,7 @@ def compute_max_depths(nside: int) -> dict[int, int]:
 def build_run_name(core: Core, prefix: str = "optuna") -> str:
     timestamp = int(time.time())
     job = core.slurm.job if core.slurm.job else "local"
-    return f"{prefix}-n{core.nside}-{core.shapes_str()}-{job}-{timestamp}"
+    return f"{prefix}-n{core.nside}-{core.shapes_str}-{job}-{timestamp}"
 
 
 def configure_strategy() -> tf.distribute.Strategy:
@@ -560,8 +560,7 @@ def main() -> int:
     LOGGER.info("Using %.2f%% of the data for tuning", CONFIG["data_fraction"] * 100)
 
     # Generate study name from nside and shapes
-    shapes_str = "_".join(str(s) for s in ctx.core.shapes)
-    study_name = f"neo-task-n{ctx.core.nside}-{shapes_str}"
+    study_name = f"neo-task-n{ctx.core.nside}-{ctx.core.shapes_str}"
 
     # Storage in local SQLite database
     storage_dir = Path("data/tuner")

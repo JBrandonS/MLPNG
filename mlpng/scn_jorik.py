@@ -99,7 +99,7 @@ def main():
         to_tf=True,
         batch_size=batch_size,
         duplicates=[25, 10, 2],
-        cache_file=f"{core.name}-050625-{run_name}-{core.shapes_str()}",
+        cache_file=f"{core.name}-050625-{run_name}-{core.shapes_str}",
         gen_batch_size=16,
     )
 

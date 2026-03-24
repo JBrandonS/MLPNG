@@ -16,7 +16,7 @@ SBATCH_FILE="sbatch/trainer.sbatch"
 SETTINGS=(
     # "n32"
     "n64"
-    "n128"
+    # "n128"
     "n256"
 )
 
@@ -26,16 +26,17 @@ SETTINGS=(
 # some additional args are allowed for the trainer see scripts/models/modelcore.py
 ARGS=(
     "--nsims" "10000"
-    "--phi_scale" "1"
-    "--shapes" "orthogonal"
+    "--phi_scale" "1000"
+    "--shapes" "local"
     "--fnl_range" "-1000" "1000"
 )
 
 # The AI models to train on the data, see scripts/trainer.py and scripts/models/ for more info
 # these models should be registered with @register_model
 MODELS=(
-    # "trainer"
-    "neo_trainer_2"
+    "trainer_lensed"
+    # "trainer_unlensed"
+    # "neo_trainer_2"
 )
 
 # loops through all the SETTINGS files and for each submits a slurm job for each MODEL
