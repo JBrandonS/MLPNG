@@ -77,6 +77,7 @@ class Core:
     n_ell: np.ndarray
     b_ell: np.ndarray
     shapes: list[str]
+    shapes_str: str
 
     _cosmo_defaults = {"As": 2.13e-09, "ns": 0.9624, "pivot_scalar": 0.05}
 
@@ -443,6 +444,7 @@ class Core:
         if "all" in self.shapes:
             self.shapes = ["local", "equilateral", "orthogonal"]
         self.nshapes = len(self.shapes)
+        self.shapes_str = self._shapes_str()
 
         self.phi_scale = self._get("phi_scale", 1)
 
@@ -628,7 +630,7 @@ class Core:
         base = self._get("base_name", base_name)
         if base.startswith("+"):
             base = f"{base_name}{base[1:]}"
-        self.name = f"{base}_{pol_str}_{total_sims}_p{self.phi_scale:.1f}"
+        self.name = f"{base}_{pol_str}_{total_sims}_p1.0"  # {self.phi_scale:.1f}"
 
         self.dirs = {}
         self.dirs["base"] = self._get("base_dir", "data")
@@ -729,7 +731,7 @@ class Core:
         """Determine if plotting should be performed based on the `plot` setting and the SLURM job status."""
         return self.plot and self.slurm.is_main
 
-    def shapes_str(self):
+    def _shapes_str(self):
         """Returns a string representation of the shapes used in the simulation.
         If there is only one shape, it returns that shape as a string, i.e 'local'.
         If there are multiple shapes, it returns a concatenated string of the first letter of each shape, e.g. 'leo'.

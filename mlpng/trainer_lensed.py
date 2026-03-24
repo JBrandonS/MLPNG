@@ -36,7 +36,7 @@ for gpu in gpus:
         logging.error(f"GPU memory growth error: {e}")
 
 from tensorflow.keras.layers import Dense, Dropout, Flatten, LeakyReLU
-from tensorflow.keras.callbacks import EarlyStopping, TerminateOnNaN
+from tensorflow.keras.callbacks import EarlyStopping, TerminateOnNaN, ModelCheckpoint
 from tensorflow.keras.optimizers import AdamW
 from tensorflow.keras.optimizers.schedules import CosineDecayRestarts, ExponentialDecay
 
@@ -252,7 +252,7 @@ def build_deep_task_model(
 
     # Default K schedule: progressive increase with depth
     if K_schedule is None:
-        K_schedule = [3 for i in range(depth)]
+        K_schedule = [5 for i in range(depth)]
 
     logger.info(f"Deep encoder architecture (depth={depth}):")
     logger.info(f"  Level nsides:  {level_nsides}")
@@ -375,17 +375,14 @@ class NeoTrainer:
         )
         logger.info(f"Decay steps: {decay_steps}")
 
-        ds = KappaDataset.fromCore(self.core, x_output="lensed", y_output="fnl")
+        ds = KappaDataset.fromCore(
+            self.core, phi_scale=self.core.phi_scale, x_output="lensed", y_output="fnl"
+        )
 
         # Create unique cache filename with nside and shapes to avoid lockfile conflicts
-        shapes_str = (
-            "-".join(self.core.shapes)
-            if isinstance(self.core.shapes, list)
-            else str(self.core.shapes)
-        )
         cache_file = os.path.join(
             self.cache_dir,
-            f"n{self.core.nside}_{shapes_str}_d{'_'.join(map(str, [25, 10, 2]))}",
+            f"n{self.core.nside}_lensed_{self.core.shapes_str}_d{'_'.join(map(str, [25, 10, 2]))}_p{self.core.phi_scale}",
         )
 
         # Split dataset
@@ -402,7 +399,7 @@ class NeoTrainer:
 
         if cache_file is not None:
             logger.debug("Generating train cache")
-            for i, _ in enumerate(self.train_ds):
+            for _ in self.train_ds:
                 pass
 
             logger.debug("Generating val cache")
@@ -502,8 +499,8 @@ class NeoTrainer:
                 },
                 tags=[
                     f"nside-{self.core.nside}",
-                    "deep_task",
-                    "deep",
+                    "trainer",
+                    "lensed",
                     *self.core.shapes,
                 ],
             )
@@ -535,11 +532,26 @@ class NeoTrainer:
                 metrics=rmse_metrics(self.core.shapes),
             )
 
-        # Setup callbacks
+        # Setup callbacks with unique checkpoint path based on settings
+        checkpoints_dir = os.path.join(self.core.dirs["model"], "checkpoints")
+        os.makedirs(checkpoints_dir, exist_ok=True)
+
+        # Generate unique checkpoint name from key training settings
+        checkpoint_name = f"n{self.core.nside}_lensed_{self.core.shapes_str}_p{self.core.phi_scale}.h5"
+        checkpoint_path = os.path.join(checkpoints_dir, checkpoint_name)
+        logger.info(f"Checkpoint path: {checkpoint_path}")
+
         callbacks = [
             TerminateOnNaN(),
             EarlyStopping(
                 monitor="val_loss", patience=self.patience, restore_best_weights=True
+            ),
+            ModelCheckpoint(
+                filepath=checkpoint_path,
+                monitor="val_loss",
+                save_best_only=True,
+                mode="min",
+                verbose=1,
             ),
         ]
 
@@ -914,10 +926,10 @@ def main():
     setup_logging("mlpng.neo_trainer_2", level=logging.DEBUG)
 
     # Training hyperparameters for deep model (nside=128)
-    batch_size = 256
-    max_epochs = 300
+    batch_size = 64
+    max_epochs = 80
     patience = 32
-    pool_p = 1  # Halve nside each level → 7 levels for nside=128
+    pool_p = 2  # Halve nside each level → 7 levels for nside=128
     K_schedule = None  # [3, 5, 7, 7, 7, 5, 3]
     dropout_rate = 0.1
     head_dropout = 0.0
