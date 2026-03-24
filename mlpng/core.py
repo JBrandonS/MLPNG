@@ -54,7 +54,7 @@ class Core:
     lmin: int
     lmax: int
     nside: int
-    pols: str | tuple
+    pols: str | list[str]
     lensing: bool
     npol: int
     seed: int
