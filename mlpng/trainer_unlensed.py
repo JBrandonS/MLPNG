@@ -246,12 +246,12 @@ def build_deep_task_model(
     if K_schedule is None:
         K_schedule = [5 for i in range(depth)]
 
-    logger.info(f"Deep encoder architecture (depth={depth}):")
-    logger.info(f"  Level nsides:  {level_nsides}")
-    logger.info(f"  Level npixels: {level_npixels}")
-    logger.info(f"  Channels:      {channels}")
-    logger.info(f"  K schedule:    {K_schedule}")
-    logger.info(
+    logger.debug(f"Deep encoder architecture (depth={depth}):")
+    logger.debug(f"  Level nsides:  {level_nsides}")
+    logger.debug(f"  Level npixels: {level_npixels}")
+    logger.debug(f"  Channels:      {channels}")
+    logger.debug(f"  K schedule:    {K_schedule}")
+    logger.debug(
         f"  Flatten size:  {level_npixels[-1]} x {channels[-1]} = {level_npixels[-1] * channels[-1]}"
     )
 
@@ -348,7 +348,7 @@ class NeoTrainer:
         # Setup distributed training strategy for multi-GPU
         self.strategy = tf.distribute.MirroredStrategy()
         n_gpus = self.strategy.num_replicas_in_sync
-        logger.info(f"Using MirroredStrategy with {n_gpus} device(s)")
+        logger.debug(f"Using MirroredStrategy with {n_gpus} device(s)")
 
     def setup(self):
         """Initialize core and datasets."""
@@ -359,13 +359,13 @@ class NeoTrainer:
         self.sigma_all = np.array(self.core.get_likelihoods(True))
         self.custom_loss = create_sigma_weighted_loss(self.sigma_all)
 
-        logger.info(f"Sigma values: {self.sigma_all}")
+        logger.debug(f"Sigma values: {self.sigma_all}")
 
         # Calculate training parameters
         decay_steps = (
             self.core.total_sims * 0.8 * 25 * self.data_fraction // self.batch_size
         )
-        logger.info(f"Decay steps: {decay_steps}")
+        logger.debug(f"Decay steps: {decay_steps}")
 
         ds = KappaDataset.fromCore(self.core, x_output="unlensed", y_output="fnl")
 
@@ -376,6 +376,7 @@ class NeoTrainer:
         )
 
         # Split dataset
+        gen_bs = 8 if self.core.nside >= 128 else 32
         self.train_ds, self.val_ds, self.test_ds = ds.split(
             train_size=0.8 * self.data_fraction,
             val_size=0.1 * self.data_fraction,
@@ -383,7 +384,7 @@ class NeoTrainer:
             to_tf=True,
             batch_size=self.batch_size,
             duplicates=[25, 10, 2],
-            gen_batch_size=8,  # Reduced for larger nside=128 maps
+            gen_batch_size=gen_bs,
             cache_file=cache_file,
         )
 
@@ -541,7 +542,7 @@ class NeoTrainer:
                 monitor="val_loss",
                 save_best_only=True,
                 mode="min",
-                verbose=1,
+                verbose=0,
             ),
         ]
 
@@ -580,10 +581,7 @@ class NeoTrainer:
         )
         return test_predictions, test_truth
 
-    def plot_training_history(self, save_dir: Optional[str] = None) -> str:
-        if save_dir is None:
-            save_dir = self.cache_dir
-
+    def plot_training_history(self):
         import matplotlib.pyplot as plt
 
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
@@ -620,21 +618,19 @@ class NeoTrainer:
 
         filepath = self.core.get_plot_file("loss", subdir="trainer")
         plt.savefig(filepath, dpi=150, bbox_inches="tight")
-        logger.info(f"Saved training history plot: {filepath}")
+        logger.debug(f"Saved training history plot: {filepath}")
         plt.close()
-
-        return filepath
 
     def _plot_evaluation_base(
         self,
         predictions: np.ndarray,
         truth: np.ndarray,
         sigma_all: np.ndarray,
-        plot_title: str,
+        # plot_title: str,
         save_filename: str,
         xlim_range: Optional[Tuple[float, float]] = None,
         shape_masks: Optional[dict] = None,
-    ) -> str:
+    ):
         """
         Base plotting function for evaluation plots (test set and restricted range).
 
@@ -675,11 +671,11 @@ class NeoTrainer:
             error = pred_shape - truth_shape
 
             sigma = sigma_all[shape_idx] if len(sigma_all) > shape_idx else sigma_all[0]
-            corr = (
-                np.corrcoef(truth_shape, pred_shape)[0, 1]
-                if len(truth_shape) > 1
-                else np.nan
-            )
+            # corr = (
+            #     np.corrcoef(truth_shape, pred_shape)[0, 1]
+            #     if len(truth_shape) > 1
+            #     else np.nan
+            # )
             rmse = np.sqrt(np.mean(error**2))
 
             # Scatter plot
@@ -692,21 +688,15 @@ class NeoTrainer:
             else:
                 line = np.array([np.nanmin(truth_shape), np.nanmax(truth_shape)])
 
-            axes[0, shape_idx].scatter(truth_shape, pred_shape, alpha=0.4, s=8)
+            axes[0, shape_idx].scatter(truth_shape, pred_shape, s=8)
             axes[0, shape_idx].plot(line, line, "r--", label="Perfect", linewidth=2)
-            axes[0, shape_idx].plot(line, line + sigma, "g--", alpha=0.5)
-            axes[0, shape_idx].plot(line, line - sigma, "g--", alpha=0.5)
-            axes[0, shape_idx].set_xlabel("True fnl")
-            axes[0, shape_idx].set_ylabel("Predicted fnl")
-
-            # Build title with sample count if available
-            title_str = (
-                f"{shape_name}\nCorr: {corr:.3f}, RMSE: {rmse:.2f}, σ: {sigma:.2f}"
+            axes[0, shape_idx].plot(line, line + sigma, "g--")
+            axes[0, shape_idx].plot(line, line - sigma, "g--")
+            axes[0, shape_idx].set_xlabel(r"True $f_\mathrm{fnl}$")
+            axes[0, shape_idx].set_ylabel(r"Predicted $f_\mathrm{fnl}$")
+            axes[0, shape_idx].set_title(
+                f"{shape_name} (N={sample_count}, RMSE: {rmse:.2f})"
             )
-            if sample_count is not None:
-                title_str = f"{shape_name} (N={sample_count})\nCorr: {corr:.3f}, RMSE: {rmse:.2f}, σ: {sigma:.2f}"
-
-            axes[0, shape_idx].set_title(title_str)
             axes[0, shape_idx].grid(True, alpha=0.3)
 
             # Error histogram with Gaussian curve
@@ -723,37 +713,45 @@ class NeoTrainer:
             # Scale gaussian to match histogram
             gaussian_scaled = gaussian * len(error) * (bins[1] - bins[0])
             axes[1, shape_idx].plot(
-                x, gaussian_scaled, color="purple", linewidth=2, label="Gaussian(σ)"
+                x,
+                gaussian_scaled,
+                color="purple",
+                linewidth=2,
+                label="Gaussian",
+                alpha=0.5,
             )
 
             axes[1, shape_idx].axvline(
-                sigma, color="g", linestyle="--", linewidth=2, label=f"+σ"
+                sigma,
+                color="g",
+                linestyle="--",
+                linewidth=2,
+                alpha=0.5,
+                label=f"σ({sigma:.1f})",
             )
             axes[1, shape_idx].axvline(
-                -sigma, color="g", linestyle="--", linewidth=2, label=f"-σ"
+                -sigma, color="g", linestyle="--", linewidth=2, alpha=0.5
             )
             axes[1, shape_idx].axvline(
                 0, color="red", linestyle="-", linewidth=1, alpha=0.5
             )
-            axes[1, shape_idx].set_xlabel("Prediction Error")
-            axes[1, shape_idx].set_ylabel("Count")
-            axes[1, shape_idx].set_title(f"Error Distribution (σ={sigma:.1f})")
+            axes[1, shape_idx].set_xlabel("Residuals")
+            axes[1, shape_idx].set_ylabel("Frequency")
+            # axes[1, shape_idx].set_title(f"Error Distribution (σ={sigma:.1f})")
             axes[1, shape_idx].grid(True, alpha=0.3, axis="y")
             axes[1, shape_idx].legend(fontsize=9)
 
-        fig.suptitle(plot_title, fontsize=14, fontweight="bold")
+        # fig.suptitle(plot_title, fontsize=14, fontweight="bold")
         plt.tight_layout()
 
         filepath = self.core.get_plot_file(save_filename, subdir="trainer")
         plt.savefig(filepath, dpi=150, bbox_inches="tight")
-        logger.info(f"Saved evaluation plot: {filepath}")
+        logger.debug(f"Saved evaluation plot: {filepath}")
         plt.close()
-
-        return filepath
 
     def plot_test_evaluation(
         self, predictions: np.ndarray, truth: np.ndarray, save_dir: Optional[str] = None
-    ) -> str:
+    ):
         """
         Plot per-shape test set evaluation (scatter plots and error histograms).
 
@@ -767,11 +765,11 @@ class NeoTrainer:
         """
         sigma_all = self.core.get_likelihoods(True)
 
-        return self._plot_evaluation_base(
+        self._plot_evaluation_base(
             predictions=predictions,
             truth=truth,
             sigma_all=sigma_all,
-            plot_title="Test Set Results - All Shapes",
+            # plot_title="Test Set Results - All Shapes",
             save_filename="evaluation",
         )
 
@@ -781,8 +779,7 @@ class NeoTrainer:
         truth: np.ndarray,
         fnl_min: float = -100,
         fnl_max: float = 100,
-        save_dir: Optional[str] = None,
-    ) -> str:
+    ):
         """
         Plot evaluation for restricted fnl range (per-shape filtering).
 
@@ -806,11 +803,11 @@ class NeoTrainer:
                 shape_truth <= fnl_max
             )
 
-        return self._plot_evaluation_base(
+        self._plot_evaluation_base(
             predictions=predictions,
             truth=truth,
             sigma_all=sigma_all,
-            plot_title=f"Restricted Range [{fnl_min}, {fnl_max}] - Test Set Results (per-shape filtering)",
+            # plot_title=f"Restricted Range [{fnl_min}, {fnl_max}] - Test Set Results (per-shape filtering)",
             save_filename="restricted",
             xlim_range=(fnl_min, fnl_max),
             shape_masks=shape_masks,
@@ -916,7 +913,7 @@ def main():
 
     # Training hyperparameters for deep model (nside=128)
     batch_size = 64
-    max_epochs = 300
+    max_epochs = 100
     patience = 32
     pool_p = 2  # Halve nside each level → 7 levels for nside=128
     K_schedule = None  # [3, 5, 7, 7, 7, 5, 3]

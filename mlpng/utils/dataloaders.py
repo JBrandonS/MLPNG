@@ -87,6 +87,7 @@ class ALMDataset:
             fisher_mat = get_data(file_path, f"fisher_matrix/{self.l_str}", 0)
             marg_likes = get_data(file_path, f"marginal_likelihoods/{self.l_str}", 0)
 
+            logger.debug("Using Fnl seed: %d", self.fnl_seed)
             logger.debug("Error information from '%s'...", file_path)
             logger.debug("Fisher Matrix: %s", fisher_mat)
             logger.debug("Marginal Likelihoods: %s", marg_likes)
@@ -202,7 +203,7 @@ class ALMDataset:
             # check the cache_file and if provided build up a list of files for each dataset
             # if cache_dir is not provided, we default to $SCRATCH/tf_cache
             # these will do nothing if cache_final_load=False
-            cache_file = to_tf_kwargs.pop("cache_file", "")
+            cache_file = to_tf_kwargs.pop("cache_file", "cache")
             if cache_file:
                 if cache_dir is None:
                     cache_dir = os.path.join(os.environ["SCRATCH"], "tf_cache")
@@ -281,9 +282,10 @@ class ALMDataset:
 
         if cache and cache_file:
             logger.debug("Using cache file: '%s'", cache_file)
-            os.makedirs(os.path.dirname(cache_file), exist_ok=True)
             if os.path.exists(cache_file):
                 logger.debug("Cache file exists, reusing cached dataset.")
+            else:
+                os.makedirs(os.path.dirname(cache_file), exist_ok=True)
 
         ds = tf.data.Dataset.from_generator(
             self._generator,
@@ -1040,7 +1042,10 @@ class KappaDataset(MapDataset):
         """
         if cache and cache_file:
             logger.debug("Using cache file: '%s'", cache_file)
-            os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+            if os.path.exists(cache_file):
+                logger.debug("Cache file exists, reusing cached dataset.")
+            else:
+                os.makedirs(os.path.dirname(cache_file), exist_ok=True)
 
         # Check if outputs should be single tensors or dicts
         single_x_output = len(self.x_output) == 1
@@ -1087,7 +1092,8 @@ class KappaDataset(MapDataset):
         batch_size = len(indices)
         nshapes = len(self.shapes)
 
-        np.random.seed(self.fnl_seed + indices[0])
+        seed = self.fnl_seed + indices[0]
+        np.random.seed(seed)
         fnls = np.random.uniform(
             low=self.fnl_min,
             high=self.fnl_max,
