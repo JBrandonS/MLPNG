@@ -1,11 +1,3 @@
-"""
-Neo Trainer 2: Deep encoder-based fnl prediction trainer with Weights & Biases logging.
-
-This module provides a complete training pipeline for fnl prediction using
-a deep task-specific encoder architecture (double-conv blocks, progressive K,
-MAX pooling) designed for nside=128 HEALPix maps.
-"""
-
 import os
 import sys
 import math
@@ -344,14 +336,14 @@ class NeoTrainer:
         self.cache_dir = cache_dir
 
         # Initialize core and data
-        self.core = None
-        self.sigma_all = None
-        self.custom_loss = None
-        self.train_ds = None
-        self.val_ds = None
-        self.test_ds = None
-        self.model = None
-        self.history = None
+        # self.core = None
+        # self.sigma_all = None
+        # self.custom_loss = None
+        # self.train_ds = None
+        # self.val_ds = None
+        # self.test_ds = None
+        # self.model = None
+        # self.history = None
 
         # Setup distributed training strategy for multi-GPU
         self.strategy = tf.distribute.MirroredStrategy()
@@ -642,7 +634,6 @@ class NeoTrainer:
         save_filename: str,
         xlim_range: Optional[Tuple[float, float]] = None,
         shape_masks: Optional[dict] = None,
-        sample_counts: Optional[dict] = None,
     ) -> str:
         """
         Base plotting function for evaluation plots (test set and restricted range).

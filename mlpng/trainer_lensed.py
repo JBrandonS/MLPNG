@@ -1,11 +1,3 @@
-"""
-Neo Trainer 2: Deep encoder-based fnl prediction trainer with Weights & Biases logging.
-
-This module provides a complete training pipeline for fnl prediction using
-a deep task-specific encoder architecture (double-conv blocks, progressive K,
-MAX pooling) designed for nside=128 HEALPix maps.
-"""
-
 import os
 import sys
 import math
@@ -339,19 +331,19 @@ class NeoTrainer:
 
         # Setup cache directory
         if cache_dir is None:
-            cache_dir = f"/lustre/smuexa01/client/users/stevensonb/tf_cache/"
+            cache_dir = f"/lustre/smuexa01/client/users/stevensonb/tf_cache/lensed/"
         os.makedirs(cache_dir, exist_ok=True)
         self.cache_dir = cache_dir
 
         # Initialize core and data
-        self.core = None
-        self.sigma_all = None
-        self.custom_loss = None
-        self.train_ds = None
-        self.val_ds = None
-        self.test_ds = None
-        self.model = None
-        self.history = None
+        # self.core = None
+        # self.sigma_all = None
+        # self.custom_loss = None
+        # self.train_ds = None
+        # self.val_ds = None
+        # self.test_ds = None
+        # self.model = None
+        # self.history = None
 
         # Setup distributed training strategy for multi-GPU
         self.strategy = tf.distribute.MirroredStrategy()
@@ -923,7 +915,7 @@ def main():
     All arguments are passed directly to Core (settings file, --shapes, --nsims, etc.).
     Training hyperparameters are hardcoded below for nside=128 deep architecture.
     """
-    setup_logging("mlpng.neo_trainer_2", level=logging.DEBUG)
+    setup_logging("mlpng.trainer_lensed", level=logging.DEBUG)
 
     # Training hyperparameters for deep model (nside=128)
     batch_size = 64
