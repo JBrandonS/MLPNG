@@ -15,7 +15,7 @@ SBATCH_FILE="sbatch/trainer.sbatch"
 # The settings files to use for the sims. These should be found in settings/*.json
 SETTINGS=(
     # "n32"
-    "n64"
+    # "n64"
     # "n128"
     "n256"
 )
@@ -26,7 +26,7 @@ SETTINGS=(
 # some additional args are allowed for the trainer see scripts/models/modelcore.py
 ARGS=(
     "--nsims" "10000"
-    "--phi_scale" "1000"
+    "--phi_scale" "1"
     "--shapes" "local"
     "--fnl_range" "-1000" "1000"
 )

@@ -291,9 +291,7 @@ def plot_predictions(
         }
     )
 
-    sns.scatterplot(
-        data=df, x=r"True", y=r"Predicted", label=data_label, alpha=0.5
-    )
+    sns.scatterplot(data=df, x=r"True", y=r"Predicted", label=data_label, alpha=0.5)
 
     # Truth line
     line = [np.nanmin(truth_), np.nanmax(truth_)]

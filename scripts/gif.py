@@ -29,31 +29,29 @@ Rendering:
   - Lambert diffuse + limb darkening → 3-D look (no specular highlight).
   - Planck-inspired CMB colormap (blue → white → red).
   - Very slow rotation (~25° total) to reinforce depth.
-  - Atmospheric glow; plain dark background.
+    - Transparent background for clean compositing.
 """
 
 import math
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image
 from scipy.ndimage import gaussian_filter
 
-np.random.seed(42)
-
 # ── Settings ──────────────────────────────────────────────────────────────────
-WIDTH, HEIGHT = 640, 640
-FRAMES = 220
+WIDTH, HEIGHT = 1280, 1280
+FRAMES = 160
 DURATION = 40  # ms per frame (~25 fps)
 FNL = 200.0  # fixed local f_NL throughout animation
-R_START = 55  # initial sphere radius (px)
-R_END = 220  # final sphere radius (px)
-TEX_SIZE = 512  # resolution of the pre-generated texture map
+R_START = 5  # initial sphere radius (px)
+R_END = 500  # final sphere radius (px)
+TEX_SIZE = 1024  # resolution of the pre-generated texture map
 CX, CY = WIDTH // 2, HEIGHT // 2
 
 # ── CMB-like multi-scale Gaussian random field ────────────────────────────────
 # Approximate Sachs-Wolfe CMB angular power spectrum with several Gaussian
 # smoothing scales weighted by a rough C_ℓ ∝ 1/ℓ(ℓ+1) envelope.
-rng = np.random.RandomState(42)
+rng = np.random.default_rng(42)
 field = np.zeros((TEX_SIZE, TEX_SIZE))
 for sigma, amp in [
     (2, 0.35),
@@ -63,7 +61,9 @@ for sigma, amp in [
     (50, 0.80),
     (90, 0.40),
 ]:
-    field += amp * gaussian_filter(rng.randn(TEX_SIZE, TEX_SIZE), sigma=sigma)
+    field += amp * gaussian_filter(
+        rng.standard_normal((TEX_SIZE, TEX_SIZE)), sigma=sigma
+    )
 field /= field.std()  # unit-variance Gaussian field
 
 
@@ -71,27 +71,90 @@ field /= field.std()  # unit-variance Gaussian field
 # cold (deep blue) → blue → white → orange-red → dark red (hot)
 def make_cmb_cmap(n: int = 2048) -> np.ndarray:
     c = np.zeros((n, 3))
-    for i in range(n):
-        t = i / (n - 1)
-        if t < 0.25:  # deep-blue → blue
-            s = t / 0.25
-            c[i] = [0.04 + 0.06 * s, 0.04 + 0.10 * s, 0.55 + 0.45 * s]
-        elif t < 0.50:  # blue → white
-            s = (t - 0.25) / 0.25
-            c[i] = [s, s, 1.0]
-        elif t < 0.75:  # white → red
-            s = (t - 0.50) / 0.25
-            c[i] = [1.0, 1.0 - s, 1.0 - s]
+    for cmap_i in range(n):
+        frac = cmap_i / (n - 1)
+        if frac < 0.25:  # deep-blue → blue
+            s = frac / 0.25
+            c[cmap_i] = [0.04 + 0.06 * s, 0.04 + 0.10 * s, 0.55 + 0.45 * s]
+        elif frac < 0.50:  # blue → white
+            s = (frac - 0.25) / 0.25
+            c[cmap_i] = [s, s, 1.0]
+        elif frac < 0.75:  # white → red
+            s = (frac - 0.50) / 0.25
+            c[cmap_i] = [1.0, 1.0 - s, 1.0 - s]
         else:  # red → dark red
-            s = (t - 0.75) / 0.25
-            c[i] = [1.0 - 0.20 * s, 0.04 * s, 0.04 * s]
+            s = (frac - 0.75) / 0.25
+            c[cmap_i] = [1.0 - 0.20 * s, 0.04 * s, 0.04 * s]
     return (np.clip(c, 0, 1) * 255).astype(np.uint8)
 
 
 CMAP = make_cmb_cmap()
 
-# ── Orthographic patch scale (fraction of texture shown across sphere face) ──
-PATCH_SCALE = 0.42  # ~42 % of TEX_SIZE → one coherent sky patch
+
+def sample_texture_on_sphere(
+    tex: np.ndarray,
+    nx_map: np.ndarray,
+    ny_map: np.ndarray,
+    nz_map: np.ndarray,
+    visible_mask: np.ndarray,
+    rot_angle: float,
+) -> np.ndarray:
+    """Sample the texture with spherical coordinates and bilinear filtering."""
+    cos_r = math.cos(rot_angle)
+    sin_r = math.sin(rot_angle)
+
+    # Inverse-rotate normals into texture space (stable surface rotation).
+    x_tex = nx_map[visible_mask] * cos_r + nz_map[visible_mask] * sin_r
+    y_tex = ny_map[visible_mask]
+    z_tex = -nx_map[visible_mask] * sin_r + nz_map[visible_mask] * cos_r
+
+    lon = np.arctan2(x_tex, z_tex)
+    lat = np.arcsin(np.clip(y_tex, -1.0, 1.0))
+
+    tex_h, tex_w = tex.shape
+    u = (lon / (2.0 * math.pi) + 0.5) * tex_w
+    v = (0.5 - lat / math.pi) * (tex_h - 1)
+
+    u_floor = np.floor(u)
+    v_floor = np.floor(v)
+    u0 = u_floor.astype(np.int32) % tex_w
+    v0 = np.clip(v_floor.astype(np.int32), 0, tex_h - 1)
+    u1 = (u0 + 1) % tex_w
+    v1 = np.clip(v0 + 1, 0, tex_h - 1)
+
+    fu = u - u_floor
+    fv = v - v_floor
+
+    top = (1.0 - fu) * tex[v0, u0] + fu * tex[v0, u1]
+    bottom = (1.0 - fu) * tex[v1, u0] + fu * tex[v1, u1]
+    samples = (1.0 - fv) * top + fv * bottom
+
+    sampled = np.zeros_like(nx_map, dtype=np.float32)
+    sampled[visible_mask] = samples.astype(np.float32)
+    return sampled
+
+
+def rgba_to_gif_frame(frame: Image.Image) -> Image.Image:
+    """Convert an RGBA frame to paletted GIF with index 0 as transparent."""
+    rgba = np.array(frame, dtype=np.uint8)
+    alpha = rgba[..., 3]
+
+    rgb = Image.fromarray(rgba[..., :3], mode="RGB")
+    quantize_enum = getattr(Image, "Quantize", None)
+    quantize_method = getattr(quantize_enum, "MEDIANCUT", 0)
+    quantized = rgb.quantize(colors=255, method=quantize_method)
+
+    q_idx = np.array(quantized, dtype=np.uint8) + 1
+    q_idx[alpha == 0] = 0
+
+    gif_frame = Image.fromarray(q_idx, mode="P")
+    base_palette = quantized.getpalette() or [0] * 768
+    base_palette = base_palette[: 255 * 3]
+    palette = [0, 0, 0] + base_palette
+    palette.extend([0] * (768 - len(palette)))
+    gif_frame.putpalette(palette[:768])
+    return gif_frame
+
 
 # ── Precomputed pixel grid ────────────────────────────────────────────────────
 Yg, Xg = np.mgrid[0:HEIGHT, 0:WIDTH]
@@ -122,25 +185,10 @@ for i in range(FRAMES):
         mask, np.sqrt(np.clip(1.0 - nx**2 - ny**2, 0.0, 1.0)), 0.0
     ).astype(np.float32)
 
-    # Orthographic single-patch projection with slow y-axis rotation.
-    # Rotate (nx, nz) by `rot`, then map (rot_nx, ny) directly onto a central
-    # patch of the texture — no wrapping around the back, one coherent region.
-    cos_r = math.cos(rot)
-    sin_r = math.sin(rot)
-    rot_nx = nx * cos_r - nz * sin_r  # rotated x component
-    # ny is unchanged (rotation is around the vertical/y axis)
-
-    u = np.clip(
-        ((rot_nx * PATCH_SCALE + 0.5) * (TEX_SIZE - 1)).astype(np.int32),
-        0,
-        TEX_SIZE - 1,
-    )
-    v = np.clip(
-        ((ny * PATCH_SCALE + 0.5) * (TEX_SIZE - 1)).astype(np.int32), 0, TEX_SIZE - 1
-    )
+    # Spherical remap + bilinear filtering avoids apparent stretch during spin.
+    g = sample_texture_on_sphere(field, nx, ny, nz, mask, rot)
 
     # Sample Gaussian field, then apply local PNG model
-    g = field[v, u]  # unit-variance Gaussian
     phi = g + (FNL / 100.0) * (g**2 - 1.0)  # Φ = φ_G + fnl*(φ_G²−1)
 
     # Fixed colour stretch
@@ -158,33 +206,11 @@ for i in range(FRAMES):
     shading = (0.10 + 0.52 * diffuse + 0.38 * limb)[..., np.newaxis]
     sphere = np.clip(color.astype(np.float32) * shading, 0, 255).astype(np.uint8)
 
-    # ── Background: plain dark ────────────────────────────────────────────────
-    bg = np.full((HEIGHT, WIDTH, 3), (4, 4, 14), dtype=np.uint8)
-
-    # ── Atmospheric glow (blurred ring just outside sphere) ───────────────────
-    glow_r = int(R + 22)
-    glow_img = Image.new("RGB", (WIDTH, HEIGHT), (0, 0, 0))
-    ImageDraw.Draw(glow_img).ellipse(
-        [CX - glow_r, CY - glow_r, CX + glow_r, CY + glow_r],
-        fill=(18, 8, 55),
-    )
-    glow_arr = np.array(
-        glow_img.filter(ImageFilter.GaussianBlur(radius=int(18 + 8 * te)))
-    )
-    outside = ~mask
-    bg[outside] = np.clip(
-        bg[outside].astype(np.int16) + glow_arr[outside], 0, 255
-    ).astype(np.uint8)
-
-    # ── Composite sphere over background ──────────────────────────────────────
-    mask3 = mask[..., np.newaxis]
-    final_arr = np.where(mask3, sphere, bg)
-    final = Image.fromarray(final_arr.astype(np.uint8), mode="RGB")
-
-    # ── HUD ───────────────────────────────────────────────────────────────────
-    draw = ImageDraw.Draw(final)
-    # draw.text((14, 14), f"f_NL = {FNL:+.0f}", fill=(230, 230, 230))
-    # draw.text((14, 30), f"Inflation: {te * 100:.0f}%", fill=(160, 160, 160))
+    # ── Composite sphere over fully transparent background ────────────────────
+    final_arr = np.zeros((HEIGHT, WIDTH, 4), dtype=np.uint8)
+    final_arr[mask, :3] = sphere[mask]
+    final_arr[mask, 3] = 255
+    final = Image.fromarray(final_arr, mode="RGBA")
 
     images.append(final)
 
@@ -192,12 +218,16 @@ for i in range(FRAMES):
         print(f"  Frame {i+1}/{FRAMES}  R={R:.0f}")
 
 # ── Save GIF ──────────────────────────────────────────────────────────────────
-images[0].save(
+gif_frames = [rgba_to_gif_frame(frame) for frame in images]
+
+gif_frames[0].save(
     "inflating_sphere.gif",
     save_all=True,
-    append_images=images[1:],
+    append_images=gif_frames[1:],
     duration=DURATION,
     loop=0,
-    optimize=False,
+    optimize=True,
+    transparency=0,
+    disposal=2,
 )
 print("Saved inflating_sphere.gif")
