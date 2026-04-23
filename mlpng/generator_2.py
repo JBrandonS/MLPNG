@@ -86,6 +86,7 @@ class Generator(Core):
         super().__init__(argv)
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
+        self.diag_covariance = os.getenv("MLPNG_KSW_DIAG", "0") == "1"
 
         # this formula comes from ksw, set the batch size based on number of cpus
         self.theta_batch = int(np.floor(1.5 * self.lmax + 1)) // self.slurm.n_cpus
@@ -126,6 +127,64 @@ class Generator(Core):
 
             self.cl_phi = self.cosmo.c_ell["lenspotential"]["c_ell"]
             self.cl_phi = self.cl_phi[:, 0].astype(self.r_dtype)
+
+            if self.diag_covariance:
+                rel = np.linalg.norm(self.icov_lens - self.icov) / max(
+                    np.linalg.norm(self.icov),
+                    1e-12,
+                )
+                self.logger.info(
+                    "Initialized lensed/unlensed icov matrices (relative norm diff=%.3e)",
+                    rel,
+                )
+
+    def _default_icov(self, lensed=False):
+        if lensed:
+            if not self.lensing or not hasattr(self, "icov_lens"):
+                raise ValueError(
+                    "Lensed inverse covariance requested but lensing was not initialized"
+                )
+            return self.icov_lens
+        return self.icov
+
+    def _log_icov_choice(self, context, icov, lensed=False):
+        if not self.diag_covariance:
+            return
+
+        default_icov = self._default_icov(lensed=lensed)
+        source = "default"
+        if icov is not default_icov and not np.shares_memory(icov, default_icov):
+            source = "override"
+
+        self.logger.info(
+            "ICOV[%s]: lensed=%s source=%s",
+            context,
+            lensed,
+            source,
+        )
+
+    def get_plot_file(
+        self,
+        name,
+        base_dir=None,
+        subdir=None,
+        sub_path=None,
+        extension=".png",
+        create_dir=True,
+        use_job_id=True,
+    ):
+        # Backward compatibility: older plot helpers pass sub_path instead of subdir.
+        if subdir is None and sub_path is not None:
+            subdir = sub_path
+
+        return super().get_plot_file(
+            name,
+            base_dir=base_dir,
+            subdir=subdir,
+            extension=extension,
+            create_dir=create_dir,
+            use_job_id=use_job_id,
+        )
 
     def get_ksw(self, shape_str, lensed=False):
         """
@@ -190,7 +249,7 @@ class Generator(Core):
             ret: The alms after applying the inverse covariance.
         """
         if icov is None:
-            icov = self.icov_lens if lensed else self.icov
+            icov = self._default_icov(lensed=lensed)
 
         ret = np.zeros_like(alm)
         for pol in range(ret.shape[0]):
@@ -518,16 +577,48 @@ class Generator(Core):
             ksw = self.get_ksw(shape, lensed=lensed)
 
             fisher = ksw.compute_fisher()
-            self.logger.debug("fisher: %s, std div: %s", fisher, 1 / np.sqrt(fisher))
+            if fisher is None:
+                raise ValueError(
+                    f"Invalid fisher for {l_str} {shape}: {fisher}. Check icov/MC state."
+                )
+            if isinstance(fisher, tuple):
+                fisher = fisher[0]
 
-            # note: we dont use lensed here as we generate everything as unlensed data before lensing
+            fisher_val = float(np.asarray(fisher).reshape(-1)[0])
+            if not np.isfinite(fisher_val) or fisher_val <= 0:
+                raise ValueError(
+                    f"Invalid fisher for {l_str} {shape}: {fisher}. Check icov/MC state."
+                )
+            self.logger.debug(
+                "fisher: %s, std div: %s",
+                fisher_val,
+                1 / np.sqrt(fisher_val),
+            )
+
+            run_icov = self._default_icov(lensed=lensed)
+            self._log_icov_choice(f"alm_nl/{shape}", run_icov, lensed=lensed)
+
+            # Keep local and non-local paths consistent with the selected lensed/unlensed icov.
             self.logger.debug("Computing %s alm_nl for shape %s", l_str, shape)
             if shape == "local":
                 # use hanson method for local shape
-                alm_nl = self.generate_alm_nl(alms, ic_ell=self.icov)
+                alm_nl = self.generate_alm_nl(alms, ic_ell=run_icov)
             else:
                 # for the shapes we just use the KSW method
-                alm_nl = self.generate_alm_nl_shape(alms, shape, ksw, self.icov)
+                alm_nl = self.generate_alm_nl_shape(
+                    alms,
+                    shape,
+                    ksw,
+                    icov=run_icov,
+                    lensed=lensed,
+                )
+
+            if not np.all(np.isfinite(alm_nl)):
+                raise ValueError(f"Non-finite alm_nl detected for {l_str} {shape}")
+
+            if self.diag_covariance:
+                alm_nl_rms = float(np.sqrt(np.mean(np.abs(alm_nl[:, pol_idxs]) ** 2)))
+                self.logger.info("alm_nl RMS (%s %s): %.5e", l_str, shape, alm_nl_rms)
 
             if lensed:
                 alm_l, alm_phi = self.lens_alms(alms)
@@ -539,7 +630,9 @@ class Generator(Core):
             sdata = {
                 "alm_l": {l_str: {shape: alm_l.astype(self.c_dtype)}},
                 "alm_nl": {l_str: {shape: alm_nl.astype(self.c_dtype)}},
-                "fisher": {l_str: {shape: [fisher.astype(self.r_dtype)]}},
+                "fisher": {
+                    l_str: {shape: [np.asarray(fisher_val, dtype=self.r_dtype)]}
+                },
             }
             if lensed:
                 sdata["alm_phi"] = np.asarray(alm_phi).astype(self.c_dtype)
@@ -568,18 +661,23 @@ class Generator(Core):
                     # q: Should we generate an icov based on the alm_phi here to get the correct S+N, which would include scaling?
                     lambda idx: self.icov_func(alm[idx, pol_idxs], lensed=lensed),
                     range(n_estimates),
-                    fisher=fisher,
+                    fisher=fisher_val,
                 )
                 estimates = estimates.T
 
-                print_errors(fnl, estimates, fisher)
+                if not np.all(np.isfinite(estimates)):
+                    raise ValueError(
+                        f"Non-finite estimates detected for {l_str} {shape}"
+                    )
+
+                print_errors(fnl, estimates, fisher_val)
                 if self.should_plot():
                     base = f"{shape}_{l_str}"
                     plot_dir = os.path.join(
                         self.dirs["plot"], self.name, str(self.slurm.job), "estimates"
                     )
                     # Ensure sigma is a scalar, not an array (fisher might be wrapped as 1-D array)
-                    sigma_val = np.atleast_1d(1 / np.sqrt(fisher))[0]
+                    sigma_val = np.atleast_1d(1 / np.sqrt(fisher_val))[0]
                     # Flatten both fnl and estimates to 1-D for consistent shapes
                     fnl_flat = fnl.flatten()
                     estimates_flat = estimates.flatten()

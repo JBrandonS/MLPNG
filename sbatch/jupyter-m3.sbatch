@@ -4,9 +4,9 @@
 #SBATCH --partition=standard-s
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --mem=256G
-#SBATCH --cpus-per-task=64
-#SBATCH --time=12:00:00
+#SBATCH --mem=64G
+#SBATCH --cpus-per-task=16
+#SBATCH --time=4:00:00
 #SBATCH --account=jrmeyers_ml_cmb_0001
 
 conda_env="mlpng"
