@@ -109,7 +109,7 @@ class ALMDataset:
         cache_dir=None,
         rotate=[False, False, False],
         gaussian_mask=[False, False, False],
-        gaussian_mask_prob=[0.1, 0.0, 0.0],
+        gaussian_mask_prob=[0.2, 0.0, 0.0],
         clear_cache=False,
         **to_tf_kwargs,
     ):
@@ -777,7 +777,7 @@ class KappaDataset(MapDataset):
         kappa_scale: float = 1.0,
         x_output: str | tuple[str, ...] = "lensed",
         y_output: str | tuple[str, ...] = ("fnl",),
-        gaussian_mask_prob: float = 0.1,
+        gaussian_mask_prob: float = 0.2,
         lmax_buffer: int | None = None,
         parallel_prefer: str = "processes",
         **kwargs,
@@ -1119,14 +1119,32 @@ class KappaDataset(MapDataset):
                 self.phi_scale_config["values"], size=(batch_size, 1)
             )
 
-        # Apply Gaussian masking vectorized: independently zero fnl and phi with gaussian_mask_prob
+        # Apply Gaussian masking: with gaussian_mask_prob chance, apply one of two modes
+        # Mode 1: Zero out all shapes (50% chance) - only gaussian portion remains
+        # Mode 2: Zero out all but one shape (50% chance) if nshapes > 1 - single signal remains
         if self.gaussian_mask_prob > 0:
-            fnl_mask = (
-                np.random.rand(batch_size, duplicates, nshapes)
-                < self.gaussian_mask_prob
+            mask_samples = (
+                np.random.rand(batch_size, duplicates) < self.gaussian_mask_prob
             )
+
+            for i in range(batch_size):
+                for j in range(duplicates):
+                    if mask_samples[i, j]:
+                        if nshapes == 1:
+                            # Single shape: just zero out
+                            fnls[i, j, :] = 0
+                        elif np.random.rand() < 0.5:
+                            # Mode 1: Zero out all shapes (gaussian only)
+                            fnls[i, j, :] = 0
+                        else:
+                            # Mode 2: Keep only one random shape (single signal)
+                            keep_shape = np.random.randint(0, nshapes)
+                            for s in range(nshapes):
+                                if s != keep_shape:
+                                    fnls[i, j, s] = 0
+
+            # Also apply to phi with same probability
             phi_mask = np.random.rand(batch_size, 1) < self.gaussian_mask_prob
-            fnls[fnl_mask] = 0
             phis[phi_mask] = 0
 
         return fnls, phis

@@ -331,7 +331,7 @@ class NeoTrainer:
 
         # Setup cache directory
         if cache_dir is None:
-            cache_dir = f"/lustre/smuexa01/client/users/stevensonb/tf_cache/unlensed/"
+            cache_dir = f"/lustre/smuexa01/client/users/stevensonb/tf_cache/unlensed-4/"
         os.makedirs(cache_dir, exist_ok=True)
         self.cache_dir = cache_dir
 
@@ -363,7 +363,7 @@ class NeoTrainer:
 
         # Calculate training parameters
         decay_steps = (
-            self.core.total_sims * 0.8 * 25 * self.data_fraction // self.batch_size
+            self.core.total_sims * 0.8 * 250 * self.data_fraction // self.batch_size
         )
         logger.debug(f"Decay steps: {decay_steps}")
 
@@ -372,7 +372,7 @@ class NeoTrainer:
         # Create unique cache filename with nside and shapes to avoid lockfile conflicts
         cache_file = os.path.join(
             self.cache_dir,
-            f"n{self.core.nside}_unlensed_{self.core.shapes_str}_d{'_'.join(map(str, [25, 10, 2]))}",
+            f"n{self.core.nside}_unlensed_{self.core.shapes_str}_d{'_'.join(map(str, [250, 100, 20]))}",
         )
 
         # Split dataset
@@ -383,7 +383,7 @@ class NeoTrainer:
             test_size=0.1 * self.data_fraction,
             to_tf=True,
             batch_size=self.batch_size,
-            duplicates=[25, 10, 2],
+            duplicates=[250, 100, 20],
             gen_batch_size=gen_bs,
             cache_file=cache_file,
         )
@@ -449,10 +449,10 @@ class NeoTrainer:
 
     def train(
         self,
-        initial_lr: float = 1e-4,
-        decay_rate: float = 0.96,
+        initial_lr: float = 1e-3,
+        decay_rate: float = 0.98,
         decay_steps: float = 1000,
-        weight_decay: float = 1e-5,
+        weight_decay: float = 1e-7,
         use_cosine_decay: bool = True,
         use_wandb: bool = True,
         K_schedule: Optional[list] = None,
@@ -912,15 +912,15 @@ def main():
     setup_logging("mlpng.trainer_unlensed", level=logging.DEBUG)
 
     # Training hyperparameters for deep model (nside=128)
-    batch_size = 64
-    max_epochs = 100
-    patience = 32
+    batch_size = 128
+    max_epochs = 50
+    patience = 30
     pool_p = 2  # Halve nside each level → 7 levels for nside=128
     K_schedule = None  # [3, 5, 7, 7, 7, 5, 3]
     dropout_rate = 0.1
     head_dropout = 0.0
-    initial_lr = 1e-5
-    decay_rate = 0.96
+    initial_lr = 1e-3
+    decay_rate = 0.98
     weight_decay = 1e-7
     use_cosine_decay = False
 
@@ -945,7 +945,7 @@ def main():
     trainer.train(
         initial_lr=initial_lr,
         decay_rate=decay_rate,
-        decay_steps=decay_steps,
+        decay_steps=decay_steps * 5,
         weight_decay=weight_decay,
         use_cosine_decay=use_cosine_decay,
         use_wandb=use_wandb,

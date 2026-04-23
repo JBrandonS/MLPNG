@@ -331,7 +331,7 @@ class NeoTrainer:
 
         # Setup cache directory
         if cache_dir is None:
-            cache_dir = f"/lustre/smuexa01/client/users/stevensonb/tf_cache/lensed/"
+            cache_dir = f"/lustre/smuexa01/client/users/stevensonb/tf_cache/lensed-2/"
         os.makedirs(cache_dir, exist_ok=True)
         self.cache_dir = cache_dir
 
@@ -915,7 +915,7 @@ def main():
 
     # Training hyperparameters for deep model (nside=128)
     batch_size = 64
-    max_epochs = 100
+    max_epochs = 70
     patience = 32
     pool_p = 2  # Halve nside each level → 7 levels for nside=128
     K_schedule = None  # [3, 5, 7, 7, 7, 5, 3]
@@ -947,7 +947,7 @@ def main():
     trainer.train(
         initial_lr=initial_lr,
         decay_rate=decay_rate,
-        decay_steps=decay_steps,
+        decay_steps=decay_steps * 5,
         weight_decay=weight_decay,
         use_cosine_decay=use_cosine_decay,
         use_wandb=use_wandb,
