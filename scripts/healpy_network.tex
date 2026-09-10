@@ -1,0 +1,109 @@
+
+\documentclass[border=8pt, multi, tikz]{standalone} 
+\usepackage{import}
+\subimport{./plotneuralnet/layers/}{init}
+\usetikzlibrary{positioning}
+\usetikzlibrary{3d} %for including external image 
+
+\def\ConvColor{rgb:yellow,5;red,2.5;white,5}
+\def\ConvReluColor{rgb:yellow,5;red,5;white,5}
+\def\PoolColor{rgb:red,1;black,0.3}
+\def\UnpoolColor{rgb:blue,2;green,1;black,0.3}
+\def\FcColor{rgb:blue,5;red,2.5;white,5}
+\def\FcReluColor{rgb:blue,5;red,5;white,4}
+\def\SoftmaxColor{rgb:magenta,5;black,7}   
+\def\SumColor{rgb:blue,5;green,15}
+
+\newcommand{\copymidarrow}{\tikz \draw[-Stealth,line width=0.8mm,draw={rgb:blue,4;red,1;green,1;black,3}] (-0.3,0) -- ++(0.3,0);}
+
+\begin{document}
+\begin{tikzpicture}
+\tikzstyle{connection}=[ultra thick,every node/.style={sloped,allow upside down},draw=\edgecolor,opacity=0.7]
+\tikzstyle{copyconnection}=[ultra thick,every node/.style={sloped,allow upside down},draw={rgb:blue,4;red,1;green,1;black,3},opacity=0.7]
+\usetikzlibrary{calc}\colorlet{legconv}{\ConvColor}\colorlet{legpool}{\PoolColor}\colorlet{legdense}{\FcColor}\node[anchor=north west,font=\small,inner sep=0.3cm,fill=white,draw=gray,rounded corners=2pt] at (-8,6) {\begin{tabular}{cl} \tikz{\fill[legconv] (0,0) rectangle (0.45,0.45);} & Chebyshev Conv (ReLU) \\[2pt] \tikz{\fill[legpool,opacity=0.5] (0,0) rectangle (0.45,0.45);} & Pooling \\[2pt] \tikz{\fill[legdense] (0,0) rectangle (0.45,0.45);} & Dense / Output \end{tabular}};\node[outer sep=0pt,inner sep=0pt,anchor=center] (cmb) at (-3,0,0) {\includegraphics[width=9.5cm]{cmb_map.png}};
+\pic[shift={ (2,0,0) }] at (1.5,0,0) 
+    {RightBandedBox={
+        name=b1,
+        caption=Block 1,
+        xlabel={{ 16, 16 }},
+        zlabel= ,
+        fill=\ConvColor,
+        bandfill=\ConvReluColor,
+        height=40,
+        width={ 3 , 3 },
+        depth=40
+        }
+    };
+\draw [connection] (-0.8,0,0) -- node {\midarrow} (b1-west);\path ($(b1-nearsoutheast)+(0,-0.7,0)$) edge [draw=none,"\small nside = 128",sloped,pos=0.35,text centered] ($(b1-farsoutheast)+(0,-0.7,0)$);
+\pic[shift={ (0,0,0) }] at (b1-east) 
+    {Box={
+        name=p1,
+        caption= ,
+        fill=\PoolColor,
+        opacity=0.5,
+        height=35,
+        width=1,
+        depth=35
+        }
+    };
+
+\pic[shift={ (2.5,0,0) }] at (p1-east) 
+    {RightBandedBox={
+        name=b2,
+        caption=Block 2,
+        xlabel={{ 32, 32 }},
+        zlabel= ,
+        fill=\ConvColor,
+        bandfill=\ConvReluColor,
+        height=32,
+        width={ 3.5 , 3.5 },
+        depth=32
+        }
+    };
+
+\draw [connection]  (p1-east)    -- node {\midarrow} (b2-west);
+\path ($(b2-nearsoutheast)+(0,-0.7,0)$) edge [draw=none,"\small nside = 32",sloped,pos=0.4,text centered] ($(b2-farsoutheast)+(0,-0.7,0)$);
+\pic[shift={ (0,0,0) }] at (b2-east) 
+    {Box={
+        name=p2,
+        caption= ,
+        fill=\PoolColor,
+        opacity=0.5,
+        height=28,
+        width=1,
+        depth=28
+        }
+    };
+
+\pic[shift={ (2.5,0,0) }] at (p2-east) 
+    {RightBandedBox={
+        name=b3,
+        caption=Block 3,
+        xlabel={{ 64, 64 }},
+        zlabel= ,
+        fill=\ConvColor,
+        bandfill=\ConvReluColor,
+        height=24,
+        width={ 5 , 5 },
+        depth=24
+        }
+    };
+
+\draw [connection]  (p2-east)    -- node {\midarrow} (b3-west);
+\path ($(b3-nearsoutheast)+(0,-0.7,0)$) edge [draw=none,"\small nside = 8",sloped,pos=0.5,text centered] ($(b3-farsoutheast)+(0,-0.7,0)$);
+\pic[shift={ (0,0,0) }] at (b3-east) 
+    {Box={
+        name=p3,
+        caption= ,
+        fill=\PoolColor,
+        opacity=0.5,
+        height=20,
+        width=1,
+        depth=20
+        }
+    };
+\pic[shift={(2.5,0,0)}] at (p3-east) {Box={name=flat,caption=Flatten,xlabel={{ , }},zlabel= ,fill=\FcColor,height=4,width=2,depth=40}};\path ($(flat-nearsoutheast)+(0.7,-0.00,0)$) edge [draw=none,"\small 3072",sloped,pos=0.1text centered] ($(flat-farsoutheast)+(0.7,-0.00,0)$);
+\draw [connection]  (p3-east)    -- node {\midarrow} (flat-west);
+\pic[shift={(3.5,2.5,0)}] at (flat-east) {Box={name=local,caption=$f_{\mathrm{NL}}^{\mathrm{loc}}$,fill=\FcColor,height=1,width=1,depth=1}};\draw [connection] (flat-east) -- (local-west);\pic[shift={(3.5,0,0)}] at (flat-east) {Box={name=equil,caption=$f_{\mathrm{NL}}^{\mathrm{equil}}$,fill=\FcColor,height=1,width=1,depth=1}};\draw [connection] (flat-east) -- (equil-west);\pic[shift={(3.5,-2.5,0)}] at (flat-east) {Box={name=ortho,caption=$f_{\mathrm{NL}}^{\mathrm{ortho}}$,fill=\FcColor,height=1,width=1,depth=1}};\draw [connection] (flat-east) -- (ortho-west);
+\end{tikzpicture}
+\end{document}

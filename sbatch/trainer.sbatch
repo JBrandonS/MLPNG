@@ -9,7 +9,7 @@
 #SBATCH --time=2-00:00:00
 #SBATCH --account=jrmeyers_ml_cmb_0001
 
-module="mlpng.${1:-scn-jorik}"
+module="mlpng.${1:-scn_jorik}"
 echo "Running trainer with module $module on $(hostname)"
 shift # remove the first argument from $@
 
